@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { toResponseInputItems } from 'openai/lib/responses/ResponseInputItems';
 import type { ResponseCreateAndStreamParams } from 'openai/lib/responses/ResponseStream';
 import type {
   FunctionTool,
@@ -201,6 +202,10 @@ export function createAgentRunner(deps: AgentDeps): TaskRunner {
       if (response.status === 'failed') {
         throw new Error(`OpenAI gagal memproses permintaan: ${response.error?.message ?? 'unknown error'}`);
       }
+      // the SDK resolves a stream that ended without a terminal event with the partial snapshot
+      if (response.status !== 'completed' && response.status !== 'incomplete') {
+        throw new Error(`Koneksi ke OpenAI terputus sebelum respons selesai (status ${response.status ?? 'unknown'}). Kirim ulang task.`);
+      }
 
       const texts: string[] = [];
       let refusal = '';
@@ -246,8 +251,9 @@ export function createAgentRunner(deps: AgentDeps): TaskRunner {
         return { result: answer || lastText || 'Selesai.' };
       }
 
-      // output items (reasoning, messages, function calls) go back verbatim, followed by every call's output
-      input.push(...(response.output as unknown as ResponseInputItem[]));
+      // output items (reasoning, messages, function calls) go back in order, followed by every call's output;
+      // toResponseInputItems strips SDK-only fields (parsed, parsed_arguments) the API would reject
+      input.push(...toResponseInputItems(response.output));
       const outputs = await Promise.all(calls.map((call) => runTool(call, toolMap, ctx)));
       input.push(...outputs);
     }
@@ -294,6 +300,7 @@ async function runTool(
     return finish(`${JSON.stringify({ INVALID_INPUT: true })}\n${parsed.error}\nCall the tool again with a complete, valid input.`, false, 'invalid input');
   }
 
+  if (ctx.signal.aborted) throw ctx.signal.reason ?? new Error('Cancelled');
   const reason = tool.confirmation(parsed.value);
   if (reason) {
     const decision = await ctx.confirm({
@@ -314,6 +321,7 @@ async function runTool(
     }
   }
 
+  if (ctx.signal.aborted) throw ctx.signal.reason ?? new Error('Cancelled');
   if (tool.name !== 'update_progress') await ctx.step(tool.displayName);
   try {
     const out = await tool.execute(parsed.value, ctx);

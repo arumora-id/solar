@@ -1,7 +1,9 @@
-import { escapeXml, wrapText } from '../validation.js';
+import { escapeXml, textWidth, wrapText } from '../validation.js';
 import { BAND_LABEL_W, MARGIN, type NodeBox, type ViewLayout } from './layout.js';
 import { ELEMENT_INFO, LAYER_BAND_FILL, LAYER_LABEL, elementFill, type Glyph, type RelationshipType } from './metamodel.js';
 import type { ArchimateRelationship } from './model.js';
+
+const MAX_TITLE_CANVAS = 1400;
 
 const FONT = "'Segoe UI', 'Helvetica Neue', Arial, sans-serif";
 const STROKE = '#4a4a4a';
@@ -437,14 +439,19 @@ export function renderViewSvg(layout: ViewLayout, opts: RenderViewOptions): stri
   const subtitle = [`Model: ${opts.modelName}`, opts.viewpoint ? `Viewpoint: ${opts.viewpoint}` : null, 'ArchiMate® 3.2']
     .filter(Boolean)
     .join('  ·  ');
+  // small views: widen the canvas so title and subtitle fit (up to a cap), then ellipsize what still does not fit
+  const titleNeed = Math.max(textWidth(opts.viewName, 17) * 1.08, textWidth(subtitle, 11.5));
+  const width = Math.max(layout.width, Math.min(MAX_TITLE_CANVAS, Math.ceil(2 * MARGIN + titleNeed)));
+  const title = wrapText(opts.viewName, (width - 2 * MARGIN) / 1.08, 17, 1)[0] ?? '';
+  const sub = wrapText(subtitle, width - 2 * MARGIN, 11.5, 1)[0] ?? '';
 
   return [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${layout.width}" height="${height}" viewBox="0 0 ${layout.width} ${height}" font-family="${FONT}">`,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" font-family="${FONT}">`,
     `<title>${escapeXml(opts.viewName)}</title>`,
     `<defs>${MARKER_DEFS}</defs>`,
     `<rect width="100%" height="100%" fill="#ffffff"/>`,
-    `<text x="${MARGIN}" y="${MARGIN + 18}" font-size="17" font-weight="700" fill="#1f2328">${escapeXml(opts.viewName)}</text>`,
-    `<text x="${MARGIN}" y="${MARGIN + 38}" font-size="11.5" fill="#57606a">${escapeXml(subtitle)}</text>`,
+    `<text x="${MARGIN}" y="${MARGIN + 18}" font-size="17" font-weight="700" fill="#1f2328">${escapeXml(title)}</text>`,
+    `<text x="${MARGIN}" y="${MARGIN + 38}" font-size="11.5" fill="#57606a">${escapeXml(sub)}</text>`,
     bands,
     `<g class="relationships">${edges.join('')}</g>`,
     `<g class="elements">${nodes.map(renderNode).join('')}</g>`,

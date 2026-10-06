@@ -510,6 +510,21 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
           if (!projectId) return { isError: true, content: 'No project_id given and PLANE_PROJECT_ID is not set. Call plane_list_projects.', summary: 'no project' };
           const result = await plane.createBacklog(projectId, input.items, { skipExisting: input.skip_existing, signal: ctx.signal });
           const created = result.created.filter((c) => !c.skipped).length;
+          if (result.error) {
+            const remaining = input.items.filter((i) => !result.created.some((c) => c.ref === i.ref)).map((i) => i.ref);
+            return {
+              isError: true,
+              content: json({
+                status: 'partial',
+                error: result.error,
+                project: result.project,
+                items: result.created,
+                not_created_refs: remaining,
+                hint: 'The items listed were created. Call again with the same items and skip_existing=true to create the rest without duplicates.',
+              }),
+              summary: `partial: ${created} created, ${remaining.length} not created (${result.error.slice(0, 80)})`,
+            };
+          }
           return {
             content: json({ status: 'done', project: result.project, items: result.created }),
             summary: `${created} created, ${result.created.length - created} skipped in ${result.project.identifier}`,

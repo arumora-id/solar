@@ -179,10 +179,12 @@ export class TaskManager {
     while (this.running < this.options.concurrency && this.queue.length > 0) {
       const id = this.queue.shift()!;
       this.running += 1;
-      void this.execute(id).finally(() => {
-        this.running -= 1;
-        this.pump();
-      });
+      void this.execute(id)
+        .catch((err) => log.error(`Task ${id} crashed`, err))
+        .finally(() => {
+          this.running -= 1;
+          this.pump();
+        });
     }
   }
 
@@ -198,22 +200,27 @@ export class TaskManager {
       pendingConfirmations: 0,
     };
     this.active.set(id, active);
-    await this.save(active.task);
-    await this.emit(id, { type: 'status', status: 'running', message: 'Agent mulai bekerja' });
-
-    const ctx = this.buildContext(active, await this.buildSessionContext(stored));
+    const runner = this.runner;
     try {
-      const { result } = await this.runner(ctx);
+      // everything that touches storage stays inside the try: a database outage fails this task, not the process
+      await this.save(active.task);
+      await this.emit(id, { type: 'status', status: 'running', message: 'Agent mulai bekerja' });
+      const ctx = this.buildContext(active, await this.buildSessionContext(stored));
+      const { result } = await runner(ctx);
       if (controller.signal.aborted) throw controller.signal.reason ?? new Error('Dibatalkan');
       await this.finish(active.task, 'completed', { result });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      if (controller.signal.aborted) {
-        await this.finish(active.task, 'cancelled', { error: message || 'Dibatalkan oleh pengguna' });
-      } else {
-        log.error(`Task ${id} failed`, err);
-        await this.emit(id, { type: 'error', message });
-        await this.finish(active.task, 'failed', { error: message });
+      try {
+        if (controller.signal.aborted) {
+          await this.finish(active.task, 'cancelled', { error: message || 'Dibatalkan oleh pengguna' });
+        } else {
+          log.error(`Task ${id} failed`, err);
+          await this.emit(id, { type: 'error', message });
+          await this.finish(active.task, 'failed', { error: message });
+        }
+      } catch (recordErr) {
+        log.error(`Task ${id}: the final status could not be stored`, recordErr);
       }
     } finally {
       this.active.delete(id);
@@ -339,6 +346,7 @@ export class TaskManager {
   }
 
   private async requestConfirmation(active: ActiveTask, request: ConfirmationRequest): Promise<ConfirmationDecision> {
+    if (active.controller.signal.aborted) return { approved: false, note: 'Task dibatalkan' };
     const confirmation: Confirmation = {
       id: newId('conf'),
       taskId: active.task.id,
@@ -373,6 +381,8 @@ export class TaskManager {
       );
       active.controller.signal.addEventListener('abort', onAbort);
       this.pending.set(confirmation.id, { confirmation, resolve: settle });
+      // a cancel that landed during the awaits above never fires the listener
+      if (active.controller.signal.aborted) onAbort();
     });
 
     const resolved: Confirmation = {

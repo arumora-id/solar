@@ -18,14 +18,18 @@ const TABS: Array<{ id: Tab; label: string }> = [
 export function SettingsDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [tab, setTab] = useState<Tab>('skills');
   const ref = useRef<HTMLElement>(null);
+  // parents pass a new onClose on every render; keep the effect keyed on `open` only
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     if (!open) return;
-    if (ref.current) gsap.from(ref.current, { x: 60, opacity: 0, duration: 0.3, ease: 'power3.out' });
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    // fromTo with explicit end values: a re-run can never freeze the drawer half-transparent
+    if (ref.current) gsap.fromTo(ref.current, { x: 60, opacity: 0 }, { x: 0, opacity: 1, duration: 0.3, ease: 'power3.out', overwrite: true });
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onCloseRef.current();
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
   return (

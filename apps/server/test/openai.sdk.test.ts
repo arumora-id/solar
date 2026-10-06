@@ -24,7 +24,7 @@ interface Recorded {
 }
 
 const requests: Recorded[] = [];
-let mode: 'ok' | 'unauthorized' | 'quota' = 'ok';
+let mode: 'ok' | 'unauthorized' | 'quota' | 'cut' = 'ok';
 
 function baseResponse(id: string, status: string, output: Json[]): Json {
   return {
@@ -88,6 +88,15 @@ function sse(res: ServerResponse, id: string, items: Json[]): void {
   res.end();
 }
 
+/** Like the real API, reject keys that only exist on SDK objects (e.g. `parsed`, `parsed_arguments`). */
+function unknownInputKeys(value: unknown, path = 'input'): string[] {
+  if (Array.isArray(value)) return value.flatMap((v, i) => unknownInputKeys(v, `${path}[${i}]`));
+  if (!value || typeof value !== 'object') return [];
+  return Object.entries(value).flatMap(([k, v]) =>
+    ['parsed', 'parsed_arguments', 'created_by'].includes(k) ? [`${path}.${k}`] : unknownInputKeys(v, `${path}.${k}`),
+  );
+}
+
 function handle(req: IncomingMessage, res: ServerResponse, raw: string): void {
   if (req.method !== 'POST' || req.url !== '/v1/responses') {
     res.writeHead(404).end();
@@ -103,6 +112,19 @@ function handle(req: IncomingMessage, res: ServerResponse, raw: string): void {
   if (mode === 'quota') {
     res.writeHead(429, { 'Content-Type': 'application/json', 'x-should-retry': 'false' });
     res.end(JSON.stringify({ error: { message: 'You exceeded your current quota', type: 'insufficient_quota', code: 'insufficient_quota' } }));
+    return;
+  }
+  const unknown = unknownInputKeys(body.input);
+  if (unknown.length) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: { message: `Unknown parameter: '${unknown[0]}'.`, type: 'invalid_request_error', param: unknown[0], code: 'unknown_parameter' } }));
+    return;
+  }
+  if (mode === 'cut') {
+    // the connection ends cleanly before any terminal event (e.g. a proxy cutting a long response)
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.write(`event: response.created\ndata: ${JSON.stringify({ type: 'response.created', sequence_number: 0, response: baseResponse('resp_cut', 'in_progress', []) })}\n\n`);
+    res.end();
     return;
   }
   const input = body.input as Json[];
@@ -208,6 +230,13 @@ describe('OpenAI Responses API through the real SDK (local fake server)', () => 
     const output = input.find((i) => i.type === 'function_call_output');
     expect(output).toMatchObject({ call_id: 'call_1' });
     expect(String(output!.output)).not.toMatch(/^ERROR:/);
+  });
+
+  it('fails clearly when the stream ends before the response is complete', async () => {
+    mode = 'cut';
+    const detail = await runTask('Tes koneksi terputus');
+    expect(detail.task.status).toBe('failed');
+    expect(detail.task.error).toContain('terputus');
   });
 
   it('explains an invalid API key in Indonesian', async () => {

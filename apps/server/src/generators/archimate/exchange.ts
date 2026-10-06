@@ -4,6 +4,8 @@ import type { NormalizedArchimateModel } from './model.js';
 
 /** Prefix that turns user ids into valid xs:ID values (NCName must not start with a digit). */
 export const xmlId = (id: string) => `id-${id}`;
+/** Identifiers SOLAR generates (model, view nodes/connections) live in their own namespace so they never collide with `xmlId(userId)`. */
+const genId = (id: string) => `gen-${id}`;
 
 /**
  * Serialises the model in The Open Group ArchiMate Model Exchange File Format 3.1
@@ -24,7 +26,7 @@ export function toExchangeXml(model: NormalizedArchimateModel, layouts: Map<stri
     '<model xmlns="http://www.opengroup.org/xsd/archimate/3.0/"\n' +
     '       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"\n' +
     '       xsi:schemaLocation="http://www.opengroup.org/xsd/archimate/3.0/ http://www.opengroup.org/xsd/archimate/3.1/archimate3_Diagram.xsd"\n' +
-    `       identifier="${escapeXml(xmlId(`model-${slugId(model.name)}`))}">\n`;
+    `       identifier="${escapeXml(genId(`model-${slugId(model.name)}`))}">\n`;
   xml += text('name', model.name, '  ');
   xml += text('documentation', model.documentation, '  ');
 
@@ -80,12 +82,12 @@ export function toExchangeXml(model: NormalizedArchimateModel, layouts: Map<stri
     for (const eid of view.elements) {
       const n = layout.nodes.get(eid);
       if (!n) continue;
-      xml += `        <node identifier="${escapeXml(xmlId(`v${vi + 1}-n-${eid}`))}" elementRef="${escapeXml(xmlId(eid))}" xsi:type="Element" x="${n.x}" y="${n.y}" w="${n.w}" h="${n.h}"/>\n`;
+      xml += `        <node identifier="${escapeXml(genId(`v${vi + 1}-n-${eid}`))}" elementRef="${escapeXml(xmlId(eid))}" xsi:type="Element" x="${n.x}" y="${n.y}" w="${n.w}" h="${n.h}"/>\n`;
     }
     for (const rid of view.relationships) {
       const r = model.relationships.find((x) => x.id === rid);
       if (!r || !layout.nodes.has(r.source) || !layout.nodes.has(r.target)) continue;
-      xml += `        <connection identifier="${escapeXml(xmlId(`v${vi + 1}-c-${rid}`))}" relationshipRef="${escapeXml(xmlId(rid))}" xsi:type="Relationship" source="${escapeXml(xmlId(`v${vi + 1}-n-${r.source}`))}" target="${escapeXml(xmlId(`v${vi + 1}-n-${r.target}`))}"/>\n`;
+      xml += `        <connection identifier="${escapeXml(genId(`v${vi + 1}-c-${rid}`))}" relationshipRef="${escapeXml(xmlId(rid))}" xsi:type="Relationship" source="${escapeXml(genId(`v${vi + 1}-n-${r.source}`))}" target="${escapeXml(genId(`v${vi + 1}-n-${r.target}`))}"/>\n`;
     }
     xml += '      </view>\n';
   });

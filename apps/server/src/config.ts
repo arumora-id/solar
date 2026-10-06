@@ -146,6 +146,13 @@ export interface AppConfig {
   };
 }
 
+/** A .env from before the switch to OpenAI may still say SOLAR_MODEL=claude-…: fall back to the default model. */
+function openaiModel(model: string): string {
+  if (!/^claude-/i.test(model)) return model;
+  console.warn(`[config] SOLAR_MODEL=${model} is an Anthropic model; SOLAR now uses OpenAI - using ${DEFAULT_MODEL}. Update SOLAR_MODEL in .env.`);
+  return DEFAULT_MODEL;
+}
+
 function parsePrice(value: string | undefined): AppConfig['openai']['price'] {
   if (!value) return undefined;
   const [input, cachedInput, output] = value.split(',').map((v) => Number(v.trim()));
@@ -187,7 +194,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       baseUrl: e.OPENAI_BASE_URL?.replace(/\/+$/, ''),
       organization: e.OPENAI_ORG_ID,
       project: e.OPENAI_PROJECT_ID,
-      model: e.SOLAR_MODEL,
+      model: openaiModel(e.SOLAR_MODEL),
       effort: e.SOLAR_EFFORT,
       maxTokens: e.SOLAR_MAX_TOKENS,
       maxTurns: e.SOLAR_MAX_TURNS,

@@ -41,6 +41,45 @@ function safeEqual(a: string, b: string): boolean {
   return x.length === y.length && timingSafeEqual(x, y);
 }
 
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
+
+function hostnameOf(hostHeader: string): string {
+  // "127.0.0.1:8790" -> "127.0.0.1", "[::1]:8790" -> "[::1]"
+  const h = hostHeader.trim().toLowerCase();
+  return h.startsWith('[') ? h.slice(0, h.indexOf(']') + 1) : h.split(':')[0]!;
+}
+
+/**
+ * Without an access token the API trusts the local machine only. A DNS-rebinding page (evil.example -> 127.0.0.1)
+ * would otherwise be "same origin" with the API and could e.g. register a stdio MCP plugin (= run a command).
+ * So the Host header must name this machine and a browser Origin, when present, must be local too.
+ */
+export function localOnlyMiddleware(token: string | undefined, configuredHost: string) {
+  const allowed = new Set(LOOPBACK_HOSTS);
+  if (!['0.0.0.0', '::'].includes(configuredHost)) allowed.add(configuredHost.toLowerCase());
+  return (req: Request, _res: Response, next: NextFunction) => {
+    if (token) return next();
+    const host = req.headers.host ? hostnameOf(req.headers.host) : '';
+    if (!allowed.has(host)) {
+      return next(new HttpError(403, `Forbidden host "${host}". Without SOLAR_ACCESS_TOKEN the API only answers requests for this computer (127.0.0.1 / localhost).`));
+    }
+    const origin = req.headers.origin;
+    if (origin !== undefined) {
+      let originHost = '';
+      try {
+        originHost = new URL(origin).hostname.toLowerCase();
+      } catch {
+        // "null" or malformed origins are rejected below
+      }
+      const normalized = originHost.includes(':') && !originHost.startsWith('[') ? `[${originHost}]` : originHost;
+      if (!allowed.has(normalized) && !allowed.has(originHost)) {
+        return next(new HttpError(403, `Forbidden origin "${origin}".`));
+      }
+    }
+    next();
+  };
+}
+
 export function authMiddleware(token: string | undefined) {
   return (req: Request, _res: Response, next: NextFunction) => {
     if (!token) return next();
@@ -77,6 +116,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     res.json({ ok: true, name: APP_NAME, version: APP_VERSION });
   });
 
+  r.use(localOnlyMiddleware(config.accessToken, config.host));
   r.use(authMiddleware(config.accessToken));
 
   r.get('/config', (_req, res) => {

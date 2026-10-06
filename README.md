@@ -327,6 +327,7 @@ Buka `/monitor` (mis. <http://localhost:8790/monitor>):
 ## Keamanan
 
 - Server default hanya mendengarkan `127.0.0.1`. Untuk akses jaringan set `HOST=0.0.0.0` **dan** `SOLAR_ACCESS_TOKEN`.
+- Tanpa `SOLAR_ACCESS_TOKEN`, API hanya melayani permintaan dengan Host/Origin lokal (`127.0.0.1`, `localhost`, `[::1]`); halaman web lain tidak bisa memakai API lewat *DNS rebinding* (mis. menambah plugin stdio).
 - Rahasia hanya di `.env`; nilai rahasia literal di konfigurasi plugin disamarkan saat dikirim ke browser.
 - Artefak disajikan dengan `Content-Security-Policy: sandbox` dan pratinjau HTML di iframe sandbox - dokumen hasil AI
   tidak dapat menjalankan script. Markdown dirender dengan sanitasi (DOMPurify / HTML mentah di-escape).
@@ -378,6 +379,7 @@ pembuatan 11 artefak, ZIP, header keamanan, dan riwayat percakapan append-only.
 | Gejala | Solusi |
 |---|---|
 | Balon kelinci: "OPENAI_API_KEY belum diisi" | Isi di `.env` (desktop: `%APPDATA%\SOLAR\.env`, menu *File → Buka file .env*), lalu restart. |
+| Upgrade dari versi Anthropic (`.env` lama) | Tambahkan `OPENAI_API_KEY`; `ANTHROPIC_API_KEY` tidak dipakai lagi. `SOLAR_MODEL=claude-…` otomatis diganti `gpt-6.1-sol` (dengan peringatan di log) - sebaiknya hapus/ubah barisnya. |
 | Task gagal "Autentikasi OpenAI gagal" | API key salah/dicabut - buat key baru di platform.openai.com/api-keys. |
 | Task gagal "Saldo/kuota API OpenAI habis (insufficient_quota)" | Tambahkan kredit di platform.openai.com → Billing (langganan ChatGPT tidak berlaku untuk API). |
 | Task gagal "Model … tidak ditemukan" / "Akses OpenAI ditolak" | Model belum tersedia untuk akun/project Anda (beberapa model butuh verifikasi organisasi). Ganti `SOLAR_MODEL`, mis. `gpt-6-sol`. |

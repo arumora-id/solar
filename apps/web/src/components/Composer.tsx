@@ -18,6 +18,8 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ di
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const areaRef = useRef<HTMLTextAreaElement>(null);
+  const valueRef = useRef(value);
+  valueRef.current = value;
 
   const send = useCallback(
     async (text: string) => {
@@ -38,8 +40,11 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ di
   );
 
   const voice = useVoice((transcript) => {
-    if (voice.prefs.autoSend) void send(transcript);
-    else setValue((v) => (v ? `${v} ${transcript}` : transcript));
+    if (voice.prefs.autoSend) {
+      // keep what is already in the composer (e.g. a quick-prompt template) in front of the spoken text
+      const base = valueRef.current.trim();
+      void send(base ? `${base} ${transcript}` : transcript);
+    } else setValue((v) => (v ? `${v} ${transcript}` : transcript));
   });
 
   useEffect(() => onListeningChange?.(voice.listening), [voice.listening, onListeningChange]);

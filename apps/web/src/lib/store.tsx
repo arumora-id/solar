@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
 import type { Artifact, Confirmation, PluginStatus, PublicConfig, StreamMessage, Task, TaskEvent } from '@solar/shared';
 import { api, ApiError, setToken, withToken } from './api';
 import { getSessionId, newSessionId } from './session';
@@ -36,6 +36,27 @@ type Action =
   | { type: 'confirmations'; list: Confirmation[] };
 
 const MAX_EVENTS = 3000;
+const TERMINAL: ReadonlyArray<Task['status']> = ['completed', 'failed', 'cancelled'];
+
+/** HTTP snapshots can be older than what SSE already delivered: never move a finished task back to an active state. */
+function mergeTask(prev: Task | undefined, next: Task): Task {
+  if (prev && TERMINAL.includes(prev.status) && !TERMINAL.includes(next.status)) return prev;
+  return next;
+}
+
+function mergeEvents(current: TaskEvent[] | undefined, incoming: TaskEvent[]): TaskEvent[] {
+  if (!current?.length) return incoming.slice(-MAX_EVENTS);
+  const byId = new Map<string, TaskEvent>();
+  for (const e of incoming) byId.set(e.id, e);
+  for (const e of current) byId.set(e.id, e);
+  return [...byId.values()].sort((a, b) => a.seq - b.seq).slice(-MAX_EVENTS);
+}
+
+function mergeArtifacts(current: Artifact[] | undefined, incoming: Artifact[]): Artifact[] {
+  if (!current?.length) return incoming;
+  const ids = new Set(incoming.map((a) => a.id));
+  return [...incoming, ...current.filter((a) => !ids.has(a.id))];
+}
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
@@ -49,7 +70,7 @@ function reducer(state: State, action: Action): State {
       return { ...state, sessionId: action.id };
     case 'tasks': {
       const tasks = { ...state.tasks };
-      for (const t of action.tasks) tasks[t.id] = t;
+      for (const t of action.tasks) tasks[t.id] = mergeTask(tasks[t.id], t);
       return { ...state, tasks };
     }
     case 'task': {
@@ -64,11 +85,12 @@ function reducer(state: State, action: Action): State {
       return { ...state, tasks: { ...state.tasks, [action.task.id]: action.task }, lastFinished: finished, drafts };
     }
     case 'detail':
+      // merge, don't replace: SSE events published while the snapshot was in flight must survive
       return {
         ...state,
-        tasks: { ...state.tasks, [action.task.id]: action.task },
-        events: { ...state.events, [action.task.id]: action.events },
-        artifacts: { ...state.artifacts, [action.task.id]: action.artifacts },
+        tasks: { ...state.tasks, [action.task.id]: mergeTask(state.tasks[action.task.id], action.task) },
+        events: { ...state.events, [action.task.id]: mergeEvents(state.events[action.task.id], action.events) },
+        artifacts: { ...state.artifacts, [action.task.id]: mergeArtifacts(state.artifacts[action.task.id], action.artifacts) },
       };
     case 'event': {
       const e = action.event;
@@ -92,6 +114,8 @@ function reducer(state: State, action: Action): State {
     case 'deltas': {
       const drafts = { ...state.drafts };
       for (const d of action.items) {
+        const task = state.tasks[d.taskId];
+        if (task && TERMINAL.includes(task.status)) continue;
         const cur = drafts[d.taskId] ?? { text: '', thinking: '' };
         drafts[d.taskId] = d.channel === 'text' ? { ...cur, text: cur.text + d.text } : { ...cur, thinking: (cur.thinking + d.text).slice(-4000) };
       }
@@ -133,6 +157,12 @@ export function SolarProvider({ children }: { children: ReactNode }) {
   }));
   const deltaBuffer = useRef<Array<{ taskId: string; channel: 'text' | 'thinking'; text: string }>>([]);
   const flushScheduled = useRef(false);
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  // bumped to (re)open the event stream after it was closed for good or the token changed
+  const [streamNonce, setStreamNonce] = useState(0);
+  /** Survives stream re-creation: the next successful open must resync what was missed. */
+  const missedEvents = useRef(false);
 
   const handleError = useCallback((err: unknown) => {
     if (err instanceof ApiError && err.status === 401) dispatch({ type: 'auth', required: true });
@@ -175,17 +205,48 @@ export function SolarProvider({ children }: { children: ReactNode }) {
     void reloadConfig();
     void refreshTasks();
     const source = new EventSource(withToken('/api/stream'));
-    let wasDisconnected = false;
+    let retryTimer: number | undefined;
+    // deltas are batched per animation frame; flush them before any event/task message so ordering holds
+    // (a 'text' event clears the draft the deltas belong to)
+    const flushDeltas = () => {
+      flushScheduled.current = false;
+      const items = deltaBuffer.current;
+      deltaBuffer.current = [];
+      if (items.length) dispatch({ type: 'deltas', items });
+    };
     source.onopen = () => {
       dispatch({ type: 'connected', value: true });
-      if (wasDisconnected) void refreshTasks();
-      wasDisconnected = false;
+      if (missedEvents.current) {
+        // events published while disconnected were missed: reload the tasks and every task on screen
+        void refreshTasks().then(() => {
+          const s = stateRef.current;
+          const ids = new Set(Object.keys(s.events));
+          for (const t of Object.values(s.tasks)) if (!TERMINAL.includes(t.status)) ids.add(t.id);
+          for (const id of ids) void loadTask(id);
+        });
+      }
+      missedEvents.current = false;
     };
     source.onerror = () => {
       dispatch({ type: 'connected', value: false });
-      wasDisconnected = true;
+      missedEvents.current = true;
       // a 401 makes EventSource retry forever: check once with a normal request
-      void api.config().catch(handleError);
+      void api
+        .config()
+        .then(() => {
+          // a non-200 answer (e.g. a proxy's 502 while the server restarts) closes EventSource for good
+          if (source.readyState === EventSource.CLOSED) {
+            window.clearTimeout(retryTimer);
+            retryTimer = window.setTimeout(() => setStreamNonce((n) => n + 1), 3000);
+          }
+        })
+        .catch((err: unknown) => {
+          handleError(err);
+          if (!(err instanceof ApiError && err.status === 401) && source.readyState === EventSource.CLOSED) {
+            window.clearTimeout(retryTimer);
+            retryTimer = window.setTimeout(() => setStreamNonce((n) => n + 1), 5000);
+          }
+        });
     };
     source.onmessage = (ev) => {
       let msg: StreamMessage;
@@ -196,9 +257,11 @@ export function SolarProvider({ children }: { children: ReactNode }) {
       }
       switch (msg.kind) {
         case 'task':
+          flushDeltas();
           dispatch({ type: 'task', task: msg.task });
           break;
         case 'event':
+          flushDeltas();
           dispatch({ type: 'event', event: msg.event });
           break;
         case 'plugins':
@@ -208,20 +271,18 @@ export function SolarProvider({ children }: { children: ReactNode }) {
           deltaBuffer.current.push({ taskId: msg.taskId, channel: msg.channel, text: msg.text });
           if (!flushScheduled.current) {
             flushScheduled.current = true;
-            requestAnimationFrame(() => {
-              flushScheduled.current = false;
-              const items = deltaBuffer.current;
-              deltaBuffer.current = [];
-              if (items.length) dispatch({ type: 'deltas', items });
-            });
+            requestAnimationFrame(flushDeltas);
           }
           break;
         case 'hello':
           break;
       }
     };
-    return () => source.close();
-  }, [state.authRequired, reloadConfig, refreshTasks, handleError]);
+    return () => {
+      window.clearTimeout(retryTimer);
+      source.close();
+    };
+  }, [state.authRequired, streamNonce, reloadConfig, refreshTasks, loadTask, handleError]);
 
   const submit = useCallback(
     async (prompt: string) => {
@@ -256,6 +317,8 @@ export function SolarProvider({ children }: { children: ReactNode }) {
   const submitToken = useCallback((token: string) => {
     setToken(token.trim());
     dispatch({ type: 'auth', required: false });
+    // the stream URL carries the token: reopen it even when auth was not required before
+    setStreamNonce((n) => n + 1);
   }, []);
 
   const value = useMemo<SolarContextValue>(
