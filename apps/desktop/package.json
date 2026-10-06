@@ -1,0 +1,79 @@
+{
+  "name": "@solar/desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SOLAR desktop shell (Electron) for Windows",
+  "author": "SOLAR",
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "npm run build && electron .",
+    "dist:win": "npm run build && electron-builder --win --x64 --publish never",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "electron": "44.5.1",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2",
+    "@types/node": "^22.20.5"
+  },
+  "build": {
+    "appId": "com.solar.architect",
+    "productName": "SOLAR",
+    "artifactName": "SOLAR-Setup-${version}.${ext}",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../server/dist",
+        "to": "server",
+        "filter": [
+          "server.mjs",
+          "server.mjs.map"
+        ]
+      },
+      {
+        "from": "../web/dist",
+        "to": "web"
+      },
+      {
+        "from": "../../skills",
+        "to": "skills"
+      },
+      {
+        "from": "../../config",
+        "to": "config"
+      }
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "SOLAR"
+    },
+    "electronVersion": "44.5.1",
+    "publish": null,
+    "executableName": "SOLAR"
+  }
+}

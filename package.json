@@ -1,0 +1,31 @@
+{
+  "name": "solar",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SOLAR - SOLution ARchitect rabbit agent: 3D AI assistant for delivering ArchiMate diagrams, sequence diagrams and Technical Specification Documents.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "workspaces": [
+    "packages/shared",
+    "apps/server",
+    "apps/web",
+    "apps/desktop"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n server,web -c cyan,magenta \"npm:dev -w @solar/server\" \"npm:dev -w @solar/web\"",
+    "build": "npm run build -w @solar/web && npm run build -w @solar/server",
+    "start": "node apps/server/dist/index.js",
+    "test": "npm run test -w @solar/server",
+    "typecheck": "npm run typecheck -w @solar/shared && npm run typecheck -w @solar/server && npm run typecheck -w @solar/web && npm run typecheck -w @solar/desktop",
+    "check": "npm run typecheck && npm run test && npm run build",
+    "desktop:dev": "npm run build && npm run start -w @solar/desktop",
+    "desktop:dist:win": "npm run build && npm run dist:win -w @solar/desktop"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "typescript": "~5.9.3"
+  }
+}

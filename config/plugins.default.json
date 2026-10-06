@@ -1,0 +1,44 @@
+[
+  {
+    "id": "github",
+    "name": "GitHub",
+    "description": "Server MCP resmi GitHub (remote): repository, file, branch, issue, pull request. Token diambil dari GITHUB_TOKEN di .env.",
+    "preset": "github",
+    "enabled": true,
+    "transport": "http",
+    "url": "https://api.githubcopilot.com/mcp/",
+    "headers": {
+      "Authorization": "Bearer ${GITHUB_TOKEN}"
+    },
+    "confirm": "never"
+  },
+  {
+    "id": "plane",
+    "name": "Plane (plane.mesthi.com)",
+    "description": "Backlog di plane.mesthi.com melalui server MCP resmi Plane (@makeplane/plane-mcp-server): project, work item, state, label, cycle, module.",
+    "preset": "plane",
+    "enabled": true,
+    "transport": "stdio",
+    "command": "npx",
+    "args": ["-y", "@makeplane/plane-mcp-server@0.1.5"],
+    "env": {
+      "PLANE_API_KEY": "${PLANE_API_KEY}",
+      "PLANE_WORKSPACE_SLUG": "${PLANE_WORKSPACE_SLUG}",
+      "PLANE_API_HOST_URL": "${PLANE_API_HOST_URL}"
+    },
+    "confirm": "never"
+  },
+  {
+    "id": "visual-paradigm",
+    "name": "Visual Paradigm",
+    "description": "Endpoint MCP Visual Paradigm (isi VP_MCP_URL & VP_MCP_TOKEN di .env). Setiap pemanggilan tool WAJIB dikonfirmasi oleh Anda terlebih dahulu.",
+    "preset": "visual-paradigm",
+    "enabled": true,
+    "transport": "http",
+    "url": "${VP_MCP_URL}",
+    "headers": {
+      "Authorization": "Bearer ${VP_MCP_TOKEN}"
+    },
+    "confirm": "always"
+  }
+]
