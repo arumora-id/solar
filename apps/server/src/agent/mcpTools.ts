@@ -10,19 +10,25 @@ function sanitizeSchema(schema: Record<string, unknown> | undefined): Record<str
   return clone;
 }
 
+const MAX_DESCRIPTION = 1024;
+const APPROVAL_NOTE = "\n(This call requires the user's approval before it runs.)";
+
+function clip(text: string, max: number): string {
+  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+}
+
 /** Wraps every tool of the connected MCP plugins as an agent tool (with the plugin's confirmation policy). */
 export function createMcpTools(mcp: McpManager): AgentTool[] {
   return mcp.bindings().map(({ qualifiedName, plugin, tool }) => {
     const write = isWriteTool(tool);
     const title = tool.annotations?.title ?? tool.name;
-    const description = `[${plugin.name}] ${tool.description ?? title}`.slice(0, 4000);
+    const note = plugin.confirm === 'always' || (plugin.confirm === 'writes' && write) ? APPROVAL_NOTE : '';
+    // OpenAI rejects function descriptions longer than 1024 characters
+    const description = `${clip(`[${plugin.name}] ${tool.description ?? title}`, MAX_DESCRIPTION - note.length)}${note}`;
     return {
       name: qualifiedName,
       displayName: `${plugin.name}: ${title}`,
-      description:
-        plugin.confirm === 'always' || (plugin.confirm === 'writes' && write)
-          ? `${description}\n(This call requires the user's approval before it runs.)`
-          : description,
+      description,
       inputSchema: sanitizeSchema(tool.inputSchema),
       source: 'mcp',
       pluginId: plugin.id,

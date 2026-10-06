@@ -42,6 +42,11 @@ const confirmPolicy = z
   .optional()
   .transform((v) => v ?? 'never');
 
+/** Default OpenAI model: near-flagship quality for agentic tool use at a moderate price. */
+export const DEFAULT_MODEL = 'gpt-6.1-sol';
+export const REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type ReasoningEffortSetting = (typeof REASONING_EFFORTS)[number];
+
 const EnvSchema = z.object({
   PORT: z.coerce.number().int().positive().default(8790),
   HOST: z.string().default('127.0.0.1'),
@@ -52,13 +57,18 @@ const EnvSchema = z.object({
   WEB_DIST_DIR: optionalString,
   PLUGINS_DEFAULT_FILE: optionalString,
 
-  ANTHROPIC_API_KEY: optionalString,
-  ANTHROPIC_AUTH_TOKEN: optionalString,
-  SOLAR_MODEL: z.string().default('claude-opus-5-5'),
-  SOLAR_EFFORT: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).default('high'),
-  SOLAR_MAX_TOKENS: z.coerce.number().int().min(4096).max(128000).default(64000),
+  OPENAI_API_KEY: optionalString,
+  OPENAI_BASE_URL: optionalString,
+  OPENAI_ORG_ID: optionalString,
+  OPENAI_PROJECT_ID: optionalString,
+  SOLAR_MODEL: z.string().trim().min(1).default(DEFAULT_MODEL),
+  SOLAR_EFFORT: z.enum(REASONING_EFFORTS).default('high'),
+  SOLAR_MAX_TOKENS: z.coerce.number().int().min(1024).max(128000).default(64000),
   SOLAR_MAX_TURNS: z.coerce.number().int().min(1).max(200).default(40),
-  SOLAR_REFUSAL_FALLBACK: bool(true),
+  SOLAR_PRICE_PER_MTOK: z
+    .string()
+    .regex(/^\s*\d+(\.\d+)?\s*,\s*\d+(\.\d+)?\s*,\s*\d+(\.\d+)?\s*$/, 'expected "input,cachedInput,output" in USD per 1M tokens, e.g. 2,0.1,10')
+    .optional(),
   TASK_CONCURRENCY: z.coerce.number().int().min(1).max(10).default(2),
   CONFIRMATION_TIMEOUT_MINUTES: z.coerce.number().int().min(1).max(1440).default(60),
 
@@ -104,13 +114,18 @@ export interface AppConfig {
   userSkillsDir: string;
   webDistDir: string;
   defaultPluginsFile: string;
-  anthropic: {
+  openai: {
+    apiKey: string | undefined;
     configured: boolean;
+    baseUrl: string | undefined;
+    organization: string | undefined;
+    project: string | undefined;
     model: string;
-    effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+    effort: ReasoningEffortSetting;
     maxTokens: number;
     maxTurns: number;
-    refusalFallback: boolean;
+    /** USD per 1M tokens, overrides the built-in price table (cost estimates only). */
+    price: { input: number; cachedInput: number; output: number } | undefined;
   };
   taskConcurrency: number;
   confirmationTimeoutMs: number;
@@ -129,6 +144,12 @@ export interface AppConfig {
     projectId: string | undefined;
     confirm: 'never' | 'always';
   };
+}
+
+function parsePrice(value: string | undefined): AppConfig['openai']['price'] {
+  if (!value) return undefined;
+  const [input, cachedInput, output] = value.split(',').map((v) => Number(v.trim()));
+  return { input: input!, cachedInput: cachedInput!, output: output! };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -160,13 +181,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     userSkillsDir: join(dataDir, 'skills'),
     webDistDir: resolve(root, e.WEB_DIST_DIR ?? 'apps/web/dist'),
     defaultPluginsFile: resolve(root, e.PLUGINS_DEFAULT_FILE ?? 'config/plugins.default.json'),
-    anthropic: {
-      configured: Boolean(e.ANTHROPIC_API_KEY || e.ANTHROPIC_AUTH_TOKEN),
+    openai: {
+      apiKey: e.OPENAI_API_KEY,
+      configured: Boolean(e.OPENAI_API_KEY),
+      baseUrl: e.OPENAI_BASE_URL?.replace(/\/+$/, ''),
+      organization: e.OPENAI_ORG_ID,
+      project: e.OPENAI_PROJECT_ID,
       model: e.SOLAR_MODEL,
       effort: e.SOLAR_EFFORT,
       maxTokens: e.SOLAR_MAX_TOKENS,
       maxTurns: e.SOLAR_MAX_TURNS,
-      refusalFallback: e.SOLAR_REFUSAL_FALLBACK,
+      price: parsePrice(e.SOLAR_PRICE_PER_MTOK),
     },
     taskConcurrency: e.TASK_CONCURRENCY,
     confirmationTimeoutMs: e.CONFIRMATION_TIMEOUT_MINUTES * 60_000,

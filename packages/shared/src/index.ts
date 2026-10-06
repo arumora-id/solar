@@ -239,9 +239,10 @@ export const SECRET_MASK = '••••••••';
 export interface PublicConfig {
   appName: string;
   version: string;
+  provider: string;
   model: string;
   effort: string;
-  anthropicConfigured: boolean;
+  openaiConfigured: boolean;
   authRequired: boolean;
   storage: {
     database: 'neon-postgres' | 'local-file';

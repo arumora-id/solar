@@ -32,12 +32,12 @@ SOFTWARE.
 
 ## Trademarks
 
-ArchiMate® and The Open Group® are registered trademarks of The Open Group. Visual Paradigm, GitHub, Plane, Neon and
-Claude are trademarks of their respective owners. SOLAR is not affiliated with or endorsed by them.
+ArchiMate® and The Open Group® are registered trademarks of The Open Group. Visual Paradigm, GitHub, Plane, Neon,
+OpenAI, ChatGPT and GPT are trademarks of their respective owners. SOLAR is not affiliated with or endorsed by them.
 
 ## Runtime dependencies
 
-npm dependencies (React, three.js, GSAP, marked, DOMPurify, Express, the Anthropic SDK, the MCP SDK, the AWS SDK,
+npm dependencies (React, three.js, GSAP, marked, DOMPurify, Express, the OpenAI SDK, the MCP SDK, the AWS SDK,
 node-postgres, zod, yaml, fflate, Electron, ...) are installed from npm and remain under their own licences
 (see `node_modules/<package>/LICENSE`). transformers.js and the Whisper models are downloaded at runtime from
 jsDelivr / Hugging Face under their respective licences (Apache-2.0 / MIT).

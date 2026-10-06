@@ -1,5 +1,12 @@
-import Anthropic from '@anthropic-ai/sdk';
-import type { BetaMessageStreamParams } from '@anthropic-ai/sdk/resources/beta/messages';
+import OpenAI from 'openai';
+import type { ResponseCreateAndStreamParams } from 'openai/lib/responses/ResponseStream';
+import type {
+  FunctionTool,
+  Response as ModelResponse,
+  ResponseFunctionCallOutputItemList,
+  ResponseFunctionToolCall,
+  ResponseInputItem,
+} from 'openai/resources/responses/responses';
 import type { AppConfig } from '../config.js';
 import { createLogger } from '../logger.js';
 import type { McpManager } from '../plugins/mcpManager.js';
@@ -13,23 +20,27 @@ import type { AgentTool, ToolResultContent } from './types.js';
 
 const log = createLogger('agent');
 
-type BetaMessage = Anthropic.Beta.BetaMessage;
-type BetaMessageParam = Anthropic.Beta.BetaMessageParam;
-type StreamParams = BetaMessageStreamParams;
+export type StreamParams = ResponseCreateAndStreamParams;
 
-/** The part of the SDK the agent uses (lets tests inject a scripted model). */
-export interface MessageStreamLike {
-  on(event: 'text' | 'thinking', listener: (delta: string) => void): unknown;
-  finalMessage(): Promise<BetaMessage>;
+export interface StreamDeltaEvent {
+  delta: string;
+  item_id?: string;
+  summary_index?: number;
 }
 
-export interface MessagesStreamer {
-  stream(params: StreamParams, options?: { signal?: AbortSignal }): MessageStreamLike;
+/** The part of the OpenAI SDK's ResponseStream the agent uses (lets tests inject a scripted model). */
+export interface ResponseStreamLike {
+  on(event: 'response.output_text.delta' | 'response.reasoning_summary_text.delta', listener: (event: StreamDeltaEvent) => void): unknown;
+  finalResponse(): Promise<ModelResponse>;
+}
+
+export interface ResponsesStreamer {
+  stream(params: StreamParams, options?: { signal?: AbortSignal }): ResponseStreamLike;
 }
 
 export interface AgentDeps {
   config: AppConfig;
-  messages: MessagesStreamer;
+  responses: ResponsesStreamer;
   skills: SkillStore;
   plugins: PluginStore;
   mcp: McpManager;
@@ -37,7 +48,8 @@ export interface AgentDeps {
 }
 
 const MAX_EVENT_INPUT_CHARS = 20_000;
-const ABSOLUTE_MAX_TOKENS = 128_000;
+/** Shared by every task: the frozen instructions + tool list prefix is identical, so caching works across tasks. */
+const PROMPT_CACHE_KEY = 'solar-agent';
 
 function previewInput(input: unknown): unknown {
   const text = JSON.stringify(input ?? null);
@@ -45,45 +57,59 @@ function previewInput(input: unknown): unknown {
   return { _preview: `${text.slice(0, MAX_EVENT_INPUT_CHARS)}…`, _note: `input truncated for the timeline (${text.length} characters)` };
 }
 
-function friendlyApiError(err: InstanceType<typeof Anthropic.APIError>): Error {
-  if (err instanceof Anthropic.AuthenticationError) {
-    return new Error('Autentikasi Anthropic gagal: isi ANTHROPIC_API_KEY yang valid di .env lalu restart SOLAR.');
+function friendlyApiError(err: InstanceType<typeof OpenAI.APIError>, model: string): Error {
+  if (err instanceof OpenAI.APIConnectionError) {
+    return new Error(`Tidak dapat terhubung ke OpenAI API (cek koneksi internet / proxy / OPENAI_BASE_URL): ${err.message}`);
   }
-  if (err instanceof Anthropic.PermissionDeniedError) {
-    return new Error(`Akses Anthropic ditolak untuk model/workspace ini: ${err.message}`);
+  if (err instanceof OpenAI.AuthenticationError) {
+    return new Error('Autentikasi OpenAI gagal: isi OPENAI_API_KEY yang valid di .env lalu restart SOLAR.');
   }
-  if (err instanceof Anthropic.RateLimitError) {
-    return new Error('Batas rate Anthropic tercapai setelah percobaan ulang otomatis. Tunggu sebentar lalu kirim ulang task.');
+  if (err instanceof OpenAI.RateLimitError && err.code === 'insufficient_quota') {
+    return new Error(
+      'Saldo/kuota API OpenAI habis (insufficient_quota). Tambahkan kredit di platform.openai.com → Billing. Catatan: langganan ChatGPT Plus/Pro tidak termasuk kredit API.',
+    );
   }
-  if (err instanceof Anthropic.BadRequestError) {
-    return new Error(`Permintaan ditolak oleh Anthropic API: ${err.message}`);
+  if (err instanceof OpenAI.RateLimitError) {
+    return new Error('Batas rate OpenAI tercapai setelah percobaan ulang otomatis. Tunggu sebentar lalu kirim ulang task.');
   }
-  return new Error(`Anthropic API error${err.status ? ` ${err.status}` : ''}: ${err.message}`);
+  if (err instanceof OpenAI.NotFoundError) {
+    return new Error(`Model "${model}" tidak ditemukan atau belum tersedia untuk API key/proyek ini. Ganti SOLAR_MODEL di .env. (${err.message})`);
+  }
+  if (err instanceof OpenAI.PermissionDeniedError) {
+    return new Error(`Akses OpenAI ditolak untuk model/proyek ini: ${err.message}`);
+  }
+  if (err instanceof OpenAI.BadRequestError) {
+    return new Error(`Permintaan ditolak oleh OpenAI API: ${err.message}`);
+  }
+  return new Error(`OpenAI API error${err.status ? ` ${err.status}` : ''}: ${err.message}`);
 }
 
-function textOf(message: BetaMessage): string {
-  return message.content
-    .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === 'text')
-    .map((b) => b.text)
-    .join('\n\n')
-    .trim();
-}
-
-function nonEmpty(content: ToolResultContent): ToolResultContent {
-  if (typeof content === 'string') return content.trim() ? content : '(empty result)';
-  return content.length ? content : '(empty result)';
+/** Converts a tool result to the Responses API `function_call_output.output` format. */
+export function toFunctionOutput(content: ToolResultContent, ok: boolean): string | ResponseFunctionCallOutputItemList {
+  if (typeof content === 'string') {
+    const text = content.trim() ? content : '(empty result)';
+    return ok ? text : `ERROR: ${text}`;
+  }
+  const items: ResponseFunctionCallOutputItemList = content.map((block) =>
+    block.type === 'text'
+      ? { type: 'input_text', text: block.text }
+      : { type: 'input_image', image_url: `data:${block.mimeType};base64,${block.data}`, detail: 'auto' },
+  );
+  if (!items.length) items.push({ type: 'input_text', text: '(empty result)' });
+  if (!ok) items.unshift({ type: 'input_text', text: 'ERROR:' });
+  return items;
 }
 
 export function createAgentRunner(deps: AgentDeps): TaskRunner {
   const { config } = deps;
 
   return async (ctx: TaskRunContext) => {
-    // Tools and system prompt are frozen for the whole task: the conversation stays append-only,
-    // which keeps the prompt cache warm and thinking blocks valid.
+    // Tools and instructions are frozen for the whole task: the input stays append-only,
+    // which keeps the prompt cache warm and the encrypted reasoning items valid.
     const tools = [...deps.builtinTools, ...createMcpTools(deps.mcp)];
     const toolMap = new Map(tools.map((t) => [t.name, t]));
     const connected = deps.mcp.statuses().filter((s) => s.state === 'connected');
-    const system = buildSystemPrompt({
+    const instructions = buildSystemPrompt({
       config,
       skills: await deps.skills.list(),
       plugins: connected
@@ -91,11 +117,12 @@ export function createAgentRunner(deps: AgentDeps): TaskRunner {
         .filter((p): p is { config: NonNullable<typeof p.config>; toolCount: number } => Boolean(p.config)),
       builtinToolNames: deps.builtinTools.map((t) => t.name),
     });
-    const apiTools: Anthropic.Beta.BetaTool[] = tools.map((t) => ({
+    const apiTools: FunctionTool[] = tools.map((t) => ({
+      type: 'function',
       name: t.name,
       description: t.description,
-      input_schema: t.inputSchema as Anthropic.Beta.BetaTool.InputSchema,
-      ...(t.eagerInput ? { eager_input_streaming: true } : {}),
+      parameters: t.inputSchema,
+      strict: false,
     }));
 
     const today = new Date().toISOString().slice(0, 10);
@@ -108,13 +135,12 @@ export function createAgentRunner(deps: AgentDeps): TaskRunner {
     ]
       .filter(Boolean)
       .join('\n\n');
-    const messages: BetaMessageParam[] = [{ role: 'user', content: [{ type: 'text', text: intro }] }];
+    const input: ResponseInputItem[] = [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: intro }] }];
 
-    const model = config.anthropic.model;
+    const model = config.openai.model;
     const caps = capabilitiesOf(model);
-    let maxTokens = config.anthropic.maxTokens;
+    let maxTokens = Math.min(config.openai.maxTokens, caps.maxOutputTokens);
     let turns = 0;
-    let jsonRetries = 0;
     let lastText = '';
 
     await ctx.progress(2, 'Membaca permintaan');
@@ -122,123 +148,148 @@ export function createAgentRunner(deps: AgentDeps): TaskRunner {
     for (;;) {
       if (ctx.signal.aborted) throw ctx.signal.reason ?? new Error('Cancelled');
       turns += 1;
-      if (turns > config.anthropic.maxTurns) {
-        throw new Error(`Dihentikan setelah ${config.anthropic.maxTurns} giliran model (SOLAR_MAX_TURNS). Artefak yang sudah dibuat tetap tersimpan.`);
+      if (turns > config.openai.maxTurns) {
+        throw new Error(`Dihentikan setelah ${config.openai.maxTurns} giliran model (SOLAR_MAX_TURNS). Artefak yang sudah dibuat tetap tersimpan.`);
       }
       await ctx.step(turns === 1 ? 'Merencanakan' : 'Berpikir');
 
       const params: StreamParams = {
         model,
-        max_tokens: maxTokens,
-        system: [{ type: 'text', text: system }],
+        instructions,
+        input: [...input],
         tools: apiTools,
-        messages,
-        cache_control: { type: 'ephemeral' },
-        ...(caps.adaptiveThinking
-          ? { thinking: { type: 'adaptive', display: 'summarized' }, output_config: { effort: config.anthropic.effort } }
-          : { thinking: { type: 'enabled', budget_tokens: 8000 } }),
-        ...(caps.serverFallback && config.anthropic.refusalFallback
-          ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const }
+        tool_choice: 'auto',
+        parallel_tool_calls: true,
+        max_output_tokens: maxTokens,
+        // stateless: nothing is stored at OpenAI; reasoning is carried forward as encrypted items
+        store: false,
+        prompt_cache_key: PROMPT_CACHE_KEY,
+        ...(caps.reasoning
+          ? { reasoning: { effort: config.openai.effort, summary: 'auto' as const }, include: ['reasoning.encrypted_content' as const] }
           : {}),
       };
 
-      let message: BetaMessage;
+      let response: ModelResponse;
       try {
-        const stream = deps.messages.stream(params, { signal: ctx.signal });
-        stream.on('text', (delta) => ctx.delta(delta, 'text'));
-        stream.on('thinking', (delta) => ctx.delta(delta, 'thinking'));
-        message = await stream.finalMessage();
-        jsonRetries = 0;
+        const stream = deps.responses.stream(params, { signal: ctx.signal });
+        stream.on('response.output_text.delta', (e) => ctx.delta(e.delta, 'text'));
+        let summaryKey = '';
+        stream.on('response.reasoning_summary_text.delta', (e) => {
+          const key = `${e.item_id ?? ''}:${e.summary_index ?? 0}`;
+          if (summaryKey && key !== summaryKey) ctx.delta('\n\n', 'thinking');
+          summaryKey = key;
+          ctx.delta(e.delta, 'thinking');
+        });
+        response = await stream.finalResponse();
       } catch (err) {
         if (ctx.signal.aborted) throw ctx.signal.reason ?? err;
-        if (err instanceof Anthropic.APIError) throw friendlyApiError(err);
-        // With eager input streaming a tool input that is not parseable JSON rejects the stream;
-        // the turn was not appended, so re-issue it (bounded).
-        if (jsonRetries++ >= 2) throw err;
-        log.warn(`Re-issuing turn after unparseable tool input: ${err instanceof Error ? err.message : String(err)}`);
-        await ctx.emit({ type: 'log', level: 'warn', message: 'Input tool dari model tidak valid (JSON); giliran diulang.' });
-        turns -= 1;
-        continue;
+        if (err instanceof OpenAI.APIError) throw friendlyApiError(err, model);
+        throw err;
       }
 
-      const u = message.usage;
+      const u = response.usage;
+      const cached = u?.input_tokens_details?.cached_tokens ?? 0;
+      const cacheWrite = u?.input_tokens_details?.cache_write_tokens ?? 0;
       const usage = {
-        inputTokens: u.input_tokens ?? 0,
-        outputTokens: u.output_tokens ?? 0,
-        cacheReadTokens: u.cache_read_input_tokens ?? 0,
-        cacheWriteTokens: u.cache_creation_input_tokens ?? 0,
+        inputTokens: Math.max(0, (u?.input_tokens ?? 0) - cached - cacheWrite),
+        outputTokens: u?.output_tokens ?? 0,
+        cacheReadTokens: cached,
+        cacheWriteTokens: cacheWrite,
       };
-      await ctx.addUsage({ ...usage, costUsd: estimateCostUsd(message.model ?? model, usage) });
+      await ctx.addUsage({ ...usage, costUsd: estimateCostUsd(response.model || model, usage, config.openai.price) });
 
-      for (const block of message.content) {
-        if (block.type === 'thinking' && block.thinking.trim()) await ctx.emit({ type: 'thinking', text: block.thinking.trim() });
-        if (block.type === 'text' && block.text.trim()) {
-          lastText = block.text.trim();
-          await ctx.emit({ type: 'text', text: lastText });
+      if (response.status === 'failed') {
+        throw new Error(`OpenAI gagal memproses permintaan: ${response.error?.message ?? 'unknown error'}`);
+      }
+
+      const texts: string[] = [];
+      let refusal = '';
+      for (const item of response.output) {
+        if (item.type === 'reasoning') {
+          const summary = item.summary.map((part) => part.text.trim()).filter(Boolean).join('\n\n');
+          if (summary) await ctx.emit({ type: 'thinking', text: summary });
+        } else if (item.type === 'message') {
+          for (const part of item.content) {
+            if (part.type === 'output_text' && part.text.trim()) texts.push(part.text.trim());
+            else if (part.type === 'refusal' && part.refusal.trim()) refusal = part.refusal.trim();
+          }
         }
       }
-
-      const toolUses = message.content.filter((b): b is Anthropic.Beta.BetaToolUseBlock => b.type === 'tool_use');
-
-      if (message.stop_reason === 'refusal') {
-        const details = message.stop_details;
-        const category = details && 'category' in details && details.category ? ` (category: ${details.category})` : '';
-        throw new Error(`Claude menolak melanjutkan permintaan ini${category}. Ubah kalimat permintaan atau pecah menjadi bagian yang lebih kecil.`);
+      const answer = texts.join('\n\n');
+      if (answer) {
+        lastText = answer;
+        await ctx.emit({ type: 'text', text: answer });
       }
-      if (message.stop_reason === 'pause_turn') {
-        messages.push({ role: 'assistant', content: message.content });
-        continue;
+      const calls = response.output.filter((item): item is ResponseFunctionToolCall => item.type === 'function_call');
+
+      if (refusal && calls.length === 0) {
+        throw new Error(`Model menolak melanjutkan permintaan ini: "${refusal}". Ubah kalimat permintaan atau pecah menjadi bagian yang lebih kecil.`);
       }
-      if (message.stop_reason === 'max_tokens' && toolUses.length > 0) {
-        // A truncated tool input can still look valid: never run it. Retry the same turn with more room.
-        if (maxTokens < ABSOLUTE_MAX_TOKENS) {
-          maxTokens = ABSOLUTE_MAX_TOKENS;
-          await ctx.emit({ type: 'log', level: 'warn', message: `Batas output tercapai di dalam pemanggilan tool; diulang dengan max_tokens=${maxTokens}.` });
+      if (response.status === 'incomplete') {
+        const reason = response.incomplete_details?.reason;
+        if (reason === 'content_filter') {
+          throw new Error('Jawaban dihentikan oleh filter konten OpenAI. Ubah kalimat permintaan atau pecah menjadi bagian yang lebih kecil.');
+        }
+        // A truncated tool call can still look valid: never run it. Retry the same turn with more room.
+        if (maxTokens < caps.maxOutputTokens) {
+          maxTokens = caps.maxOutputTokens;
+          await ctx.emit({ type: 'log', level: 'warn', message: `Output model terpotong (${reason ?? 'incomplete'}); giliran diulang dengan max_output_tokens=${maxTokens}.` });
           turns -= 1;
           continue;
         }
-        throw new Error('Output model terpotong di dalam pemanggilan tool walau sudah ukuran maksimum. Pecah permintaan menjadi bagian yang lebih kecil.');
-      }
-      if (toolUses.length === 0) {
-        const answer = textOf(message) || lastText;
-        if (message.stop_reason === 'max_tokens') {
+        if (calls.length === 0 && answer) {
           return { result: `${answer}\n\n_(jawaban terpotong: batas output tercapai)_` };
         }
-        return { result: answer || 'Selesai.' };
+        throw new Error('Output model terpotong walau sudah ukuran maksimum (max_output_tokens). Pecah permintaan menjadi bagian yang lebih kecil.');
+      }
+      if (calls.length === 0) {
+        return { result: answer || lastText || 'Selesai.' };
       }
 
-      messages.push({ role: 'assistant', content: message.content });
-      const results = await Promise.all(toolUses.map((block) => runTool(block, toolMap, ctx)));
-      messages.push({ role: 'user', content: results });
+      // output items (reasoning, messages, function calls) go back verbatim, followed by every call's output
+      input.push(...(response.output as unknown as ResponseInputItem[]));
+      const outputs = await Promise.all(calls.map((call) => runTool(call, toolMap, ctx)));
+      input.push(...outputs);
     }
   };
 }
 
+function parseArguments(raw: string): { ok: true; value: unknown } | { ok: false; error: string } {
+  if (!raw.trim()) return { ok: true, value: {} };
+  try {
+    return { ok: true, value: JSON.parse(raw) as unknown };
+  } catch (err) {
+    return { ok: false, error: `The arguments are not valid JSON (${err instanceof Error ? err.message : String(err)}).` };
+  }
+}
+
 async function runTool(
-  block: Anthropic.Beta.BetaToolUseBlock,
+  call: ResponseFunctionToolCall,
   toolMap: Map<string, AgentTool>,
   ctx: TaskRunContext,
-): Promise<Anthropic.Beta.BetaToolResultBlockParam> {
-  const tool = toolMap.get(block.name);
+): Promise<ResponseInputItem.FunctionCallOutput> {
+  const tool = toolMap.get(call.name);
   const started = Date.now();
+  const args = parseArguments(call.arguments);
   await ctx.emit({
     type: 'tool_call',
-    toolUseId: block.id,
-    tool: block.name,
-    displayName: tool?.displayName ?? block.name,
+    toolUseId: call.call_id,
+    tool: call.name,
+    displayName: tool?.displayName ?? call.name,
     source: tool?.source ?? 'builtin',
     pluginId: tool?.pluginId,
-    input: previewInput(block.input),
+    input: previewInput(args.ok ? args.value : call.arguments),
   });
 
-  const finish = async (content: ToolResultContent, ok: boolean, summary: string): Promise<Anthropic.Beta.BetaToolResultBlockParam> => {
-    await ctx.emit({ type: 'tool_result', toolUseId: block.id, tool: block.name, ok, summary, durationMs: Date.now() - started });
-    return { type: 'tool_result', tool_use_id: block.id, content: nonEmpty(content), ...(ok ? {} : { is_error: true }) };
+  const finish = async (content: ToolResultContent, ok: boolean, summary: string): Promise<ResponseInputItem.FunctionCallOutput> => {
+    await ctx.emit({ type: 'tool_result', toolUseId: call.call_id, tool: call.name, ok, summary, durationMs: Date.now() - started });
+    return { type: 'function_call_output', call_id: call.call_id, output: toFunctionOutput(content, ok) };
   };
 
-  if (!tool) return finish(`Unknown tool "${block.name}".`, false, 'unknown tool');
+  if (!tool) return finish(`Unknown tool "${call.name}".`, false, 'unknown tool');
+  if (!args.ok) return finish(`${args.error}\nCall the tool again with complete, valid JSON arguments.`, false, 'invalid JSON');
 
-  const parsed = tool.parse(block.input);
+  const parsed = tool.parse(args.value);
   if (!parsed.ok) {
     return finish(`${JSON.stringify({ INVALID_INPUT: true })}\n${parsed.error}\nCall the tool again with a complete, valid input.`, false, 'invalid input');
   }
@@ -246,8 +297,8 @@ async function runTool(
   const reason = tool.confirmation(parsed.value);
   if (reason) {
     const decision = await ctx.confirm({
-      toolUseId: block.id,
-      tool: block.name,
+      toolUseId: call.call_id,
+      tool: call.name,
       displayName: tool.displayName,
       pluginId: tool.pluginId ?? null,
       pluginName: tool.pluginName ?? null,
@@ -273,7 +324,7 @@ async function runTool(
   } catch (err) {
     if (ctx.signal.aborted) throw ctx.signal.reason ?? err;
     const message = err instanceof Error ? err.message : String(err);
-    log.warn(`Tool ${block.name} failed: ${message}`);
+    log.warn(`Tool ${call.name} failed: ${message}`);
     return finish(`Tool error: ${message}`, false, `error: ${message.slice(0, 140)}`);
   }
 }

@@ -42,7 +42,6 @@ function zodTool<S extends z.ZodType>(def: {
   displayName: string;
   description: string;
   schema: S;
-  eagerInput?: boolean;
   confirmation?: (input: z.output<S>) => string | null;
   execute: (input: z.output<S>, ctx: TaskRunContext) => Promise<ToolOutput>;
 }): AgentTool {
@@ -52,7 +51,6 @@ function zodTool<S extends z.ZodType>(def: {
     description: def.description,
     inputSchema: toInputSchema(def.schema),
     source: 'builtin',
-    eagerInput: def.eagerInput,
     parse(input) {
       const parsed = def.schema.safeParse(input);
       if (parsed.success) return { ok: true, value: parsed.data };
@@ -196,7 +194,6 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
         'BusinessActor, ApplicationComponent, ApplicationService, DataObject, Node, SystemSoftware, TechnologyService, Requirement, WorkPackage.',
       ].join(' '),
       schema: ArchimateModelSchema.extend({ fileName }),
-      eagerInput: true,
       async execute(input, ctx) {
         const { fileName: base, ...model } = input;
         const result = buildArchimate(model);
@@ -261,7 +258,6 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
         'fragment nesting, Mermaid/PlantUML reserved words); on success it stores an SVG, Mermaid source (renders on GitHub), PlantUML source and the JSON.',
       ].join(' '),
       schema: SequenceDiagramSchema.extend({ fileName }),
-      eagerInput: true,
       async execute(input, ctx) {
         const { fileName: base, ...diagram } = input;
         const result = buildSequence(diagram);
@@ -327,7 +323,6 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
         'create_archimate_model / create_sequence_diagram in this task. Ids of requirements, decisions, risks and issues must be unique.',
       ].join(' '),
       schema: TechSpecSchema.extend({ fileName }),
-      eagerInput: true,
       async execute(input, ctx) {
         const { fileName: base, ...spec } = input;
         const diagrams = new Map<string, ResolvedDiagram>();
@@ -508,8 +503,7 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
             .min(1)
             .max(200),
         }),
-        eagerInput: true,
-        confirmation: (input) =>
+          confirmation: (input) =>
           config.plane.confirm === 'always' ? `Membuat ${input.items.length} work item di project Plane ${input.project_id ?? config.plane.projectId}` : null,
         async execute(input, ctx) {
           const projectId = input.project_id ?? config.plane.projectId;

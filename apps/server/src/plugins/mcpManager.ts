@@ -5,6 +5,7 @@ import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotoc
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { PluginConfig, PluginStatus } from '@solar/shared';
+import type { ToolResultBlock } from '../agent/types.js';
 import { APP_NAME, APP_VERSION } from '../config.js';
 import { createLogger } from '../logger.js';
 import type { EventBus } from '../tasks/eventBus.js';
@@ -30,9 +31,7 @@ export interface McpToolBinding {
   tool: McpToolDescriptor;
 }
 
-export type McpResultBlock =
-  | { type: 'text'; text: string }
-  | { type: 'image'; source: { type: 'base64'; media_type: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'; data: string } };
+export type McpResultBlock = ToolResultBlock;
 
 export interface McpCallResult {
   blocks: McpResultBlock[];
@@ -47,7 +46,7 @@ interface Connection {
   connecting: Promise<void> | null;
 }
 
-/** Anthropic tool names must match ^[a-zA-Z0-9_-]{1,64}$. */
+/** OpenAI function names must match ^[a-zA-Z0-9_-]{1,64}$. */
 export function qualifyToolName(pluginId: string, toolName: string): string {
   const plugin = pluginId.replace(/[^a-zA-Z0-9]/g, '_');
   const tool = toolName.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -305,10 +304,7 @@ export function convertResult(result: { content?: unknown[]; structuredContent?:
       case 'image': {
         const mime = String(block.mimeType ?? '');
         if (IMAGE_TYPES.has(mime) && typeof block.data === 'string') {
-          blocks.push({
-            type: 'image',
-            source: { type: 'base64', media_type: mime as 'image/png', data: block.data },
-          });
+          blocks.push({ type: 'image', mimeType: mime, data: block.data });
         } else {
           pushText(`[image omitted: unsupported type ${mime || 'unknown'}]`);
         }

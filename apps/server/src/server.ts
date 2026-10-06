@@ -2,10 +2,10 @@ import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
-import Anthropic from '@anthropic-ai/sdk';
 import express, { type NextFunction, type Request, type Response } from 'express';
-import { createAgentRunner, type MessagesStreamer } from './agent/agent.js';
+import { createAgentRunner, type ResponsesStreamer } from './agent/agent.js';
 import { createBuiltinTools } from './agent/builtinTools.js';
+import { createOpenAIStreamer } from './agent/openaiClient.js';
 import type { AgentTool } from './agent/types.js';
 import { APP_NAME, APP_VERSION, loadConfig, type AppConfig } from './config.js';
 import { createLogger } from './logger.js';
@@ -27,8 +27,8 @@ export interface StartOptions {
   config?: AppConfig;
   /** Override the configured port (0 = random free port, used by the desktop app). */
   port?: number;
-  /** Inject a model client (tests). Defaults to the Anthropic SDK. */
-  messages?: MessagesStreamer;
+  /** Inject a model client (tests). Defaults to the OpenAI Responses API. */
+  responses?: ResponsesStreamer;
   /** Additional tools (tests / extensions). */
   extraTools?: AgentTool[];
 }
@@ -54,7 +54,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   const artifacts = new ArtifactService(repo, objects);
   const tasks = new TaskManager(repo, artifacts, bus, {
     concurrency: config.taskConcurrency,
-    model: config.anthropic.model,
+    model: config.openai.model,
     confirmationTimeoutMs: config.confirmationTimeoutMs,
   });
   await tasks.recoverInterrupted();
@@ -65,11 +65,11 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   await plugins.init();
   const mcp = new McpManager(plugins, bus);
 
-  const messages = options.messages ?? new Anthropic({ maxRetries: 4 }).beta.messages;
+  const responses = options.responses ?? createOpenAIStreamer(config);
   tasks.setRunner(
     createAgentRunner({
       config,
-      messages,
+      responses,
       skills,
       plugins,
       mcp,
@@ -121,7 +121,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   mcp.startAll();
   log.info(`${APP_NAME} ${APP_VERSION} listening on ${url}`);
   log.info(`Storage: ${repo.kind} database, ${objects.kind} artifacts (data dir: ${config.dataDir})`);
-  log.info(`Model: ${config.anthropic.model} (effort ${config.anthropic.effort})${config.anthropic.configured ? '' : ' - WARNING: ANTHROPIC_API_KEY is not set'}`);
+  log.info(`Model: OpenAI ${config.openai.model} (reasoning effort ${config.openai.effort})${config.openai.configured ? '' : ' - WARNING: OPENAI_API_KEY is not set'}`);
 
   return {
     url,

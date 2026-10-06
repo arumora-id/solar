@@ -73,7 +73,7 @@ describe('plugins', () => {
     expect(store.get('vp')!.headers!.Authorization).toBe('Bearer real-secret');
   });
 
-  it('builds valid Anthropic tool names', () => {
+  it('builds valid OpenAI function names', () => {
     const name = qualifyToolName('visual-paradigm', 'a'.repeat(100));
     expect(name.length).toBeLessThanOrEqual(64);
     expect(name).toMatch(/^[a-zA-Z0-9_-]+$/);
@@ -90,13 +90,13 @@ describe('plugins', () => {
   it('passes proxy settings to stdio plugins but never other secrets', () => {
     const env = stdioEnvironment(
       { PLANE_API_KEY: 'p' },
-      { HTTPS_PROXY: 'http://proxy:8080', NODE_EXTRA_CA_CERTS: '/ca.pem', npm_config_registry: 'https://r', ANTHROPIC_API_KEY: 'secret', GITHUB_TOKEN: 'secret' },
+      { HTTPS_PROXY: 'http://proxy:8080', NODE_EXTRA_CA_CERTS: '/ca.pem', npm_config_registry: 'https://r', OPENAI_API_KEY: 'secret', GITHUB_TOKEN: 'secret' },
     );
     expect(env.HTTPS_PROXY).toBe('http://proxy:8080');
     expect(env.NODE_EXTRA_CA_CERTS).toBe('/ca.pem');
     expect(env.npm_config_registry).toBe('https://r');
     expect(env.PLANE_API_KEY).toBe('p');
-    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(env.OPENAI_API_KEY).toBeUndefined();
     expect(env.GITHUB_TOKEN).toBeUndefined();
   });
 

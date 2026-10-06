@@ -1,8 +1,10 @@
-import type Anthropic from '@anthropic-ai/sdk';
 import type { ToolSource } from '@solar/shared';
 import type { TaskRunContext } from '../tasks/taskManager.js';
 
-export type ToolResultContent = string | Array<Anthropic.Beta.BetaTextBlockParam | Anthropic.Beta.BetaImageBlockParam>;
+/** Provider-neutral tool output block (converted to the model API's format by the agent loop). */
+export type ToolResultBlock = { type: 'text'; text: string } | { type: 'image'; mimeType: string; data: string };
+
+export type ToolResultContent = string | ToolResultBlock[];
 
 export interface ToolOutput {
   content: ToolResultContent;
@@ -21,8 +23,6 @@ export interface AgentTool {
   source: ToolSource;
   pluginId?: string;
   pluginName?: string;
-  /** Large inputs (documents, models) are streamed eagerly and validated by `parse`. */
-  eagerInput?: boolean;
   parse(input: unknown): ParseResult;
   /** Returns the reason when the user must approve this call, otherwise null. */
   confirmation(input: unknown): string | null;

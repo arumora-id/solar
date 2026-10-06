@@ -30,8 +30,8 @@ export function SystemPanel() {
   const rows: Array<[string, string]> = config
     ? [
         ['Versi', `${config.appName} ${config.version}`],
-        ['Model', `${config.model} (effort ${config.effort})`],
-        ['API key Anthropic', config.anthropicConfigured ? 'Terisi' : 'BELUM diisi (ANTHROPIC_API_KEY)'],
+        ['Model', `${config.provider} ${config.model} (reasoning effort ${config.effort})`],
+        ['API key OpenAI', config.openaiConfigured ? 'Terisi' : 'BELUM diisi (OPENAI_API_KEY)'],
         ['Database', config.storage.database === 'neon-postgres' ? 'Neon Postgres (DATABASE_URL)' : 'File lokal (data/)'],
         ['Penyimpanan artefak', config.storage.objects === 's3' ? 'Object storage S3 (Neon/S3)' : 'File lokal (data/artifacts)'],
         ['GitHub', config.github.configured ? `Terhubung · repo default: ${config.github.defaultRepo ?? '-'} (${config.github.defaultBranch})` : 'Belum (GITHUB_TOKEN)'],
@@ -84,7 +84,7 @@ export function SystemPanel() {
           ))}
         </tbody>
       </table>
-      <p className="hint">Kredensial (Anthropic, Neon, S3, GitHub, Plane, Visual Paradigm) diatur di file .env - lihat README.</p>
+      <p className="hint">Kredensial (OpenAI, Neon, S3, GitHub, Plane, Visual Paradigm) diatur di file .env - lihat README.</p>
 
       <label className="field">
         <span>Token akses SOLAR (SOLAR_ACCESS_TOKEN)</span>

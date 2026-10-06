@@ -199,7 +199,7 @@ if (!gotLock) {
         message: 'Isi kredensial di file .env terlebih dahulu',
         detail:
           `File konfigurasi dibuat di:\n${envFile}\n\n` +
-          'Isi minimal ANTHROPIC_API_KEY. Opsional: DATABASE_URL (Neon), S3_* (object storage), GITHUB_TOKEN, PLANE_* dan VP_MCP_*. ' +
+          'Isi minimal OPENAI_API_KEY. Opsional: DATABASE_URL (Neon), S3_* (object storage), GITHUB_TOKEN, PLANE_* dan VP_MCP_*. ' +
           'Simpan file lalu jalankan ulang SOLAR.',
         buttons: ['Buka file .env', 'Nanti'],
         defaultId: 0,

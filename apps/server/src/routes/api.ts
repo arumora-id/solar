@@ -83,9 +83,10 @@ export function createApiRouter(deps: ApiDeps): Router {
     const body: PublicConfig = {
       appName: APP_NAME,
       version: APP_VERSION,
-      model: config.anthropic.model,
-      effort: config.anthropic.effort,
-      anthropicConfigured: config.anthropic.configured,
+      provider: 'OpenAI',
+      model: config.openai.model,
+      effort: config.openai.effort,
+      openaiConfigured: config.openai.configured,
       authRequired: Boolean(config.accessToken),
       storage: { database: deps.repo.kind, objects: deps.objectsKind },
       github: { configured: Boolean(config.github.token), defaultRepo: config.github.defaultRepo ?? null, defaultBranch: config.github.defaultBranch },

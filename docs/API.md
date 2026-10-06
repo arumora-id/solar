@@ -8,7 +8,7 @@ Base URL: `http://127.0.0.1:8790/api`. Semua body JSON. Bila `SOLAR_ACCESS_TOKEN
 | Method | Path | Keterangan |
 |---|---|---|
 | GET | `/health` | `{ ok, name, version }` |
-| GET | `/config` | Konfigurasi publik: model, effort, mode penyimpanan, status GitHub/Plane, apakah token wajib. |
+| GET | `/config` | Konfigurasi publik: provider (OpenAI), model, reasoning effort, `openaiConfigured`, mode penyimpanan, status GitHub/Plane, apakah token wajib. |
 | GET | `/stream` | Server-Sent Events: `hello`, `task`, `event`, `delta`, `plugins` (lihat `StreamMessage` di `packages/shared`). |
 
 ## Task
