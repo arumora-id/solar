@@ -1,0 +1,25 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+apps/*/dist/
+apps/desktop/release/
+packages/*/dist/
+
+# runtime data (tasks, artifacts, user plugins/skills, secrets)
+data/
+*.log
+
+# environment
+.env
+.env.*
+!.env.example
+
+# editor / OS
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+coverage/
