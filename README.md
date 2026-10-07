@@ -177,7 +177,7 @@ macOS, Linux, Android dan iPhone/iPad.
   *Instal SOLAR AI AGENT*. **iPhone/iPad (Safari):** Bagikan → *Tambahkan ke Layar Utama*.
 - Browser hanya mengizinkan pemasangan dari **HTTPS** atau **localhost**. Di komputer yang menjalankan SOLAR (`npm start`
   atau aplikasi desktop) buka <http://127.0.0.1:8790> di Chrome/Edge. Untuk perangkat lain: jalankan server dengan
-  `HOST=0.0.0.0` + `SOLAR_ACCESS_TOKEN` di balik reverse proxy HTTPS - lihat [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md).
+  `SOLAR_ACCESS_TOKEN` di balik reverse proxy HTTPS - lihat [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md).
 - Tampilan aplikasi disimpan per versi oleh *service worker*, sehingga tetap terbuka (status **Terputus**) saat server
   tidak terjangkau; task, event stream, unggahan dan unduhan (`/api`) selalu langsung ke server dan tidak pernah
   di-cache. Saat versi baru tersedia, SOLAR menampilkan **Versi baru tersedia → Muat ulang**.
@@ -507,8 +507,10 @@ zip bomb, PDF hasil scan, file rusak, ekstensi yang salah, API unggah dan tool d
 Workflow **Desktop installer (Windows)** membuat installer Windows dan paket server + web app, lalu menerbitkan
 GitHub Release berisi keduanya:
 
-1. Samakan versi di `package.json`, `packages/shared`, `apps/server`, `apps/web`, `apps/desktop` dan `APP_VERSION`
-   di `apps/server/src/config.ts` (workflow menolak versi yang tidak sama), lalu merge ke `main`.
+1. Samakan versi di `package.json`, `packages/shared`, `apps/server`, `apps/web`, `apps/desktop`, dependency
+   `"@solar/shared"` di `apps/server/package.json` dan `apps/web/package.json`, dan `APP_VERSION` di
+   `apps/server/src/config.ts` (workflow menolak versi yang tidak sama). Jalankan
+   `npm install --package-lock-only --ignore-scripts` agar `package-lock.json` ikut diperbarui, lalu merge ke `main`.
 2. Push tag `v<versi>` (mis. `git tag v1.0.0 && git push origin v1.0.0`), **atau** *Actions → Desktop installer
    (Windows) → Run workflow* dari `main` dengan **release** dicentang - tag dibuat otomatis pada commit tersebut.
 

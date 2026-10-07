@@ -44,7 +44,13 @@ export function TopBar({ path, onOpenSettings }: { path: string; onOpenSettings:
         <span>{connected ? 'Terhubung' : 'Terputus'}</span>
       </span>
       {canInstall && (
-        <button type="button" className="btn small" onClick={() => void installApp()} title="Pasang SOLAR AI AGENT sebagai aplikasi">
+        <button
+          type="button"
+          className="btn small install"
+          onClick={() => void installApp()}
+          title="Pasang SOLAR AI AGENT sebagai aplikasi"
+          aria-label="Pasang aplikasi"
+        >
           <InstallIcon size={16} /> <span className="label-wide">Pasang aplikasi</span>
         </button>
       )}

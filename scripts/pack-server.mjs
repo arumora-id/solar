@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { zipSync } from 'fflate';
+import { thirdPartyLicenses } from './third-party-licenses.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
@@ -57,6 +58,8 @@ addDir('knowledge', /^$/);
 addDir('config', /^$/);
 add('.env.example');
 add('docs/SELF-HOSTING.md', 'README.md');
+add('THIRD_PARTY_NOTICES.md');
+files[`${top}/THIRD_PARTY_LICENSES.txt`] = new TextEncoder().encode(thirdPartyLicenses(root));
 
 const out = join(root, 'release', `SOLAR-AI-AGENT-server-${version}.zip`);
 mkdirSync(dirname(out), { recursive: true });

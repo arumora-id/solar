@@ -2,9 +2,11 @@
  * SOLAR AI AGENT service worker. Template: apps/web/pwa/sw.js; the build (apps/web/pwa/plugin.ts) fills in VERSION
  * and PRECACHE and writes dist/sw.js.
  *
- * - The app shell (index, scripts, styles, icons) is cached per build, so the UI opens offline and loads fast.
+ * - The app shell (index, scripts, styles, icons) is cached per build and pages are served from it, so the UI opens
+ *   offline (also when a reverse proxy answers 502 for a stopped server) and always matches this worker.
  * - /api is never touched: tasks, the event stream, uploads and downloads always go to the server.
- * - A new build installs next to the old one and waits; the page asks the user before switching (SKIP_WAITING).
+ * - A new build installs next to the old one and waits; the page asks the user before switching (SKIP_WAITING), and
+ *   it takes over by itself once every SOLAR window is closed.
  */
 const VERSION = '__SOLAR_VERSION__';
 const PRECACHE = __SOLAR_PRECACHE__;
@@ -40,10 +42,14 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
   if (url.pathname === '/api' || url.pathname.startsWith('/api/')) return;
 
-  if (request.mode === 'navigate') {
-    // the server's page first (it may be newer); the cached shell when the server cannot be reached
+  // a page of the app (not a file such as /favicon.svg): this build's shell, so the page and its files always match
+  // this worker; the server's page only when the shell is not cached
+  if (request.mode === 'navigate' && !/\.[^/]*$/.test(url.pathname)) {
     event.respondWith(
-      fetch(request).catch(() => caches.open(CACHE).then((cache) => cache.match(SHELL)).then((shell) => shell || Response.error())),
+      caches
+        .open(CACHE)
+        .then((cache) => cache.match(SHELL))
+        .then((shell) => shell || fetch(request)),
     );
     return;
   }

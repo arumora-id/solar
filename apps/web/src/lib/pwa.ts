@@ -70,6 +70,11 @@ export async function installApp(): Promise<boolean> {
 /** Switches to the waiting version and reloads once it controls the page. */
 export function applyUpdate(): void {
   if (!waitingWorker) return;
+  // another window (tab, installed app) already switched to this version and it controls this page too: just reload
+  if (waitingWorker.state !== 'installed') {
+    window.location.reload();
+    return;
+  }
   let reloaded = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (reloaded) return;

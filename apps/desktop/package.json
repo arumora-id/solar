@@ -9,7 +9,7 @@
   "scripts": {
     "build": "node build.mjs",
     "start": "npm run build && electron .",
-    "dist:win": "npm run build && electron-builder --win --x64 --publish never",
+    "dist:win": "npm run build && node ../../scripts/third-party-licenses.mjs && electron-builder --win --x64 --publish never",
     "typecheck": "tsc -p tsconfig.json"
   },
   "devDependencies": {
@@ -56,6 +56,14 @@
       {
         "from": "../../config",
         "to": "config"
+      },
+      {
+        "from": "../../THIRD_PARTY_NOTICES.md",
+        "to": "THIRD_PARTY_NOTICES.md"
+      },
+      {
+        "from": "../../release/THIRD_PARTY_LICENSES.txt",
+        "to": "THIRD_PARTY_LICENSES.txt"
       }
     ],
     "asar": true,

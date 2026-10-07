@@ -27,7 +27,10 @@ artefak tetap membutuhkan server. Versi baru dipasang otomatis; SOLAR menawarkan
 
 Browser hanya mengizinkan pemasangan dari **HTTPS** atau dari **localhost**. Untuk perangkat lain di jaringan:
 
-1. Di `.env`: `HOST=0.0.0.0` dan `SOLAR_ACCESS_TOKEN=<token acak yang panjang>` (wajib bila SOLAR terbuka ke jaringan).
+1. Di `.env`: `SOLAR_ACCESS_TOKEN=<token acak yang panjang>` (wajib: tanpa token, API menolak permintaan lewat proxy).
+   Biarkan `HOST` pada default `127.0.0.1` bila proxy berjalan di komputer yang sama, agar port 8790 tidak terbuka tanpa
+   enkripsi di jaringan. Pakai `HOST=0.0.0.0` hanya bila proxy berada di mesin lain, dan batasi port 8790 dengan
+   firewall hanya untuk proxy tersebut.
 2. Pasang reverse proxy HTTPS di depan port 8790, misalnya [Caddy](https://caddyserver.com):
 
    ```text

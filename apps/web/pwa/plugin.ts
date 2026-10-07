@@ -35,31 +35,35 @@ export function solarServiceWorker(): Plugin {
     configResolved(resolved) {
       config = resolved;
     },
-    generateBundle(_options, bundle) {
-      const files = new Map<string, string | Uint8Array>();
-      for (const [fileName, output] of Object.entries(bundle)) {
-        if (fileName === 'index.html' || SKIP.test(fileName)) continue;
-        files.set(fileName, output.type === 'chunk' ? output.code : output.source);
-      }
-      if (config.publicDir) {
-        for (const file of publicFiles(config.publicDir)) {
-          if (!SKIP.test(file)) files.set(file, readFileSync(join(config.publicDir, file)));
+    // after vite:build-html, so bundle['index.html'] (the precached '/') exists and is part of the version
+    generateBundle: {
+      order: 'post',
+      handler(_options, bundle) {
+        const files = new Map<string, string | Uint8Array>();
+        for (const [fileName, output] of Object.entries(bundle)) {
+          if (fileName === 'index.html' || SKIP.test(fileName)) continue;
+          files.set(fileName, output.type === 'chunk' ? output.code : output.source);
         }
-      }
-      const index = bundle['index.html'];
-      const names = [...files.keys()].sort();
-      const hash = createHash('sha256');
-      for (const name of names) hash.update(name).update('\0').update(files.get(name)!).update('\0');
-      if (index?.type === 'asset') hash.update(index.source);
-      const version = hash.digest('hex').slice(0, 16);
-      const precache = ['/', ...names.map((name) => `/${name}`)];
-      const template = readFileSync(join(config.root, 'pwa', 'sw.js'), 'utf8');
-      this.emitFile({
-        type: 'asset',
-        fileName: 'sw.js',
-        // replacer functions: a "$" in a file name must not be read as a replacement pattern
-        source: template.replace('__SOLAR_VERSION__', () => version).replace('__SOLAR_PRECACHE__', () => JSON.stringify(precache, null, 2)),
-      });
+        if (config.publicDir) {
+          for (const file of publicFiles(config.publicDir)) {
+            if (!SKIP.test(file)) files.set(file, readFileSync(join(config.publicDir, file)));
+          }
+        }
+        const index = bundle['index.html'];
+        const names = [...files.keys()].sort();
+        const hash = createHash('sha256');
+        for (const name of names) hash.update(name).update('\0').update(files.get(name)!).update('\0');
+        if (index?.type === 'asset') hash.update(index.source);
+        const version = hash.digest('hex').slice(0, 16);
+        const precache = ['/', ...names.map((name) => `/${name}`)];
+        const template = readFileSync(join(config.root, 'pwa', 'sw.js'), 'utf8');
+        this.emitFile({
+          type: 'asset',
+          fileName: 'sw.js',
+          // replacer functions: a "$" in a file name must not be read as a replacement pattern
+          source: template.replace('__SOLAR_VERSION__', () => version).replace('__SOLAR_PRECACHE__', () => JSON.stringify(precache, null, 2)),
+        });
+      },
     },
   };
 }
