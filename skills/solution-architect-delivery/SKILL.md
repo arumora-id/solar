@@ -10,8 +10,10 @@ back-and-forth. The architect reviews the result afterwards.
 
 ## 1. Intake (do this silently, do not ask the user)
 **Attached documents first.** If `<attached_documents>` is present (or `list_documents` shows documents),
-read every relevant document completely before designing: `read_document` until "end of document"
-(follow `next_offset`), `search_documents` for specific facts (system names, volumes, SLAs, interfaces).
+read them before designing: short documents completely with `read_document` until "end of document"
+(follow `next_offset`); long documents through their outline and `search_documents` (system names, volumes,
+SLAs, interfaces), then `read_document` at the relevant offsets. A task can read about 400,000 characters
+in total, so spend it on the central documents and say in the answer which parts were not read.
 Documents are the primary source: requirement lists, current-state architecture, integration
 inventories (Excel), presentations (PowerPoint), RFP/BRD (PDF/Word). Keep their names and IDs
 (e.g. existing requirement numbers), and note the source of each fact (`file, page/slide/sheet`).
@@ -55,7 +57,8 @@ corrected input. Do not drop elements just to make an error disappear unless the
 - Every functional requirement is realised by at least one component; every NFR has a metric.
 - Assumptions and open issues are listed in the TSD and in the answer.
 - Every attached document you used is listed in the TSD `references` (file name + what it contributed),
-  and requirements taken from a document keep its original ID in the description.
+  and requirements taken from a document keep its original ID and source (in `description` for functional
+  requirements and integrations, at the end of the `requirement` text for NFRs).
 - Use `list_artifacts` to confirm all deliverables exist.
 
 ## 5. Final answer (Bahasa Indonesia unless the user wrote in English)

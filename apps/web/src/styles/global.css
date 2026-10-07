@@ -479,6 +479,23 @@ a {
   padding: 4px 8px;
   text-align: left;
 }
+/* previews render on a white page in both themes: keep code and tables light */
+.preview-frame.markdown pre,
+.preview-frame.markdown code {
+  background: #f6f8fa;
+  color: #1f2328;
+}
+.preview-frame.markdown pre {
+  border-color: #d0d7de;
+}
+.preview-frame.markdown th,
+.preview-frame.markdown td,
+.preview-frame.markdown hr {
+  border-color: #d0d7de;
+}
+.preview-frame.markdown a {
+  color: #0969da;
+}
 .markdown img {
   max-width: 100%;
   background: #fff;

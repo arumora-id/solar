@@ -1,5 +1,7 @@
 import type { Attachment } from '@solar/shared';
+import { neutralizeFraming } from '../documents/safe.js';
 import type { AttachmentService } from '../tasks/attachmentService.js';
+import { READ_BUDGET_CHARS } from './documentTools.js';
 
 /** Attached documents up to this many characters in total are included in full in the first message. */
 export const INLINE_DOCUMENT_CHARS = 60_000;
@@ -29,7 +31,7 @@ export async function documentsIntro(attachments: Attachment[], service: Attachm
   if (total <= INLINE_DOCUMENT_CHARS) {
     const blocks: string[] = [];
     for (const a of attachments) {
-      const text = (await service.readText(a)).replace(/<\/document>/gi, '<\\/document>');
+      const text = neutralizeFraming(await service.readText(a));
       const warnings = a.warnings.length ? ` warnings="${attr(a.warnings.join(' | '))}"` : '';
       const parts = partsLabel(a);
       blocks.push(`<document id="${a.id}" name="${attr(a.name)}" kind="${a.kind}"${parts ? ` parts="${parts}"` : ''}${warnings}>\n${text}\n</document>`);
@@ -42,11 +44,12 @@ export async function documentsIntro(attachments: Attachment[], service: Attachm
       const meta = [a.kind, partsLabel(a), `${a.chars} characters`].filter(Boolean).join(', ');
       const outline = a.outline.length ? `\n  outline:\n${a.outline.map((o) => `    ${o}`).join('\n')}` : '';
       const warnings = a.warnings.length ? `\n  warnings: ${a.warnings.join(' | ')}` : '';
-      return `- ${a.id} | ${a.name} | ${meta}${warnings}${outline}`;
+      return neutralizeFraming(`- ${a.id} | ${a.name} | ${meta}${warnings}${outline}`);
     })
     .join('\n');
-  return (
-    `${header}\nTogether they are too long to include here (${total} characters). Before designing, read every document that is relevant ` +
-    `to the request completely with read_document (follow next_offset to the end); use search_documents to find specific facts.\n${list}\n</attached_documents>`
-  );
+  const plan =
+    total <= READ_BUDGET_CHARS * 0.75
+      ? 'Before designing, read every relevant document completely with read_document (follow next_offset to the end).'
+      : `Together they exceed what you can read in one task (about ${READ_BUDGET_CHARS} characters). Read the short, central documents completely; for long ones use the outline and search_documents, then read_document only the relevant sections. Say in the answer which parts you did not read.`;
+  return `${header}\nThey are too long to include here (${total} characters). ${plan}\n${list}\n</attached_documents>`;
 }

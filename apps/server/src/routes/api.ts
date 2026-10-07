@@ -175,13 +175,17 @@ export function createApiRouter(deps: ApiDeps): Router {
       req.body,
     );
     const ids = [...new Set(body.attachmentIds)];
-    const found = await attachments.listByIds(ids);
-    for (const id of ids) {
-      const a = found.find((x) => x.id === id);
-      if (!a) throw new HttpError(400, `Lampiran ${id} tidak ditemukan`);
-      if (a.sessionId !== body.sessionId) throw new HttpError(400, `Lampiran "${a.name}" milik percakapan lain`);
-    }
-    res.status(201).json(await tasks.create(body.prompt, body.sessionId, ids));
+    // validated and created under the conversation lock: a concurrent DELETE cannot remove a document in between
+    const task = await attachments.withSession(body.sessionId, async () => {
+      const found = await attachments.listByIds(ids);
+      for (const id of ids) {
+        const a = found.find((x) => x.id === id);
+        if (!a) throw new HttpError(400, `Lampiran ${id} tidak ditemukan`);
+        if (a.sessionId !== body.sessionId) throw new HttpError(400, `Lampiran "${a.name}" milik percakapan lain`);
+      }
+      return tasks.create(body.prompt, body.sessionId, ids);
+    });
+    res.status(201).json(task);
   });
 
   r.get('/tasks', async (req, res) => {
@@ -273,17 +277,28 @@ export function createApiRouter(deps: ApiDeps): Router {
   r.post('/attachments', uploadBody, async (req, res) => {
     const q = parse(z.object({ sessionId: z.string().trim().min(1).max(100), name: z.string().trim().min(1).max(300) }), req.query);
     if (!Buffer.isBuffer(req.body) || req.body.length === 0) throw new HttpError(400, 'Isi file kosong');
+    // the client may give up while the document is being read (chip removed, page left): then do not keep it
+    let clientGone = false;
+    res.on('close', () => {
+      if (!res.writableFinished) clientGone = true;
+    });
+    let created;
     try {
-      res.status(201).json(await attachments.create(q.sessionId, q.name, req.body));
+      created = await attachments.create(q.sessionId, q.name, req.body);
     } catch (err) {
       if (err instanceof DocumentError) throw new HttpError(err.status, err.message);
       throw err;
     }
+    if (clientGone) {
+      await attachments.remove(created.id);
+      return;
+    }
+    res.status(201).json(created);
   });
 
   r.get('/attachments', async (req, res) => {
-    const q = parse(z.object({ sessionId: z.string().trim().min(1).max(100) }), req.query);
-    res.json(await attachments.listForSession(q.sessionId));
+    const q = parse(z.object({ sessionId: z.string().trim().min(1).max(100), unsent: z.enum(['0', '1']).optional() }), req.query);
+    res.json(q.unsent === '1' ? await attachments.listUnsent(q.sessionId) : await attachments.listForSession(q.sessionId));
   });
 
   r.get('/attachments/:id', async (req, res) => {

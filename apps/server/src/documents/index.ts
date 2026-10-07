@@ -1,4 +1,5 @@
 import { detectKind } from './kind.js';
+import { truncate, wellFormed } from './safe.js';
 import { csvToMarkdown, decodeText, normalizeNewlines } from './text.js';
 import { DocumentError, type ExtractedDocument, type ExtractOptions } from './types.js';
 
@@ -62,10 +63,10 @@ export async function extractDocument(buffer: Buffer, fileName: string, options:
     clearTimeout(timer);
   }
 
-  let markdown = normalizeNewlines(result.markdown).replace(/\n{4,}/g, '\n\n\n').trim();
-  const warnings = [...result.warnings];
+  let markdown = wellFormed(normalizeNewlines(result.markdown).replace(/\n{4,}/g, '\n\n\n').trim());
+  const warnings = result.warnings.map(wellFormed);
   if (markdown.length > maxChars) {
-    markdown = `${markdown.slice(0, maxChars)}\n\n[SOLAR: teks dipotong pada ${maxChars.toLocaleString('id-ID')} karakter]`;
+    markdown = `${truncate(markdown, maxChars)}\n\n[SOLAR: teks dipotong pada ${maxChars.toLocaleString('id-ID')} karakter]`;
     warnings.push(`Dokumen sangat panjang; hanya ${maxChars.toLocaleString('id-ID')} karakter pertama yang disimpan.`);
   }
   if (!markdown.replace(/[#\s|\-:<>!\[\]()*_`]/g, '')) {
@@ -84,7 +85,7 @@ export function outlineOf(markdown: string, max = 25): string[] {
   for (const line of markdown.split('\n')) {
     const m = /^(#{1,3})\s+(.+?)\s*#*\s*$/.exec(line);
     if (!m) continue;
-    out.push(`${'  '.repeat(m[1]!.length - 1)}${m[2]!.slice(0, 120)}`);
+    out.push(`${'  '.repeat(m[1]!.length - 1)}${truncate(m[2]!, 120)}`);
     if (out.length >= max) break;
   }
   return out;

@@ -5,23 +5,25 @@
 const CP1252_HIGH = '€\uFFFD‚ƒ„…†‡ˆ‰Š‹Œ\uFFFDŽ\uFFFD\uFFFD‘’“”•–—˜™š›œ\uFFFDžŸ';
 
 export function decodeWindows1252(buffer: Buffer): string {
-  let out = '';
-  for (const byte of buffer) out += byte >= 0x80 && byte <= 0x9f ? CP1252_HIGH[byte - 0x80] : String.fromCharCode(byte);
-  return out;
+  // latin1 maps bytes 1:1 to code points; only 0x80-0x9F need the Windows-1252 characters
+  return buffer.toString('latin1').replace(/[\u0080-\u009f]/g, (c) => CP1252_HIGH[c.charCodeAt(0) - 0x80]!);
 }
 
-/** Decodes text files: UTF-8 (with or without BOM), UTF-16 with BOM, otherwise Windows-1252 when UTF-8 is clearly wrong. */
+const strictUtf8 = new TextDecoder('utf-8', { fatal: true });
+
+/** Decodes text files: UTF-8 (with or without BOM), UTF-16 with BOM, otherwise Windows-1252 (e.g. an ANSI export from Excel). */
 export function decodeText(buffer: Buffer): string {
   if (buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
     return new TextDecoder('utf-8').decode(buffer.subarray(3));
   }
   if (buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe) return new TextDecoder('utf-16le').decode(buffer.subarray(2));
   if (buffer.length >= 2 && buffer[0] === 0xfe && buffer[1] === 0xff) return new TextDecoder('utf-16be').decode(buffer.subarray(2));
-  const utf8 = new TextDecoder('utf-8').decode(buffer);
-  const invalid = (utf8.match(/�/g) ?? []).length;
-  // a few replacement characters can be genuine; many mean the file is not UTF-8 (e.g. an Excel CSV export on Windows)
-  if (invalid > 0 && invalid > utf8.length / 200) return decodeWindows1252(buffer);
-  return utf8;
+  try {
+    // valid UTF-8 never fails strict decoding; a single invalid sequence means the file uses another encoding
+    return strictUtf8.decode(buffer);
+  } catch {
+    return decodeWindows1252(buffer);
+  }
 }
 
 export function normalizeNewlines(text: string): string {
@@ -47,9 +49,13 @@ export function markdownTable(rows: string[][]): string {
   return lines.join('\n');
 }
 
-/** RFC 4180 CSV parser (quoted fields with delimiters, quotes and newlines). Detects `,`, `;` or tab. */
-export function parseCsv(text: string): string[][] {
-  const firstLine = text.slice(0, text.indexOf('\n') >= 0 ? text.indexOf('\n') : text.length);
+/**
+ * RFC 4180 CSV parser (quoted fields with delimiters, quotes and newlines). Detects `,`, `;` or tab.
+ * Stops after `maxRows` non-empty rows (`truncated` tells whether data remained), so huge exports stay cheap.
+ */
+export function parseCsvLimited(text: string, maxRows = Infinity): { rows: string[][]; truncated: boolean } {
+  const nl = text.indexOf('\n');
+  const firstLine = text.slice(0, nl >= 0 ? nl : text.length);
   const count = (d: string) => {
     let n = 0;
     let quoted = false;
@@ -65,6 +71,12 @@ export function parseCsv(text: string): string[][] {
   let row: string[] = [];
   let field = '';
   let quoted = false;
+  const endRow = () => {
+    row.push(field);
+    if (row.some((v) => v.trim() !== '')) rows.push(row);
+    row = [];
+    field = '';
+  };
   for (let i = 0; i < text.length; i++) {
     const ch = text[i]!;
     if (quoted) {
@@ -80,19 +92,18 @@ export function parseCsv(text: string): string[][] {
       row.push(field);
       field = '';
     } else if (ch === '\n') {
-      row.push(field);
-      rows.push(row);
-      row = [];
-      field = '';
+      endRow();
+      if (rows.length >= maxRows) return { rows, truncated: text.slice(i + 1).trim() !== '' };
     } else if (ch !== '\r') {
       field += ch;
     }
   }
-  if (field !== '' || row.length > 0) {
-    row.push(field);
-    rows.push(row);
-  }
-  return rows.filter((r) => r.some((v) => v.trim() !== ''));
+  if (field !== '' || row.length > 0) endRow();
+  return { rows: rows.slice(0, maxRows), truncated: rows.length > maxRows };
+}
+
+export function parseCsv(text: string): string[][] {
+  return parseCsvLimited(text).rows;
 }
 
 export const MAX_TABLE_ROWS = 2000;
@@ -101,12 +112,10 @@ export const MAX_TABLE_COLUMNS = 60;
 /** CSV → Markdown table, capped to a sane size for the model. */
 export function csvToMarkdown(text: string, title: string): { markdown: string; warnings: string[] } {
   const warnings: string[] = [];
-  let rows = parseCsv(text);
+  const parsed = parseCsvLimited(text, MAX_TABLE_ROWS + 1);
+  let rows = parsed.rows;
   if (rows.length === 0) return { markdown: `# ${title}\n\n_(file CSV kosong)_`, warnings: ['File CSV kosong.'] };
-  if (rows.length > MAX_TABLE_ROWS + 1) {
-    warnings.push(`CSV berisi ${rows.length - 1} baris data; hanya ${MAX_TABLE_ROWS} baris pertama yang dibaca.`);
-    rows = rows.slice(0, MAX_TABLE_ROWS + 1);
-  }
+  if (parsed.truncated) warnings.push(`CSV berisi lebih dari ${MAX_TABLE_ROWS} baris data; hanya ${MAX_TABLE_ROWS} baris pertama yang dibaca.`);
   const width = Math.max(...rows.map((r) => r.length));
   if (width > MAX_TABLE_COLUMNS) {
     warnings.push(`CSV berisi ${width} kolom; hanya ${MAX_TABLE_COLUMNS} kolom pertama yang dibaca.`);

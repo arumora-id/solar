@@ -75,7 +75,8 @@ export const api = {
   config: () => request<PublicConfig>('GET', '/api/config'),
   createTask: (prompt: string, sessionId: string, attachmentIds: string[] = []) =>
     request<Task>('POST', '/api/tasks', { prompt, sessionId, attachmentIds }),
-  listAttachments: (sessionId: string) => request<Attachment[]>('GET', `/api/attachments?sessionId=${encodeURIComponent(sessionId)}`),
+  listAttachments: (sessionId: string, unsentOnly = false) =>
+    request<Attachment[]>('GET', `/api/attachments?sessionId=${encodeURIComponent(sessionId)}${unsentOnly ? '&unsent=1' : ''}`),
   deleteAttachment: (id: string) => request<null>('DELETE', `/api/attachments/${encodeURIComponent(id)}`),
   attachmentDownloadUrl: (id: string) => withToken(`/api/attachments/${encodeURIComponent(id)}/content`),
   attachmentText: async (id: string) => {

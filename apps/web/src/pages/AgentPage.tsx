@@ -42,7 +42,17 @@ export function AgentPage() {
   const [speaking, setSpeaking] = useState(false);
   const [mood, setMood] = useState<'happy' | 'sad' | null>(null);
   const [dragging, setDragging] = useState(false);
-  const dragDepth = useRef(0);
+
+  // a drag that ends anywhere (drop elsewhere, Esc, leaving the window) must hide the overlay
+  useEffect(() => {
+    const stop = () => setDragging(false);
+    window.addEventListener('drop', stop);
+    window.addEventListener('dragend', stop);
+    return () => {
+      window.removeEventListener('drop', stop);
+      window.removeEventListener('dragend', stop);
+    };
+  }, []);
   const [compact, setCompact] = useState(() => readPref('compactStage', false));
 
   useEffect(() => {
@@ -156,7 +166,6 @@ export function AgentPage() {
         onDragEnter={(e) => {
           if (!hasFiles(e)) return;
           e.preventDefault();
-          dragDepth.current += 1;
           setDragging(true);
         }}
         onDragOver={(e) => {
@@ -166,13 +175,13 @@ export function AgentPage() {
         }}
         onDragLeave={(e) => {
           if (!hasFiles(e)) return;
-          dragDepth.current = Math.max(0, dragDepth.current - 1);
-          if (dragDepth.current === 0) setDragging(false);
+          // only when the pointer really left the chat (streamed answers replace nodes under the pointer)
+          const to = e.relatedTarget as Node | null;
+          if (!to || !e.currentTarget.contains(to)) setDragging(false);
         }}
         onDrop={(e) => {
           if (!hasFiles(e)) return;
           e.preventDefault();
-          dragDepth.current = 0;
           setDragging(false);
           composerRef.current?.addFiles(Array.from(e.dataTransfer.files));
         }}

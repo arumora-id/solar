@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Attachment } from '@solar/shared';
 import { api } from '../lib/api';
 import { formatBytes } from '../lib/format';
-import { renderMarkdown } from '../lib/markdown';
+import { renderDocumentMarkdown } from '../lib/markdown';
 import { useSolar } from '../lib/store';
 import { AlertIcon, DownloadIcon, FileIcon, SpinnerIcon, XIcon } from './Icons';
 
@@ -128,6 +128,8 @@ const PREVIEW_CHARS = 200_000;
 export function AttachmentPreview({ attachment, onClose }: { attachment: Attachment; onClose: () => void }) {
   const [text, setText] = useState<string | null>(null);
   const [error, setError] = useState('');
+  // plain text documents are shown as they are; others can switch between formatted and raw Markdown
+  const [raw, setRaw] = useState(attachment.kind === 'text');
   const modalRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -146,12 +148,12 @@ export function AttachmentPreview({ attachment, onClose }: { attachment: Attachm
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  const shown = text === null ? '' : text.length > PREVIEW_CHARS ? `${text.slice(0, PREVIEW_CHARS)}\n\n… (pratinjau dipotong; agen tetap membaca seluruh teks)` : text;
   const html = useMemo(() => {
-    if (text === null) return '';
-    const shown = text.length > PREVIEW_CHARS ? `${text.slice(0, PREVIEW_CHARS)}\n\n*… pratinjau dipotong; agen tetap membaca seluruh teks.*` : text;
-    // page markers are HTML comments (removed by the sanitizer): show them as separators
-    return renderMarkdown(shown.replace(/^<!--\s*page\s+(\d+)\s*-->$/gim, '\n---\n\n*Halaman $1*\n'));
-  }, [text]);
+    if (text === null || raw) return '';
+    // page markers would otherwise appear as escaped comments: show them as separators
+    return renderDocumentMarkdown(shown.replace(/^<!--\s*page\s+(\d+)\s*-->$/gim, '\n---\n\n*Halaman $1*\n'));
+  }, [text, raw, shown]);
 
   return (
     <div className="backdrop" onClick={(e) => e.target === e.currentTarget && onClose()} role="dialog" aria-modal="true" aria-label={attachment.name}>
@@ -169,8 +171,18 @@ export function AttachmentPreview({ attachment, onClose }: { attachment: Attachm
           {[typeLabel(attachment.name), partsText(attachment), formatBytes(attachment.size), `${attachment.chars.toLocaleString('id-ID')} karakter teks`]
             .filter(Boolean)
             .join(' · ')}
-          {' - '}teks di bawah adalah isi yang dibaca agen.
+          {' - '}teks hasil ekstraksi inilah yang dibaca agen.
         </p>
+        {attachment.kind !== 'text' && (
+          <div className="seg" role="group" aria-label="Tampilan teks" style={{ marginBottom: 10, alignSelf: 'flex-start' }}>
+            <button type="button" aria-pressed={!raw} onClick={() => setRaw(false)}>
+              Diformat
+            </button>
+            <button type="button" aria-pressed={raw} onClick={() => setRaw(true)}>
+              Teks mentah
+            </button>
+          </div>
+        )}
         {attachment.warnings.length > 0 && (
           <div className="warn-box">
             {attachment.warnings.map((w) => (
@@ -186,7 +198,12 @@ export function AttachmentPreview({ attachment, onClose }: { attachment: Attachm
             <SpinnerIcon /> Memuat teks…
           </p>
         )}
-        {text !== null && (
+        {text !== null && raw && (
+          <pre className="json preview-text" style={{ maxHeight: 'none' }}>
+            {shown}
+          </pre>
+        )}
+        {text !== null && !raw && (
           <div className="preview-frame markdown" style={{ overflow: 'auto', padding: 20, color: '#1f2328' }} dangerouslySetInnerHTML={{ __html: html }} />
         )}
       </div>

@@ -55,7 +55,12 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ di
   valueRef.current = value;
   const filesRef = useRef(files);
   filesRef.current = files;
-  const aborts = useRef(new Map<string, () => void>());
+  /** Cancels an upload: aborts it while the body is being sent, otherwise marks it to be deleted once the server answers. */
+  const cancels = useRef(new Map<string, () => void>());
+  /** Keys whose document must be deleted when its upload completes (removed while the server was reading it). */
+  const discarded = useRef(new Set<string>());
+  /** Keys of the chips submitted with the request in flight (they cannot be removed meanwhile). */
+  const [sentKeys, setSentKeys] = useState<Set<string>>(() => new Set());
 
   const limits = config?.attachments;
   const extensions = limits?.extensions ?? ATTACHMENT_EXTENSIONS;
@@ -65,23 +70,40 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ di
 
   const update = (key: string, patch: Partial<PendingFile>) => setFiles((list) => list.map((f) => (f.key === key ? { ...f, ...patch } : f)));
 
-  /** Drops every pending file: aborts uploads and deletes uploaded-but-unsent documents on the server. */
+  /** Drops every pending file: cancels uploads and deletes uploaded-but-unsent documents on the server. */
   const discardAll = useCallback(() => {
-    for (const abort of aborts.current.values()) abort();
-    aborts.current.clear();
+    for (const cancel of cancels.current.values()) cancel();
+    cancels.current.clear();
     for (const f of filesRef.current) if (f.attachment) void api.deleteAttachment(f.attachment.id).catch(() => undefined);
     setFiles([]);
   }, []);
 
-  // attachments belong to one conversation: a new conversation starts without them
+  // attachments belong to one conversation: a new conversation starts without them; documents uploaded earlier
+  // in this conversation but never sent (page reload, app restart) come back as chips
   const sessionRef = useRef(sessionId);
   useEffect(() => {
     if (sessionRef.current !== sessionId) {
       sessionRef.current = sessionId;
       discardAll();
     }
-  }, [sessionId, discardAll]);
-  useEffect(() => () => discardAll(), [discardAll]);
+    let alive = true;
+    api
+      .listAttachments(sessionId, true)
+      .then((unsent) => {
+        if (!alive || unsent.length === 0) return;
+        rememberAttachments(unsent);
+        setFiles((list) => [
+          ...unsent
+            .filter((a) => !list.some((f) => f.attachment?.id === a.id))
+            .map((a): PendingFile => ({ key: `f${++keySeq}`, name: a.name, size: a.size, status: 'ready', progress: 1, attachment: a })),
+          ...list,
+        ]);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [sessionId, discardAll, rememberAttachments]);
 
   const addFiles = useCallback(
     (incoming: File[]) => {
@@ -110,34 +132,43 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ di
       setError('');
 
       for (const { key, file } of accepted) {
-        const handle = uploadAttachment(file, sessionId, (phase, fraction) =>
-          update(key, phase === 'upload' ? { status: 'uploading', progress: fraction } : { status: 'reading', progress: 1 }),
-        );
-        aborts.current.set(key, handle.abort);
+        let bodySent = false;
+        const handle = uploadAttachment(file, sessionId, (phase, fraction) => {
+          if (phase === 'read') bodySent = true;
+          update(key, phase === 'upload' ? { status: 'uploading', progress: fraction } : { status: 'reading', progress: 1 });
+        });
+        // once the body is on the server it will be stored anyway: wait for the id and delete it instead of aborting
+        cancels.current.set(key, () => (bodySent ? discarded.current.add(key) : handle.abort()));
         handle.promise
           .then((attachment) => {
-            if (!filesRef.current.some((f) => f.key === key)) {
-              // removed while it was being read: do not leave it on the server
+            if (discarded.current.delete(key)) {
               void api.deleteAttachment(attachment.id).catch(() => undefined);
               return;
             }
             rememberAttachments([attachment]);
-            update(key, { status: 'ready', attachment });
+            // the restore of unsent documents may already show this one: keep a single chip
+            setFiles((list) =>
+              list.some((f) => f.key !== key && f.attachment?.id === attachment.id)
+                ? list.filter((f) => f.key !== key)
+                : list.map((f) => (f.key === key ? { ...f, status: 'ready', attachment } : f)),
+            );
           })
           .catch((err: unknown) => {
+            discarded.current.delete(key);
             if (err instanceof DOMException && err.name === 'AbortError') return;
             update(key, { status: 'error', error: err instanceof Error ? err.message : String(err) });
           })
-          .finally(() => aborts.current.delete(key));
+          .finally(() => cancels.current.delete(key));
       }
     },
     [extensions, maxFileMb, maxPerTask, sessionId, rememberAttachments],
   );
 
   const removeFile = (key: string) => {
+    if (sentKeys.has(key)) return;
     const f = filesRef.current.find((x) => x.key === key);
-    aborts.current.get(key)?.();
-    aborts.current.delete(key);
+    cancels.current.get(key)?.();
+    cancels.current.delete(key);
     if (f?.attachment) void api.deleteAttachment(f.attachment.id).catch(() => undefined);
     setFiles((list) => list.filter((x) => x.key !== key));
   };
@@ -150,18 +181,24 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ di
         setError('Tunggu sampai semua lampiran selesai dibaca.');
         return;
       }
-      const ids = filesRef.current.filter((f) => f.status === 'ready' && f.attachment).map((f) => f.attachment!.id);
+      const sent = filesRef.current.filter((f) => f.status === 'ready' && f.attachment);
+      const keys = new Set(sent.map((f) => f.key));
       setSending(true);
+      setSentKeys(keys);
       setError('');
       try {
-        await onSubmit(prompt, ids);
+        await onSubmit(
+          prompt,
+          sent.map((f) => f.attachment!.id),
+        );
         setValue('');
-        // the documents now belong to the task: keep them on the server
-        setFiles([]);
+        // the sent documents now belong to the task (kept on the server); chips added meanwhile stay
+        setFiles((list) => list.filter((f) => !keys.has(f.key)));
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
         setSending(false);
+        setSentKeys(new Set());
       }
     },
     [onSubmit, sending],
@@ -226,7 +263,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ di
               error={f.error}
               warnings={f.attachment?.warnings}
               onOpen={f.attachment ? () => setPreview(f.attachment!) : undefined}
-              onRemove={() => removeFile(f.key)}
+              onRemove={sentKeys.has(f.key) ? undefined : () => removeFile(f.key)}
             />
           ))}
         </div>
@@ -277,10 +314,13 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ di
           onChange={(e) => setValue(e.target.value)}
           onPaste={(e) => {
             const pasted = Array.from(e.clipboardData.files);
-            if (pasted.length) {
-              e.preventDefault();
-              addFiles(pasted);
-            }
+            if (pasted.length === 0) return;
+            // Excel/Word/PowerPoint put a picture next to the copied text: that is a text paste, not an attachment
+            const types = Array.from(e.clipboardData.types);
+            const hasText = types.includes('text/plain') || types.includes('text/html');
+            if (hasText && pasted.every((f) => f.type.startsWith('image/'))) return;
+            e.preventDefault();
+            addFiles(pasted);
           }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {

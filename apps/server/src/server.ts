@@ -122,6 +122,12 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   }
 
   mcp.startAll();
+  // documents uploaded but never sent with a request are removed after a day
+  const ATTACHMENT_GC_AGE = 24 * 3_600_000;
+  const gc = () => void attachments.collectGarbage(ATTACHMENT_GC_AGE).catch((err) => log.warn(`Attachment cleanup failed: ${String(err)}`));
+  gc();
+  const gcTimer = setInterval(gc, 6 * 3_600_000);
+  gcTimer.unref();
   log.info(`${APP_NAME} ${APP_VERSION} listening on ${url}`);
   log.info(`Storage: ${repo.kind} database, ${objects.kind} artifacts (data dir: ${config.dataDir})`);
   log.info(`Model: OpenAI ${config.openai.model} (reasoning effort ${config.openai.effort})${config.openai.configured ? '' : ' - WARNING: OPENAI_API_KEY is not set'}`);
@@ -131,6 +137,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     port: actualPort,
     config,
     async close() {
+      clearInterval(gcTimer);
       server.closeAllConnections?.();
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await mcp.shutdown();

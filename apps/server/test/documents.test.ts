@@ -22,6 +22,12 @@ describe('text decoding', () => {
     expect(decodeText(cp1252)).toBe('“Rapat” – café €5');
   });
 
+  it('detects Windows-1252 even when only one character is not ASCII', () => {
+    const ascii = Buffer.from(`${'id;nama\n'.repeat(200)}`, 'latin1');
+    const row = Buffer.from([0x32, 0x30, 0x31, 0x3b, 0x4a, 0x6f, 0x73, 0xe9]); // "201;José" in cp1252
+    expect(decodeText(Buffer.concat([ascii, row])).endsWith('201;José')).toBe(true);
+  });
+
   it('caps very large CSV files and says so', () => {
     const rows = ['a,b', ...Array.from({ length: MAX_TABLE_ROWS + 50 }, (_, i) => `${i},x`)].join('\n');
     const { markdown, warnings } = csvToMarkdown(rows, 'big');

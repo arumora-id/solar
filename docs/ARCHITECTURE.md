@@ -92,19 +92,23 @@ model memperbaiki input lalu memanggil ulang.
    `ATTACHMENT_MAX_MB`. `AttachmentService` memvalidasi nama & ekstensi lalu memanggil `documents/extractDocument`.
 2. Ekstraksi (modul `apps/server/src/documents`) mengubah setiap format menjadi **Markdown** yang menjaga struktur:
    judul, daftar, tabel Markdown, penanda `<!-- page N -->` (PDF), `## Slide N: judul` + catatan pembicara (PowerPoint),
-   `## Sheet: nama` + tabel dengan nilai yang sudah diformat (Excel/CSV). Batas keamanan: ukuran file, ukuran hasil
-   dekompresi ZIP (anti zip bomb), jumlah baris/kolom, panjang teks (2 juta karakter) dan batas waktu. File lama
-   (`.doc/.xls/.ppt`), terenkripsi atau rusak ditolak dengan pesan yang jelas.
+   `## Sheet: nama` + tabel dengan nilai yang sudah diformat (Excel); CSV menjadi satu tabel di bawah `# <nama file>`.
+   Teks dideteksi sebagai UTF-8/UTF-16, selain itu Windows-1252 (ekspor ANSI dari Excel). Batas keamanan: ukuran file,
+   ukuran hasil dekompresi ZIP (anti zip bomb), jumlah baris/kolom (CSV/Excel berhenti di 2.000 baris), panjang teks
+   (2 juta karakter) dan batas waktu. File lama (`.doc/.xls/.ppt`), terenkripsi atau rusak ditolak dengan pesan yang jelas.
 3. File asli dan hasil ekstraksi disimpan di object store (`attachments/<id>/…`), metadata (`Attachment`) di repository
    (`solar_attachments` / `data/attachments/*.json`). UI menampilkan chip + pratinjau teks hasil ekstraksi.
-4. `POST /api/tasks` membawa `attachmentIds` (harus satu percakapan). Pesan pertama ke model berisi blok
-   `<attached_documents>`: teks lengkap bila total ≤ 60.000 karakter, selain itu daftar + outline dan instruksi untuk
-   membaca dengan tool.
-5. Tool agent: `list_documents`, `read_document` (potongan berdasarkan offset, lanjut dengan `next_offset`),
-   `search_documents` (frasa, lalu semua kata; mengembalikan lokasi halaman/slide/sheet terdekat). Dokumen percakapan
-   sebelumnya tetap bisa dibaca task berikutnya.
-6. Prompt-injection: isi dokumen dibingkai sebagai data dari pengguna; system prompt dan deskripsi tool melarang mengikuti
-   instruksi di dalam dokumen. Aksi eksternal tetap tunduk pada aturan konfirmasi plugin.
+4. `POST /api/tasks` membawa `attachmentIds` (harus satu percakapan; validasi + pembuatan task berjalan di bawah kunci
+   per percakapan sehingga lampiran tidak bisa terhapus di tengahnya). Pesan pertama ke model berisi blok
+   `<attached_documents>`: teks lengkap bila total ≤ 60.000 karakter, selain itu daftar + outline dan strategi baca.
+5. Tool agent: `list_documents`, `read_document` (potongan berdasarkan offset, lanjut dengan `next_offset`; anggaran
+   ±400.000 karakter per task karena setiap bacaan tetap ada di input model), `search_documents` (frasa, lalu semua
+   kata; semua dokumen dicari secara bergiliran; mengembalikan lokasi halaman/slide/sheet terdekat). Agen hanya melihat
+   dokumen yang benar-benar dikirim bersama permintaan (task ini atau task sebelumnya di percakapan yang sama).
+6. Dokumen yang diunggah tetapi belum dikirim muncul lagi sebagai chip setelah reload, dan dihapus otomatis setelah 24 jam.
+7. Prompt-injection: isi dokumen dibingkai sebagai data dari pengguna; tag pembingkai SOLAR di dalam teks dokumen
+   dinetralkan; system prompt dan deskripsi tool melarang mengikuti instruksi di dalam dokumen. Aksi eksternal tetap tunduk
+   pada aturan konfirmasi plugin.
 
 ## 4. Konfirmasi (human-in-the-loop)
 

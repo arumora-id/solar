@@ -282,7 +282,9 @@ export class TaskManager {
     const ids = task.attachmentIds ?? [];
     if (ids.length === 0) return [];
     const found = new Map((await this.repo.listAttachments({ ids })).map((a) => [a.id, a]));
-    return ids.map((id) => found.get(id)).filter((a): a is Attachment => Boolean(a));
+    const list = ids.map((id) => found.get(id)).filter((a): a is Attachment => Boolean(a));
+    if (list.length < ids.length) log.warn(`Task ${task.id}: ${ids.length - list.length} attached document(s) no longer exist`);
+    return list;
   }
 
   private async buildSessionContext(task: Task): Promise<string> {

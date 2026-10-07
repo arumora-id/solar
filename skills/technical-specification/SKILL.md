@@ -47,5 +47,6 @@ the content. Read `nfr-catalog.md` (via `read_skill_file`) when writing non-func
 - Every diagram created in this task is referenced (architecture.diagrams or processFlows).
 - Assumptions and open issues are honest - nothing invented to look complete.
 - When documents were attached: requirements, integrations and NFRs reflect them (keep their IDs/names),
-  each is traceable to its source (`file, page/slide/sheet` in the description), and conflicts between
-  sources are open issues.
+  each is traceable to its source (`file, page/slide/sheet` in `description` for functional requirements and
+  integrations; NFRs have no description field, so append the source to the `requirement` text), and conflicts
+  between sources are open issues.
