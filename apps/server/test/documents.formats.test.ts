@@ -348,6 +348,28 @@ describe('review hardening', () => {
     expect(utf16.markdown).toBe('Catatan rapat: café ≥ 99,9%');
   });
 
+  it('counts each sheet skipped for the text limit once', async () => {
+    const sheet = (n: number) =>
+      `<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${Array.from(
+        { length: 10 },
+        (_, i) => `<row r="${i + 1}"><c r="A${i + 1}" t="inlineStr"><is><t>S${n}-${i + 1} ${'x'.repeat(80)}</t></is></c></row>`,
+      ).join('')}</sheetData></worksheet>`;
+    const buffer = officeZip('xl/workbook.xml', SHEET_MAIN, {
+      'xl/workbook.xml': `<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="${REL}"><sheets>${[1, 2, 3]
+        .map((n) => `<sheet name="S${n}" sheetId="${n}" r:id="rId${n}"/>`)
+        .join('')}</sheets></workbook>`,
+      'xl/_rels/workbook.xml.rels': `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${[1, 2, 3]
+        .map((n) => `<Relationship Id="rId${n}" Type="${REL}/worksheet" Target="worksheets/sheet${n}.xml"/>`)
+        .join('')}</Relationships>`,
+      'xl/worksheets/sheet1.xml': sheet(1),
+      'xl/worksheets/sheet2.xml': sheet(2),
+      'xl/worksheets/sheet3.xml': sheet(3),
+    });
+    // S1 fills the budget while reading, so S2 and S3 are skipped
+    const doc = await extractDocument(buffer, 'tiga.xlsx', { maxChars: 600 });
+    expect(doc.warnings).toContain('2 sheet terakhir tidak dibaca karena teks workbook sudah mencapai batas 600 karakter.');
+  });
+
   it('reads a text note that starts with "%PDF-" as text', async () => {
     const doc = await extractDocument(Buffer.from('%PDF-1.7 adalah versi spesifikasi yang kami pakai.\nCatatan lain.'), 'catatan.txt');
     expect(doc.kind).toBe('text');

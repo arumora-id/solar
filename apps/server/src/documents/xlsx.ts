@@ -235,9 +235,9 @@ export async function extractXlsx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
       sh.kind = 'chart';
       continue;
     }
+    // counted in skippedForChars when rendering, together with the sheets the render budget skips
     if (textChars > maxChars) {
       sh.kind = 'skipped';
-      skippedForChars += 1;
       continue;
     }
     sh.kind = /\/dialogsheet$/.test(sh.rel.type) ? 'dialog' : 'sheet';
