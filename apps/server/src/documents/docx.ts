@@ -3,7 +3,8 @@
  * ZIP reader), turndown turns that into Markdown with rules for tables, compact lists, footnotes and images.
  */
 import type TurndownService from 'turndown';
-import { fmtInt, fmtMB, MB, mdTable, withTimeout } from './limits.js';
+import { fmtInt, mdTable, withTimeout } from './limits.js';
+import { checkPart, LIST_MARK, normPath, prepareDocx } from './docxPrepare.js';
 import { DocumentError, documentError, type ParseContext, type ParsedDocument } from './types.js';
 import type { OoxmlPackage, ZipArchive } from './zip.js';
 
@@ -117,7 +118,12 @@ async function getTurndown(): Promise<TurndownService> {
       const n = dom(node);
       let prefix = '- ';
       const parent = n.parentNode;
-      if (parent && parent.nodeName === 'OL') {
+      const label = new RegExp(`^\\s*${LIST_MARK}([^${LIST_MARK}]*)${LIST_MARK}\\s*`).exec(content);
+      if (label) {
+        // the number Word shows (continues across interruptions, "2.1", "a)", ...)
+        prefix = `${label[1]} `;
+        content = content.slice(label[0].length);
+      } else if (parent && parent.nodeName === 'OL') {
         const start = parent.getAttribute('start');
         const index = Array.prototype.indexOf.call(parent.children, n);
         prefix = `${start ? Number(start) + index : index + 1}. `;
@@ -176,46 +182,10 @@ async function getTurndown(): Promise<TurndownService> {
   return td;
 }
 
-/**
- * Cuts an oversized WordprocessingML main part after the last complete top-level body block (paragraph, table,
- * content control, ...) that fits in `budget` characters, then closes the body. Null when no cut is needed or possible.
- */
-export function truncateDocxXml(xml: string, budget: number): string | null {
-  if (xml.length <= budget) return null;
-  const rootMatch = /<([\w.-]+:)?document\b/.exec(xml);
-  const prefix = rootMatch ? (rootMatch[1] ?? '') : 'w:';
-  const bodyAt = xml.indexOf(`<${prefix}body`);
-  if (bodyAt < 0) return null;
-  const re = /<(\/?)([\w.:-]+)[^>]*?(\/?)>/g;
-  re.lastIndex = xml.indexOf('>', bodyAt) + 1;
-  const stack: string[] = [];
-  let lastCut = -1;
-  let closers = '';
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(xml)) && re.lastIndex <= budget) {
-    if (m[0].startsWith('<?') || m[0].startsWith('<!')) continue;
-    if (m[3] === '/') {
-      if (!stack.length && !/sectPr$/.test(m[2]!)) [lastCut, closers] = [re.lastIndex, ''];
-      continue;
-    }
-    if (m[1] === '/') {
-      if (!stack.length) break; // </w:body>
-      stack.pop();
-      if (!stack.length) [lastCut, closers] = [re.lastIndex, ''];
-      // inside a top-level table a finished row is also a safe cut point (the table gets closed)
-      else if (stack.length === 1 && /(^|:)tr$/.test(m[2]!) && /(^|:)tbl$/.test(stack[0]!)) [lastCut, closers] = [re.lastIndex, `</${stack[0]}>`];
-    } else {
-      stack.push(m[2]!);
-    }
-  }
-  if (lastCut < 0) return null;
-  return `${xml.slice(0, lastCut)}${closers}</${prefix}body></${prefix}document>`;
-}
-
 const HTML_VOID = new Set(['br', 'img', 'hr', 'col', 'input', 'meta', 'link', 'wbr', 'area', 'base', 'source']);
 
 function topLevelElements(html: string): string[] {
-  const re = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)\b[^>]*?(\/?)>/g;
+  const re = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)\b[^<>]*?(\/?)>/g;
   const out: string[] = [];
   let depth = 0;
   let start = 0;
@@ -248,34 +218,98 @@ function splitTableRows(tableHtml: string): string[] | null {
   return rows;
 }
 
+/** Direct <li> children of a list. */
+function listItems(listHtml: string): { tag: string; start: number; items: string[] } | null {
+  const open = /^\s*<(ul|ol)\b([^<>]*)>/i.exec(listHtml);
+  if (!open || !new RegExp(`</${open[1]}>\\s*$`, 'i').test(listHtml)) return null;
+  const inner = listHtml.slice(open[0].length, listHtml.toLowerCase().lastIndexOf(`</${open[1]!.toLowerCase()}>`));
+  const start = Number(/\bstart="(\d+)"/.exec(open[2] ?? '')?.[1] ?? 1);
+  return { tag: open[1]!.toLowerCase(), start, items: topLevelElements(inner).filter((el) => /^\s*<li\b/i.test(el)) };
+}
+
+/** Cells of a small table (a layout table holding the document text), or null for a real data table. */
+function layoutCells(tableHtml: string): string[] | null {
+  const rows = splitTableRows(tableHtml);
+  if (!rows || rows.length > 3) return null;
+  const cells: string[] = [];
+  for (const row of rows) {
+    const inner = row.slice(row.indexOf('>') + 1, row.toLowerCase().lastIndexOf('</tr>'));
+    for (const c of topLevelElements(inner)) {
+      const m = /^\s*<(td|th)\b[^<>]*>([\s\S]*)<\/\1>\s*$/i.exec(c);
+      if (m) cells.push(m[2]!);
+    }
+  }
+  return cells;
+}
+
+/** Rowspans still open after each row, so a table is only split where no merged cell continues. */
+function openRowspans(rows: string[]): number[] {
+  const open: number[] = [];
+  let carry = 0;
+  for (const r of rows) {
+    let longest = 0;
+    for (const m of r.matchAll(/\browspan="(\d+)"/gi)) longest = Math.max(longest, Number(m[1]) - 1);
+    carry = Math.max(carry - 1, longest);
+    open.push(carry);
+  }
+  return open;
+}
+
 /**
- * Splits mammoth's flat HTML into chunks of complete top-level elements. turndown's output joining is quadratic in
- * the number of siblings, so one call on a long document takes tens of seconds; per-chunk conversion stays linear.
- * Very large tables are split into row batches; continuation batches are flagged (data-cont) so they render without
- * a header separator and join into one Markdown table.
+ * Splits mammoth's HTML into chunks of complete top-level elements. turndown's output joining is quadratic in the
+ * number of siblings, so one call on a long document takes tens of seconds; per-chunk conversion stays linear.
+ * Long lists are split into batches of items, layout tables (a few rows holding the whole text) are unwrapped, and
+ * very large tables are split into row batches where no merged cell continues; continuation batches are flagged so
+ * they join without a blank line (lists) or without a header separator (tables).
  */
-export function splitTopLevelHtml(html: string, chunkChars = 48 * 1024, rowsPerBatch = 400): Array<{ html: string; cont: boolean }> {
+export function splitTopLevelHtml(html: string, chunkChars = 48 * 1024, rowsPerBatch = 400, itemsPerBatch = 300): Array<{ html: string; cont: boolean }> {
   const chunks: Array<{ html: string; cont: boolean }> = [];
   let cur = '';
+  const flush = () => {
+    if (cur) chunks.push({ html: cur, cont: false });
+    cur = '';
+  };
   for (const el of topLevelElements(html)) {
-    if (el.length > chunkChars * 4 && /^\s*<table\b/i.test(el)) {
-      const rows = splitTableRows(el);
-      if (rows && rows.length > rowsPerBatch) {
-        if (cur) chunks.push({ html: cur, cont: false });
-        cur = '';
-        for (let i = 0; i < rows.length; i += rowsPerBatch) {
-          chunks.push({ html: `<table${i ? ' data-cont="1"' : ''}>${rows.slice(i, i + rowsPerBatch).join('')}</table>`, cont: i > 0 });
+    if (el.length > chunkChars * 4 && /^\s*<(ul|ol)\b/i.test(el)) {
+      const list = listItems(el);
+      if (list && list.items.length > itemsPerBatch) {
+        flush();
+        for (let i = 0; i < list.items.length; i += itemsPerBatch) {
+          const start = list.tag === 'ol' ? ` start="${list.start + i}"` : '';
+          chunks.push({ html: `<${list.tag}${start}>${list.items.slice(i, i + itemsPerBatch).join('')}</${list.tag}>`, cont: i > 0 });
         }
         continue;
       }
     }
-    cur += el;
-    if (cur.length >= chunkChars) {
-      chunks.push({ html: cur, cont: false });
-      cur = '';
+    if (el.length > chunkChars * 4 && /^\s*<table\b/i.test(el)) {
+      const cells = layoutCells(el);
+      if (cells) {
+        flush();
+        for (const cell of cells) chunks.push(...splitTopLevelHtml(cell, chunkChars, rowsPerBatch, itemsPerBatch));
+        continue;
+      }
+      const rows = splitTableRows(el);
+      if (rows && rows.length > rowsPerBatch) {
+        flush();
+        const open = openRowspans(rows);
+        let batch: string[] = [];
+        let first = true;
+        rows.forEach((row, i) => {
+          batch.push(row);
+          const last = i === rows.length - 1;
+          if (last || (batch.length >= rowsPerBatch && open[i] === 0) || batch.length >= rowsPerBatch * 4) {
+            chunks.push({ html: `<table${first ? '' : ' data-cont="1"'}>${batch.join('')}</table>`, cont: !first });
+            batch = [];
+            first = false;
+          }
+        });
+        continue;
+      }
     }
+    cur += el;
+    if (cur.length >= chunkChars) flush();
   }
-  if (cur) chunks.push({ html: cur, cont: false });
+  flush();
   return chunks;
 }
 
@@ -314,35 +348,50 @@ function normalizeHeadings(doc: MammothElement): MammothElement {
 
 const HEADING_STYLES = [1, 2, 3, 4, 5, 6].map((i) => `p[style-name='__h${i}'] => h${i}:fresh`);
 
+/** mammoth notes that say nothing useful to a SOLAR user (styles, images are never displayed anyway, ...). */
+const QUIET_MESSAGES = [
+  /^Unrecognised (paragraph|run|table|numbering) style/i,
+  /w:(proofErr|lastRenderedPageBreak|bookmark)/,
+  /^Image of type .* is unlikely to display in web browsers/i,
+  /style with ID .* was referenced but not defined/i,
+  /^Could not find image file for a:blip element/i,
+];
+
+/** The last block end (paragraph, list item, heading, row, table, list) at or before `cap`. */
+function lastBlockEnd(html: string, cap: number): number {
+  let cut = -1;
+  for (const m of html.slice(0, cap).matchAll(/<\/(?:p|li|h[1-6]|tr|table|ul|ol|blockquote)>/gi)) cut = m.index! + m[0].length;
+  return cut;
+}
+
 export async function extractDocx(ctx: ParseContext, zip: ZipArchive, pkg: OoxmlPackage): Promise<ParsedDocument> {
   const { limits, deadline, warnings, maxChars } = ctx;
+  const prepared = prepareDocx(zip, { limits, deadline, maxChars, warnings });
   const mammoth = (await import('mammoth')).default;
   const td = await getTurndown();
 
-  // mammoth (~100-150 MB of memory per MB of XML) only gets the first blocks of a huge document
-  const xmlBudget = Math.max(1 * MB, Math.min(limits.maxDocxXmlBytes, maxChars * 3));
-  const mainPart = pkg.mainPart.toLowerCase();
-  // mammoth reads the package through this object, so every part goes through the guarded inflater
+  // mammoth reads the package through this object: prepared parts as prepared, every other XML part size-capped and
+  // checked, binary parts (never needed: images are not embedded) through the guarded inflater
+  const checked = new Map<string, string>();
   const file = {
-    exists: (name: string) => zip.has(name),
+    exists: (name: string) => zip.has(name) && !prepared.hidden.has(normPath(name)),
     read: (name: string, encoding?: string): Promise<string | Uint8Array> => {
       try {
         deadline.check();
-        const b = zip.read(name);
-        if (!b) return Promise.reject(new Error(`missing part ${name}`));
-        if (encoding === 'base64') return Promise.resolve(Buffer.from(b).toString('base64'));
-        if (!encoding) return Promise.resolve(b);
-        let text = new TextDecoder(encoding).decode(b);
-        if (name.replace(/^\/+/, '').toLowerCase() === mainPart && text.length > xmlBudget) {
-          const cut = truncateDocxXml(text, xmlBudget);
-          if (cut) {
-            warnings.push(
-              `Dokumen dipotong: hanya ${fmtMB(cut.length)} pertama dari ${fmtMB(text.length)} isi dokumen (~${Math.round((cut.length / text.length) * 100)}%) yang dibaca.`,
-            );
-            text = cut;
-          }
+        const key = normPath(name);
+        if (prepared.hidden.has(key)) return Promise.reject(new Error(`missing part ${name}`));
+        if (!encoding || encoding === 'base64') {
+          const b = zip.read(name);
+          if (!b) return Promise.reject(new Error(`missing part ${name}`));
+          return Promise.resolve(encoding ? Buffer.from(b).toString('base64') : b);
         }
-        return Promise.resolve(text);
+        const text = prepared.texts.get(key) ?? checked.get(key);
+        if (text !== undefined) return Promise.resolve(text);
+        const raw = zip.text(name, limits.maxDocxXmlBytes);
+        if (raw === null) return Promise.reject(new Error(`missing part ${name}`));
+        checkPart(raw, name);
+        checked.set(key, raw);
+        return Promise.resolve(raw);
       } catch (err) {
         return Promise.reject(err);
       }
@@ -364,22 +413,20 @@ export async function extractDocx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
     );
   } catch (err) {
     if (err instanceof DocumentError) throw err;
-    const message = err instanceof Error ? err.message : String(err);
-    throw documentError('CORRUPT', `File rusak atau bukan dokumen Word yang valid (${message.slice(0, 200)}).`);
+    // mammoth's own errors are JavaScript internals; the user gets a plain explanation
+    throw documentError('CORRUPT', 'File Word ini berisi struktur yang tidak bisa dibaca (referensi atau elemen rusak). Coba buka di Word lalu simpan ulang.');
   }
 
-  const notes = (result.messages ?? [])
-    .filter((m) => m.type === 'warning' || m.type === 'error')
-    .map((m) => m.message)
-    .filter((m) => !/^Unrecognised (paragraph|run|table|numbering) style/i.test(m) && !/w:(proofErr|lastRenderedPageBreak|bookmark)/.test(m));
-  for (const m of [...new Set(notes)].slice(0, 3)) warnings.push(`Catatan konversi Word: ${m}`);
+  const unusual = (result.messages ?? []).filter((m) => (m.type === 'warning' || m.type === 'error') && !QUIET_MESSAGES.some((q) => q.test(m.message)));
+  if (unusual.length) warnings.push('Sebagian elemen Word tidak dikenali dan dilewati.');
 
   let html = result.value ?? '';
   const htmlCap = Math.min(limits.maxDocxHtmlChars, Math.max(200_000, maxChars * 4));
   if (html.length > htmlCap) {
-    const cut = html.lastIndexOf('</p>', htmlCap);
-    html = html.slice(0, cut > 0 ? cut + 4 : htmlCap);
-    warnings.push(`Dokumen dipotong: hanya sekitar ${fmtInt(htmlCap)} karakter pertama hasil konversi yang dibaca.`);
+    const total = html.length;
+    const cut = lastBlockEnd(html, htmlCap);
+    html = html.slice(0, cut > 0 ? cut : htmlCap); // the HTML parser closes any list or table left open
+    warnings.push(`Dokumen dipotong: hanya ${fmtInt(html.length)} dari ${fmtInt(total)} karakter hasil konversi (~${Math.round((html.length / total) * 100)}%) yang dibaca.`);
   }
   deadline.check();
   let md = '';
@@ -388,6 +435,8 @@ export async function extractDocx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
     const part = td.turndown(chunk.html).trim();
     if (part) md += (md ? (chunk.cont ? '\n' : '\n\n') : '') + part;
   }
+  // numbers of numbered paragraphs that were not rendered as list items
+  md = md.replace(new RegExp(`${LIST_MARK}([^${LIST_MARK}]*)${LIST_MARK}\\s*`, 'g'), '$1 ');
   // turndown escapes "1." at the start of any block; inside an ATX heading that is unnecessary
   md = md.replace(/^(#{1,6} +\d+(?:\.\d+)*)\\\./gm, '$1.');
   if (/macroenabled/i.test(pkg.mainType)) warnings.push('Dokumen berisi makro; makro diabaikan (tidak pernah dijalankan).');

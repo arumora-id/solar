@@ -235,7 +235,8 @@ export class CharacterScene {
       .to(this.ring.scale, { x: 1, y: 1, z: 1, duration: 0.3 }, 0)
       .to(this.dots.map((d2) => d2.scale), { x: 0.001, y: 0.001, z: 0.001, duration: 0.2 }, 0)
       .to(this.dots.map((d2) => d2.position), { y: (i: number) => this.dotBaseY(i), duration: 0.2 }, 0)
-      .to(r.eyes.map((e) => e.position), { y: r.eyeRestY, duration: 0.3 }, 0);
+      .to(r.eyes.map((e) => e.position), { y: r.eyeRestY, duration: 0.3 }, 0)
+      .to(r.cheeks.map((c) => c.material as THREE.MeshBasicMaterial), { opacity: 0.55, duration: 0.3 }, 0);
     if (next !== 'working') {
       tl.to(r.tablet.scale, { x: 0.001, y: 0.001, z: 0.001, duration: 0.25, onComplete: () => void (r.tablet.visible = false) }, 0);
     }
@@ -271,8 +272,8 @@ export class CharacterScene {
         break;
 
       case 'listening':
-        tl.to(r.earL.rotation, { ...this.ear('L', -0.1, -0.1), duration: 0.35, ease: 'back.out(3)' }, 0)
-          .to(r.earR.rotation, { ...this.ear('R', -0.1, -0.1), duration: 0.35, ease: 'back.out(3)' }, 0)
+        tl.to(r.earL.rotation, { ...this.ear('L', -0.1, -0.1), duration: 0.35, ease: 'back.out(3)', overwrite: 'auto' }, 0)
+          .to(r.earR.rotation, { ...this.ear('R', -0.1, -0.1), duration: 0.35, ease: 'back.out(3)', overwrite: 'auto' }, 0)
           .to(r.head.rotation, { z: 0.14, x: -0.05, duration: 0.5, ease: 'power2.out' }, 0)
           .to(this.ring.material as THREE.MeshBasicMaterial, { opacity: 0.85, duration: 0.3 }, 0);
         if (!calm) {
@@ -312,9 +313,9 @@ export class CharacterScene {
       case 'working':
         r.tablet.visible = true;
         tl.to(r.tablet.scale, { x: 1, y: 1, z: 1, duration: 0.4, ease: 'back.out(2)' }, 0.1)
-          .to(r.armL.rotation, { x: -1.15, z: 0.35, duration: 0.4 }, 0)
-          .to(r.armR.rotation, { x: -1.15, z: -0.35, duration: 0.4 }, 0)
-          .to(r.head.rotation, { x: 0.22, duration: 0.4 }, 0);
+          .to(r.armL.rotation, { x: -1.15, z: 0.35, duration: 0.4, overwrite: 'auto' }, 0)
+          .to(r.armR.rotation, { x: -1.15, z: -0.35, duration: 0.4, overwrite: 'auto' }, 0)
+          .to(r.head.rotation, { x: 0.22, duration: 0.4, overwrite: 'auto' }, 0);
         if (!calm) {
           tl.add(
             gsap
@@ -334,7 +335,7 @@ export class CharacterScene {
         break;
 
       case 'talking':
-        tl.to(r.head.rotation, { x: -0.04, duration: 0.3 }, 0);
+        tl.to(r.head.rotation, { x: -0.04, duration: 0.3, overwrite: 'auto' }, 0);
         if (!calm) {
           const talk = gsap.timeline({ repeat: -1 });
           for (let i = 0; i < 8; i++) {
@@ -368,9 +369,9 @@ export class CharacterScene {
       case 'happy':
         this.bang.visible = true;
         tl.fromTo(this.bang.scale, { x: 0.01, y: 0.01 }, { x: 0.55, y: 0.55, duration: 0.35, ease: 'back.out(3)' }, 0)
-          .to(r.armL.rotation, { z: -2.3, duration: 0.3, ease: 'back.out(2)' }, 0)
-          .to(r.armR.rotation, { z: 2.3, duration: 0.3, ease: 'back.out(2)' }, 0)
-          .to(r.cheeks.map((c) => c.material as THREE.MeshBasicMaterial), { opacity: 0.9, duration: 0.3 }, 0);
+          .to(r.armL.rotation, { z: -2.3, duration: 0.3, ease: 'back.out(2)', overwrite: 'auto' }, 0)
+          .to(r.armR.rotation, { z: 2.3, duration: 0.3, ease: 'back.out(2)', overwrite: 'auto' }, 0)
+          .to(r.cheeks.map((c) => c.material as THREE.MeshBasicMaterial), { opacity: 0.9, duration: 0.3, overwrite: 'auto' }, 0);
         if (!calm) {
           tl.to(this.root.position, { y: 1.1, duration: 0.38, ease: 'power2.out' }, 0.1)
             .to(this.root.rotation, { y: Math.PI * 2, duration: 0.75, ease: 'power2.inOut' }, 0.1)
@@ -417,6 +418,8 @@ export class CharacterScene {
     });
     for (const t of textures) t.dispose();
     this.renderer.dispose();
+    // release the WebGL context now (WEBGL_lose_context) instead of whenever the canvas is garbage-collected
+    this.renderer.forceContextLoss();
     canvas.remove();
   }
 }

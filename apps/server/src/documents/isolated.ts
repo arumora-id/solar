@@ -15,8 +15,20 @@ const MAX_PARALLEL = 2;
 const MEMORY_MB = 1024;
 /** Extra time over the parser's own (cooperative) timeout before the worker is terminated. */
 const HARD_TIMEOUT_GRACE_MS = 5_000;
+/**
+ * Memory one extraction may use, heap and ArrayBuffers together. resourceLimits only caps the V8 heap (and a
+ * --max-old-space-size flag in NODE_OPTIONS overrides it), while pdf.js keeps decoded streams in ArrayBuffers, so the
+ * parent also watches the worker's heap statistics and stops it above this budget.
+ */
+const MEMORY_BUDGET_BYTES = MEMORY_MB * 1024 * 1024;
+const WATCH_INTERVAL_MS = 50;
 
 let cachedUrl: URL | null | undefined;
+
+/** Points extraction at a specific worker bundle (tests), or back to auto-detection with `undefined`. */
+export function setExtractWorkerUrl(url: URL | null | undefined): void {
+  cachedUrl = url;
+}
 
 function workerUrl(): URL | null {
   if (cachedUrl !== undefined) return cachedUrl;
@@ -65,9 +77,22 @@ export async function extractIsolated(buffer: Buffer, fileName: string, options:
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        clearInterval(watchdog);
         void worker.terminate();
         settle();
       };
+      const tooMuchMemory = () =>
+        new DocumentError(`"${fileName}" terlalu besar atau rumit untuk dibaca (batas memori). Pecah dokumen menjadi beberapa file.`, 413, 'TOO_LARGE');
+      const watchdog = setInterval(() => {
+        if (typeof worker.getHeapStatistics !== 'function') return;
+        worker.getHeapStatistics().then(
+          (stats) => {
+            if (stats.used_heap_size + (stats.external_memory ?? 0) > MEMORY_BUDGET_BYTES) finish(() => reject(tooMuchMemory()));
+          },
+          () => {},
+        );
+      }, WATCH_INTERVAL_MS);
+      watchdog.unref();
       const limitMs = (options.timeoutMs ?? DEFAULT_TIMEOUT_MS) + HARD_TIMEOUT_GRACE_MS;
       const timer = setTimeout(
         () =>
@@ -87,7 +112,7 @@ export async function extractIsolated(buffer: Buffer, fileName: string, options:
         finish(() =>
           reject(
             err.code === 'ERR_WORKER_OUT_OF_MEMORY'
-              ? new DocumentError(`"${fileName}" terlalu besar atau rumit untuk dibaca (batas memori). Pecah dokumen menjadi beberapa file.`, 413)
+              ? tooMuchMemory()
               : new DocumentError(`"${fileName}" tidak bisa dibaca: ${err.message.slice(0, 300)}`),
           ),
         ),

@@ -17,6 +17,8 @@ interface ZipEntry {
 }
 
 const STOP = Symbol('stop');
+/** Fully read parts above this size are rejected when their compression ratio is suspicious. */
+const BOMB_MIN_BYTES = 8 * MB;
 /** Small input chunks keep each inflate burst bounded (deflate expands at most ~1032:1). */
 const INPUT_CHUNK = 16 * 1024;
 
@@ -151,8 +153,8 @@ export class ZipArchive {
     if (streaming && ratio > this.limits.maxCompressionRatio && e.usize > this.limits.maxEntryBytes) throw this.bomb(expands);
     // Streamed parts (worksheets, shared strings) are consumed incrementally and may stop early, so their declared
     // size is no reason to reject them; the bytes actually inflated stay capped.
+    if (!streaming && ratio > this.limits.maxCompressionRatio && e.usize > BOMB_MIN_BYTES) throw this.bomb(expands);
     if (!streaming && e.usize > maxBytes) {
-      if (ratio > this.limits.maxCompressionRatio && e.usize > MB) throw this.bomb(`${expands}; batas per bagian ${fmtMB(maxBytes)}`);
       throw this.tooLarge(`bagian "${e.name}" mengembang menjadi ${fmtMB(e.usize)} (batas ${fmtMB(maxBytes)} per bagian)`);
     }
     if (!streaming && this.inflatedTotal + e.usize > this.limits.maxTotalInflatedBytes) {
@@ -288,7 +290,7 @@ export interface Relationship {
 export function parseRels(xml: string | null): Relationship[] {
   const rels: Relationship[] = [];
   if (!xml) return rels;
-  for (const m of xml.matchAll(/<(?:\w+:)?Relationship\b([^>]*?)\/?>/g)) {
+  for (const m of xml.matchAll(/<(?:\w+:)?Relationship\b([^<>]*?)\/?>/g)) {
     const a = parseAttrs(m[1]);
     rels.push({ id: a.Id ?? '', type: a.Type ?? '', target: a.Target ?? '', external: a.TargetMode === 'External' });
   }
@@ -327,7 +329,7 @@ export function classifyOoxml(zip: ZipArchive): OoxmlPackage {
   const overrides = new Map<string, string>();
   const ctXml = zip.text('[Content_Types].xml', 4 * MB);
   if (ctXml) {
-    for (const m of ctXml.matchAll(/<(?:\w+:)?Override\b([^>]*?)\/?>/g)) {
+    for (const m of ctXml.matchAll(/<(?:\w+:)?Override\b([^<>]*?)\/?>/g)) {
       const a = parseAttrs(m[1]);
       if (a.PartName) overrides.set(a.PartName.replace(/^\/+/, '').toLowerCase(), a.ContentType ?? '');
     }

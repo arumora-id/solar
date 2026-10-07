@@ -236,12 +236,12 @@ mengikuti isi dokumen tersebut, bukan asumsi.
 
 | Format | Ekstensi | Yang dibaca |
 |---|---|---|
-| PDF | `.pdf` | Teks per halaman (penanda `<!-- page N -->`), judul dikenali dari ukuran huruf, kolom tabel tetap berjajar. PDF berpassword pemilik (hanya pembatasan salin/cetak) tetap dibaca. |
-| Word | `.docx` | Judul & heading bertingkat, daftar berpoin/bernomor, tabel (termasuk sel gabungan), catatan kaki, versi akhir *track changes*, teks alternatif gambar. |
+| PDF | `.pdf` | Teks per halaman (penanda `<!-- page N -->`), judul dikenali dari ukuran huruf (watermark miring tidak dianggap judul), halaman yang diputar dibaca normal, kolom tabel tetap berjajar. PDF berpassword pemilik (hanya pembatasan salin/cetak) tetap dibaca; halaman yang rusak dilewati. |
+| Word | `.docx` | Judul & heading bertingkat, daftar berpoin/bernomor (penomoran otomatis Word ikut terbaca, mis. "2.1" dan daftar yang berlanjut), tabel (termasuk sel gabungan), catatan kaki, versi akhir *track changes*, teks alternatif gambar. |
 | Excel | `.xlsx`, `.xlsm` | Setiap sheet (`## Sheet: nama`) sebagai tabel: tanggal ISO, persen, nilai hasil rumus, judul sel gabungan; maks. 50 sheet, 1.000 baris × 50 kolom per sheet (jumlah baris sebenarnya disebutkan). |
-| CSV | `.csv` | Satu tabel; pemisah `,` `;` atau tab dikenali otomatis; maks. 2.000 baris. |
+| CSV | `.csv` | Satu tabel; pemisah `,` `;` tab atau `\|` dikenali otomatis (juga petunjuk `sep=;` dari Excel), baris judul di atas tabel menjadi keterangan; maks. 2.000 baris. |
 | PowerPoint | `.pptx` | Slide sesuai urutan presentasi (`## Slide N: judul`), poin bertingkat, tabel, data grafik, SmartArt, deskripsi gambar, **catatan pembicara**. |
-| Markdown / teks | `.md`, `.markdown`, `.txt` | Apa adanya (UTF-8, UTF-16, atau Windows-1252 dari ekspor lama). |
+| Markdown / teks | `.md`, `.markdown`, `.txt` | Apa adanya (UTF-8, UTF-16 dengan atau tanpa BOM, atau Windows-1252 dari ekspor lama). |
 
 **Cara agent memakai dokumen.** Dokumen pendek (sampai 60.000 karakter) langsung disertakan ke permintaan; dokumen yang
 lebih panjang dibaca bertahap dengan tool `list_documents`, `read_document` (per bagian/halaman) dan `search_documents`
@@ -255,12 +255,16 @@ dokumen sebagai asumsi.
   Lampirkan PDF dengan lapisan teks atau versi Word-nya.
 - Dokumen yang **dilindungi kata sandi** (PDF atau Office terenkripsi) ditolak dengan petunjuk cara melepas kata sandinya.
 - Format lama **.doc/.xls/.ppt** (Office 97-2003), **.xlsb**, **.vsdx** dan OpenDocument (**.odt/.ods/.odp**) belum
-  didukung - simpan ulang sebagai .docx/.xlsx/.pptx atau PDF. File yang ekstensinya salah dibaca sesuai isinya.
-- Teks hasil baca maksimal **2 juta karakter** per dokumen; bagian yang terpotong selalu disebutkan di peringatan.
+  didukung - simpan ulang sebagai .docx/.xlsx/.pptx atau PDF. File PDF/Word/Excel/PowerPoint yang diberi ekstensi lain
+  yang didukung (mis. `.docx` bernama `.xlsx`) dibaca sesuai isinya; file berekstensi `.doc/.xls/.ppt` selalu ditolak.
+- Teks hasil baca maksimal **2 juta karakter** per dokumen dan sel tabel maksimal 2.000 karakter; bagian yang terpotong
+  selalu disebutkan di peringatan.
 
-**Keamanan & penyimpanan.** Dokumen dibaca di *worker thread* terpisah (batas memori 1 GB, batas waktu ±95 detik) sehingga
-file bermasalah tidak bisa menghentikan server. Paket Office dibuka dengan pembaca ZIP yang membatasi ukuran hasil
-dekompresi (*zip bomb* ditolak), XML tidak pernah memuat entitas/sumber eksternal, dan makro tidak pernah dijalankan.
+**Keamanan & penyimpanan.** Dokumen dibaca di *worker thread* terpisah dengan batas waktu ±95 detik dan batas memori
+±1 GB per dokumen (heap dan buffer dipantau dari luar, juga bila `NODE_OPTIONS` menaikkan batas heap; dokumen yang
+melewatinya dihentikan dengan pesan "terlalu besar"), sehingga file bermasalah tidak bisa menghentikan server. Paket Office
+dibuka dengan pembaca ZIP yang membatasi ukuran hasil dekompresi (*zip bomb* ditolak), setiap XML diperiksa dalam waktu
+linear sebelum dibaca, XML tidak pernah memuat entitas/sumber eksternal, dan makro tidak pernah dijalankan.
 File asli dan teks hasil baca disimpan di object storage (`attachments/<id>/…`), metadatanya di database; lampiran yang
 tidak pernah dikirim dihapus otomatis setelah 24 jam.
 

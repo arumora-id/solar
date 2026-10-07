@@ -18,6 +18,11 @@ function partsText(a: Attachment): string {
   return a.kind === 'pdf' ? `${a.parts} halaman` : a.kind === 'pptx' ? `${a.parts} slide` : `${a.parts} sheet`;
 }
 
+/** What a chip shows for a read document: pages/slides/sheets and size, e.g. "4 halaman · 23.9 KB". */
+export function attachmentSummary(a: Attachment): string {
+  return [partsText(a), formatBytes(a.size)].filter(Boolean).join(' · ');
+}
+
 export interface ChipProps {
   name: string;
   size: number;
@@ -77,7 +82,7 @@ export function AttachmentStrip({ ids }: { ids: string[] }) {
       {ids.map((id) => {
         const a = attachments[id];
         return a ? (
-          <AttachmentChip key={id} name={a.name} size={a.size} warnings={a.warnings} onOpen={() => setPreview(a)} />
+          <AttachmentChip key={id} name={a.name} size={a.size} status={attachmentSummary(a)} warnings={a.warnings} onOpen={() => setPreview(a)} />
         ) : (
           <AttachmentChip key={id} name="Lampiran" size={0} status="…" />
         );

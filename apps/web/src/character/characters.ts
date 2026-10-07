@@ -28,12 +28,17 @@ export function characterInfo(id: CharacterId): CharacterInfo {
   return CHARACTERS.find((c) => c.id === id) ?? CHARACTERS[0]!;
 }
 
+/** The choice for this page when storage is unavailable (blocked site data, full quota). */
+let unsaved: CharacterId | null = null;
+
 export function readCharacter(): CharacterId {
-  const id = readPref<string>('character', DEFAULT_CHARACTER);
+  const id = unsaved ?? readPref<string>('character', DEFAULT_CHARACTER);
   return CHARACTERS.some((c) => c.id === id) ? (id as CharacterId) : DEFAULT_CHARACTER;
 }
 
 export function saveCharacter(id: CharacterId): void {
   writePref('character', id);
+  // storage stays the source of truth (and syncs other windows) whenever the write actually persisted
+  unsaved = readPref<string | null>('character', null) === id ? null : id;
   window.dispatchEvent(new CustomEvent(CHARACTER_EVENT));
 }

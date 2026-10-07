@@ -10,7 +10,22 @@ export function isOle(bytes: Uint8Array): boolean {
   return bytes.length >= 8 && OLE_MAGIC.every((v, i) => bytes[i] === v);
 }
 
-/** Names of the storages and streams in the container (best effort, never throws). */
+interface DirEntry {
+  name: string;
+  type: number;
+  left: number;
+  right: number;
+  child: number;
+}
+
+const NO_SECTOR = 0xfffffffa;
+const NO_STREAM = 0xffffffff;
+
+/**
+ * Names of the streams and storages directly in the root storage (best effort, never throws). Only the root's own
+ * entries count: an embedded object (e.g. a Word document inside an .xls) lives in a sub-storage. Every walk is
+ * bounded by the file size, so a crafted header cannot make it allocate or loop more than the file allows.
+ */
 function streamNames(b: Uint8Array): Set<string> {
   const names = new Set<string>();
   try {
@@ -18,44 +33,55 @@ function streamNames(b: Uint8Array): Set<string> {
     const shift = dv.getUint16(30, true);
     if (shift !== 9 && shift !== 12) throw new Error('bad sector shift');
     const ss = 1 << shift;
-    const nFat = dv.getUint32(44, true);
-    const dirStart = dv.getUint32(48, true);
-    let difatSector = dv.getUint32(68, true);
-    const nDifat = dv.getUint32(72, true);
+    const perSector = ss / 4;
+    const maxSectors = Math.max(0, Math.floor(b.length / ss) - 1);
     const sectorOff = (s: number) => (s + 1) * ss;
+    const inFile = (s: number) => s < maxSectors;
+    // FAT sector numbers: the first 109 in the header, the rest in the DIFAT chain
+    const nFat = Math.min(dv.getUint32(44, true), Math.ceil(maxSectors / perSector));
     const fatSectors: number[] = [];
     for (let i = 0; i < 109 && fatSectors.length < nFat; i++) fatSectors.push(dv.getUint32(76 + i * 4, true));
-    for (let d = 0; d < nDifat && difatSector < 0xfffffffa && fatSectors.length < nFat && d < 10_000; d++) {
-      const o = sectorOff(difatSector);
-      if (o + ss > b.length) break;
-      for (let i = 0; i < ss / 4 - 1 && fatSectors.length < nFat; i++) fatSectors.push(dv.getUint32(o + i * 4, true));
-      difatSector = dv.getUint32(o + ss - 4, true);
+    const seenDifat = new Set<number>();
+    for (let d = dv.getUint32(68, true); d < NO_SECTOR && inFile(d) && fatSectors.length < nFat && !seenDifat.has(d); ) {
+      seenDifat.add(d);
+      const o = sectorOff(d);
+      for (let i = 0; i < perSector - 1 && fatSectors.length < nFat; i++) fatSectors.push(dv.getUint32(o + i * 4, true));
+      d = dv.getUint32(o + ss - 4, true);
     }
-    const fat: number[] = [];
-    for (const fs of fatSectors.slice(0, 50_000)) {
-      const o = sectorOff(fs);
-      if (o + ss > b.length) break;
-      for (let i = 0; i < ss / 4; i++) fat.push(dv.getUint32(o + i * 4, true));
-    }
+    // FAT entries are looked up when needed instead of materialising the whole table
+    const next = (s: number): number => {
+      const fs = fatSectors[Math.floor(s / perSector)];
+      if (fs === undefined || !inFile(fs)) return 0xfffffffe;
+      return dv.getUint32(sectorOff(fs) + (s % perSector) * 4, true);
+    };
+    const entries: DirEntry[] = [];
     const seen = new Set<number>();
-    for (let s = dirStart; s < 0xfffffffa && !seen.has(s) && seen.size < 10_000; s = fat[s] ?? 0xfffffffe) {
+    for (let s = dv.getUint32(48, true); s < NO_SECTOR && inFile(s) && !seen.has(s); s = next(s)) {
       seen.add(s);
       const o = sectorOff(s);
-      if (o + ss > b.length) break;
       for (let e = 0; e < ss / 128; e++) {
         const eo = o + e * 128;
         const nameLen = dv.getUint16(eo + 64, true);
-        const type = b[eo + 66];
-        if (!nameLen || nameLen > 64 || (type !== 1 && type !== 2 && type !== 5)) continue;
-        let n = '';
-        for (let i = 0; i < nameLen / 2 - 1; i++) n += String.fromCharCode(dv.getUint16(eo + i * 2, true));
-        names.add(n);
+        let name = '';
+        for (let i = 0; i < Math.min(32, nameLen / 2) - 1; i++) name += String.fromCharCode(dv.getUint16(eo + i * 2, true));
+        entries.push({ name, type: b[eo + 66]!, left: dv.getUint32(eo + 68, true), right: dv.getUint32(eo + 72, true), child: dv.getUint32(eo + 76, true) });
       }
+    }
+    // the root's children form a tree of siblings (left/right); do not descend into sub-storages
+    const stack = entries[0]?.type === 5 ? [entries[0].child] : [];
+    const visited = new Set<number>();
+    while (stack.length) {
+      const id = stack.pop()!;
+      if (id === NO_STREAM || id >= entries.length || visited.has(id)) continue;
+      visited.add(id);
+      const en = entries[id]!;
+      if (en.type === 1 || en.type === 2) names.add(en.name);
+      stack.push(en.left, en.right);
     }
   } catch {
     // fall back to scanning below
   }
-  if (names.size <= 1) {
+  if (names.size === 0) {
     // look for well-known UTF-16LE stream names anywhere in the container
     const all = Buffer.from(b.buffer, b.byteOffset, b.byteLength);
     for (const n of ['EncryptionInfo', 'EncryptedPackage', 'WordDocument', 'Workbook', 'Book', 'PowerPoint Document']) {

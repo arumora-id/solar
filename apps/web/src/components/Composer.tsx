@@ -3,7 +3,7 @@ import { ATTACHMENT_EXTENSIONS, type Attachment } from '@solar/shared';
 import { api, uploadAttachment } from '../lib/api';
 import { useSolar } from '../lib/store';
 import { useVoice } from '../voice/useVoice';
-import { AttachmentChip, AttachmentPreview } from './Attachments';
+import { AttachmentChip, AttachmentPreview, attachmentSummary } from './Attachments';
 import { MicIcon, PaperclipIcon, SendIcon } from './Icons';
 
 export interface ComposerHandle {
@@ -259,7 +259,15 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ di
               name={f.name}
               size={f.size}
               busy={f.status === 'uploading' || f.status === 'reading'}
-              status={f.status === 'uploading' ? `Mengunggah ${Math.round(f.progress * 100)}%` : f.status === 'reading' ? 'Membaca…' : undefined}
+              status={
+                f.status === 'uploading'
+                  ? `Mengunggah ${Math.round(f.progress * 100)}%`
+                  : f.status === 'reading'
+                    ? 'Membaca…'
+                    : f.attachment
+                      ? attachmentSummary(f.attachment)
+                      : undefined
+              }
               error={f.error}
               warnings={f.attachment?.warnings}
               onOpen={f.attachment ? () => setPreview(f.attachment!) : undefined}

@@ -9,7 +9,7 @@ export const LIMITS = Object.freeze({
   /** All bytes inflated from one file, streamed parts included. */
   maxTotalInflatedBytes: 256 * MB,
   maxEntries: 10_000,
-  /** Reported as a possible zip bomb above this ratio (for parts larger than 1 MB). */
+  /** Parts above this compression ratio are rejected as a possible zip bomb once they are larger than 8 MB. */
   maxCompressionRatio: 200,
   /** document.xml handed to mammoth (it needs ~100-150 MB of memory per MB); longer documents are cut at a block. */
   maxDocxXmlBytes: 4 * MB,
@@ -73,7 +73,9 @@ export function mdCell(value: unknown, maxCellChars?: number): string {
 /** Rows of already escaped cells as a GitHub Markdown table; the first row is the header. */
 export function mdTable(rows: string[][]): string {
   if (!rows.length) return '';
-  const width = Math.max(1, ...rows.map((r) => r.length));
+  // a loop, not Math.max(...rows): spreading a huge table overflows the call stack
+  let width = 1;
+  for (const r of rows) if (r.length > width) width = r.length;
   const line = (r: string[]) => `| ${Array.from({ length: width }, (_, i) => r[i] ?? '').join(' | ')} |`;
   const out = [line(rows[0]!), `| ${Array(width).fill('---').join(' | ')} |`];
   for (let i = 1; i < rows.length; i++) out.push(line(rows[i]!));
@@ -102,7 +104,8 @@ export function decodeOoxmlText(s: string): string {
 export function parseAttrs(s: string | undefined): Record<string, string> {
   const o: Record<string, string> = {};
   if (!s) return o;
-  for (const m of s.matchAll(/([\w:.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
+  // the lookbehind makes each run of name characters a single candidate (no quadratic retries inside a long run)
+  for (const m of s.matchAll(/(?<![\w:.-])([\w:.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
     const v = decodeXml(m[2] ?? m[3]);
     o[m[1]!] = v;
     const i = m[1]!.indexOf(':');
