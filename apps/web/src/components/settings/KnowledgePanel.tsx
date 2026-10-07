@@ -259,6 +259,13 @@ export function KnowledgePanel() {
               ))}
             </select>
           </label>
+          {sheet?.truncated && (
+            <p className="hint">
+              {sheet.rows || sheet.headers.length
+                ? 'Sheet ini tidak terbaca utuh (terlalu banyak baris atau teks), jadi tidak bisa diimpor. Pecah file lalu impor tiap bagian.'
+                : 'Sheet ini tidak dibaca karena teks workbook sudah mencapai batas, jadi tidak bisa diimpor. Simpan sheet ini sebagai file terpisah lalu impor.'}
+            </p>
+          )}
           {sheet && (
             <>
               {(
@@ -324,7 +331,7 @@ export function KnowledgePanel() {
             <button
               type="button"
               className="btn primary small"
-              disabled={busy || !table.idColumn || !table.folder.trim()}
+              disabled={busy || !table.idColumn || !table.folder.trim() || Boolean(sheet?.truncated)}
               onClick={() =>
                 void run(async () => {
                   const r = await api.importTable(table.file, {

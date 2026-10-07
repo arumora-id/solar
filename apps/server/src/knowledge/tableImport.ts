@@ -75,6 +75,17 @@ function cellValue(v: string): string {
 
 const mdEscape = (s: string) => s.replace(/\|/g, '\\|').replace(/\n+/g, ' ');
 
+/** Why a table that was not read completely cannot be imported, and what to do about it. */
+function truncatedReason(table: SheetTable): string {
+  if (!table.rows.length) {
+    return `Sheet "${table.name}" tidak dibaca karena teks workbook sudah mencapai batas; simpan sheet ini sebagai file terpisah lalu impor`;
+  }
+  if (table.rows.length > MAX_IMPORT_ROWS) {
+    return `Sheet "${table.name}" berisi lebih dari ${MAX_IMPORT_ROWS} baris; maksimum ${MAX_IMPORT_ROWS} baris per impor, pecah file sebelum impor`;
+  }
+  return `Sheet "${table.name}" tidak terbaca utuh karena teksnya terlalu panjang; pecah file sebelum impor`;
+}
+
 /**
  * Turns one spreadsheet table (one row per system / API / integration) into one Markdown file per row plus an
  * INDEX.md, so the agent reads only the rows that matter instead of the whole workbook.
@@ -85,6 +96,9 @@ export async function importTable(
   sourceFile: string,
   opts: TableImportOptions,
 ): Promise<TableImportResult> {
+  // a cut table would import only part of the sheet and (with removeStale) delete the rows that were cut off; checked
+  // first, since a sheet skipped while reading has no header row to look the columns up in
+  if (table.truncated) throw new Error(truncatedReason(table));
   const folder = folderOf(opts.folder);
   const headerIndex = Math.max(1, opts.headerRow) - 1;
   const headers = (table.rows[headerIndex] ?? []).map(clean);
@@ -96,8 +110,6 @@ export async function importTable(
   const statusCol = col(opts.statusColumn);
   const source = `excel:${sourceFile}#${table.name}`;
 
-  // a cut table would import only part of the sheet and (with removeStale) delete the rows that were cut off
-  if (table.truncated) throw new Error(`Sheet "${table.name}" tidak terbaca utuh (terlalu banyak baris atau teks); pecah file sebelum impor`);
   const rows = table.rows.slice(headerIndex + 1);
   if (rows.length > MAX_IMPORT_ROWS) throw new Error(`Sheet berisi ${rows.length} baris; maksimum ${MAX_IMPORT_ROWS} per impor`);
 

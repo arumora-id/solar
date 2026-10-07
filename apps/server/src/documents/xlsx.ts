@@ -8,6 +8,11 @@ import { dirOf, parseRels, relsPathOf, resolvePart, type OoxmlPackage, type Rela
 
 /** Optional namespace prefix in element names. */
 const P = '(?:[A-Za-z_][\\w.-]*:)?';
+/**
+ * Text the import tables may hold in all. They are copied out of the worker, and a shared string used in many cells
+ * is read (and counted) once but copied once per cell, so the read limit does not bound them.
+ */
+const MAX_TABLE_CHARS = 50_000_000;
 
 function colIndex(ref: string): number {
   let n = 0;
@@ -245,6 +250,45 @@ export async function extractXlsx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
     cutCells += 1;
     return `${s.slice(0, limits.maxCellChars)}…`;
   };
+  // shared strings: stream only as far as index `upTo`
+  const sst: string[] = [];
+  const sstRel = rels.find((r) => /\/sharedStrings$/.test(r.type));
+  const sstPath = sstRel ? resolvePart(dirOf(wbPath), sstRel.target) : 'xl/sharedStrings.xml';
+  const readSst = (upTo: number) => {
+    let buf = '';
+    const siRe = elementRe('si');
+    zip.streamText(
+      sstPath,
+      (text) => {
+        deadline.check();
+        const before = buf.length;
+        buf += text;
+        if (buf.indexOf('si>', Math.max(0, before - 4)) < 0) return true;
+        siRe.lastIndex = 0;
+        let consumed = 0;
+        for (let m = siRe.exec(buf); m; m = siRe.exec(buf)) {
+          consumed = siRe.lastIndex;
+          sst.push(capText(m[3] ? siText(m[3]) : ''));
+          if (sst.length > upTo) return false;
+        }
+        const rest = buf.slice(consumed);
+        const last = (() => {
+          const re = new RegExp(`<${P}si\\b`, 'g');
+          let idx = -1;
+          for (let m = re.exec(rest); m; m = re.exec(rest)) idx = m.index;
+          return idx;
+        })();
+        buf = last > 0 ? rest.slice(last) : rest;
+        if (buf.length > 16 * MB) throw documentError('TOO_LARGE', 'File terlalu besar: satu teks di shared strings melebihi 16 MB XML.');
+        return true;
+      },
+      limits.maxTotalInflatedBytes,
+      true,
+    );
+  };
+  // table import reads every shared string first, so rows holding only empty text do not count toward the row cap
+  const sstFirst = Boolean(ctx.collectTables) && zip.has(sstPath);
+  if (sstFirst) readSst(Infinity);
 
   for (let si = 0; si < sheetLimit; si++) {
     const sh = sheets[si]!;
@@ -324,7 +368,7 @@ export async function extractXlsx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
             let cell: Cell | null = null;
             if (t === 's' && v != null) {
               const idx = parseInt(v, 10);
-              if (idx >= 0) {
+              if (idx >= 0 && !(sstFirst && !sst[idx])) {
                 cell = { sst: idx };
                 if (idx > maxSst) maxSst = idx;
               }
@@ -399,49 +443,14 @@ export async function extractXlsx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
     await yieldToLoop();
   }
 
-  // shared strings: stream only as far as the highest index actually referenced
-  const sst: string[] = [];
-  if (maxSst >= 0) {
-    const sstRel = rels.find((r) => /\/sharedStrings$/.test(r.type));
-    const sstPath = sstRel ? resolvePart(dirOf(wbPath), sstRel.target) : 'xl/sharedStrings.xml';
-    if (zip.has(sstPath)) {
-      let buf = '';
-      const siRe = elementRe('si');
-      zip.streamText(
-        sstPath,
-        (text) => {
-          deadline.check();
-          const before = buf.length;
-          buf += text;
-          if (buf.indexOf('si>', Math.max(0, before - 4)) < 0) return true;
-          siRe.lastIndex = 0;
-          let consumed = 0;
-          for (let m = siRe.exec(buf); m; m = siRe.exec(buf)) {
-            consumed = siRe.lastIndex;
-            sst.push(capText(m[3] ? siText(m[3]) : ''));
-            if (sst.length > maxSst) return false;
-          }
-          const rest = buf.slice(consumed);
-          const last = (() => {
-            const re = new RegExp(`<${P}si\\b`, 'g');
-            let idx = -1;
-            for (let m = re.exec(rest); m; m = re.exec(rest)) idx = m.index;
-            return idx;
-          })();
-          buf = last > 0 ? rest.slice(last) : rest;
-          if (buf.length > 16 * MB) throw documentError('TOO_LARGE', 'File terlalu besar: satu teks di shared strings melebihi 16 MB XML.');
-          return true;
-        },
-        limits.maxTotalInflatedBytes,
-        true,
-      );
-    } else {
-      warnings.push('Workbook merujuk shared strings, tetapi xl/sharedStrings.xml tidak ada; sebagian sel tampil kosong.');
-    }
+  if (maxSst >= 0 && !sstFirst) {
+    if (zip.has(sstPath)) readSst(maxSst);
+    else warnings.push('Workbook merujuk shared strings, tetapi xl/sharedStrings.xml tidak ada; sebagian sel tampil kosong.');
   }
 
   // render within the character budget, so a few very long cells cannot build a huge text
   let budget = maxChars;
+  let tableBudget = MAX_TABLE_CHARS;
   const parts: string[] = [];
   const tables: SheetTable[] = [];
   for (let si = 0; si < sheets.length; si++) {
@@ -460,8 +469,10 @@ export async function extractXlsx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
       warnings.push(`Sheet "${sh.name}" tidak bisa dibaca (bagiannya tidak ada di file).`);
       continue;
     }
-    // table import reads every row up to the row cap: the character budget only limits the Markdown
+    // table import reads every row up to the row cap: the character budget only limits the Markdown (the tables have
+    // their own total limit, MAX_TABLE_CHARS)
     const all: string[][] | null = ctx.collectTables ? [] : null;
+    let tableCut = false;
     const overBudget = sh.kind === 'skipped' || budget <= 0;
     const rows: string[][] = [];
     let cutForChars = false;
@@ -472,23 +483,29 @@ export async function extractXlsx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
         return 'sst' in cell ? (sst[cell.sst] ?? '') : cell.text;
       });
       if (!values.some((x) => x !== '')) continue;
-      all?.push(values);
+      const cost = values.reduce((n, v) => n + Math.min(v.length, limits.maxCellChars) + 3, 0);
+      if (all && !tableCut) {
+        if (cost > tableBudget) tableCut = true;
+        else {
+          tableBudget -= cost;
+          all.push(values);
+        }
+      }
       if (overBudget || cutForChars) {
-        if (all) continue;
+        if (all && !tableCut) continue;
         break;
       }
-      const cost = values.reduce((n, v) => n + Math.min(v.length, limits.maxCellChars) + 3, 0);
       if (rows.length && cost > budget) {
         cutForChars = true;
-        if (all) continue;
+        if (all && !tableCut) continue;
         break;
       }
       budget -= cost;
       rows.push(values);
     }
-    // a sheet skipped while reading has no rows: list it as cut, so the import refuses it instead of missing it
-    if (all && (all.length || sh.kind === 'skipped')) {
-      tables.push({ name: sh.name, rows: all.length ? shapeTable(all).table : [], truncated: sh.truncatedRows || sh.kind === 'skipped' });
+    // a sheet skipped while reading (or cut for the table limit) is listed as cut, so the import refuses it
+    if (all && (all.length || sh.kind === 'skipped' || tableCut)) {
+      tables.push({ name: sh.name, rows: all.length ? shapeTable(all).table : [], truncated: sh.truncatedRows || sh.kind === 'skipped' || tableCut });
     }
     if (overBudget) {
       parts.push('_(tidak dibaca: batas panjang teks tercapai)_');
