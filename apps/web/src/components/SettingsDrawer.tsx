@@ -1,14 +1,16 @@
 import gsap from 'gsap';
 import { useEffect, useRef, useState } from 'react';
+import { CharacterCards } from './CharacterPicker';
 import { XIcon } from './Icons';
 import { PluginsPanel } from './settings/PluginsPanel';
 import { SkillsPanel } from './settings/SkillsPanel';
 import { SystemPanel } from './settings/SystemPanel';
 import { VoicePanel } from './settings/VoicePanel';
 
-type Tab = 'skills' | 'plugins' | 'voice' | 'system';
+type Tab = 'character' | 'skills' | 'plugins' | 'voice' | 'system';
 
 const TABS: Array<{ id: Tab; label: string }> = [
+  { id: 'character', label: 'Karakter' },
   { id: 'skills', label: 'Skills' },
   { id: 'plugins', label: 'Plugin MCP' },
   { id: 'voice', label: 'Suara' },
@@ -50,6 +52,15 @@ export function SettingsDrawer({ open, onClose }: { open: boolean; onClose: () =
           ))}
         </div>
         <div className="drawer-body" role="tabpanel">
+          {tab === 'character' && (
+            <div>
+              <p className="muted" style={{ marginTop: 0 }}>
+                Pilih tampilan SOLAR AI AGENT. Animasinya sama untuk semua karakter: mendengarkan, berpikir, bekerja, berbicara,
+                bertanya, senang dan sedih. Pilihan disimpan di perangkat ini.
+              </p>
+              <CharacterCards />
+            </div>
+          )}
           {tab === 'skills' && <SkillsPanel />}
           {tab === 'plugins' && <PluginsPanel />}
           {tab === 'voice' && <VoicePanel />}

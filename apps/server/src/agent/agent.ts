@@ -66,7 +66,7 @@ function friendlyApiError(err: InstanceType<typeof OpenAI.APIError>, model: stri
     return new Error(`Tidak dapat terhubung ke OpenAI API (cek koneksi internet / proxy / OPENAI_BASE_URL): ${err.message}`);
   }
   if (err instanceof OpenAI.AuthenticationError) {
-    return new Error('Autentikasi OpenAI gagal: isi OPENAI_API_KEY yang valid di .env lalu restart SOLAR.');
+    return new Error('Autentikasi OpenAI gagal: isi OPENAI_API_KEY yang valid di .env lalu restart SOLAR AI AGENT.');
   }
   if (err instanceof OpenAI.RateLimitError && err.code === 'insufficient_quota') {
     return new Error(

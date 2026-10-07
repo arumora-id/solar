@@ -9,8 +9,9 @@ import { isActive } from '../lib/format';
 import { speakableSummary } from '../lib/markdown';
 import { readPref } from '../lib/session';
 import { useSolar } from '../lib/store';
-import type { RabbitState } from '../rabbit/RabbitScene';
-import { RabbitStage } from '../rabbit/RabbitStage';
+import type { CharacterState } from '../character/CharacterScene';
+import { CharacterStage } from '../character/CharacterStage';
+import { CharacterSwitcher, useCharacter } from '../components/CharacterPicker';
 import { speak, stopSpeaking, ttsAvailable } from '../voice/tts';
 import { useVoicePrefs } from '../voice/useVoice';
 
@@ -30,7 +31,7 @@ const QUICK_PROMPTS = [
   { label: 'Publish GitHub', text: 'Publish semua artefak dari task terakhir ke GitHub di folder docs/architecture/' },
 ];
 
-const GREETING = 'Halo! Saya SOLAR, kelinci solution architect Anda. Ketik atau ucapkan kebutuhan Anda.';
+const GREETING = 'Halo! Saya SOLAR AI AGENT, asisten solution architect Anda. Ketik atau ucapkan kebutuhan Anda.';
 
 export function AgentPage() {
   const { tasks, events, sessionId, submit, startNewSession, lastFinished, config, connected } = useSolar();
@@ -92,12 +93,13 @@ export function AgentPage() {
     }, 1800);
   }, [lastFinished]);
 
-  const rabbitState: RabbitState = useMemo(() => {
+  const character = useCharacter();
+  const characterState: CharacterState = useMemo(() => {
     if (listening) return 'listening';
     if (mood) return mood;
     if (current?.status === 'awaiting_confirmation') return 'asking';
     if (current) {
-      // a tool call without its result yet = the rabbit is working; otherwise it is thinking
+      // a tool call without its result yet = the character is working; otherwise it is thinking
       const open = new Set<string>();
       for (const e of events[current.id] ?? []) {
         if (e.type === 'tool_call' && e.tool !== 'update_progress') open.add(e.toolUseId);
@@ -110,7 +112,7 @@ export function AgentPage() {
   }, [listening, mood, current, speaking, events]);
 
   const bubble = useMemo(() => {
-    if (!connected) return { text: 'Menghubungkan ke server SOLAR…', sub: '' };
+    if (!connected) return { text: 'Menghubungkan ke server SOLAR AI AGENT…', sub: '' };
     if (config && !config.openaiConfigured) return { text: 'OPENAI_API_KEY belum diisi di .env', sub: 'Isi lalu restart server agar saya bisa bekerja.' };
     if (listening) return { text: 'Saya mendengarkan…', sub: 'Bicaralah, saya berhenti otomatis saat Anda diam.' };
     if (mood === 'happy') return { text: 'Selesai! Semua deliverable siap.', sub: 'Lihat artefak di panel percakapan.' };
@@ -143,12 +145,15 @@ export function AgentPage() {
 
   return (
     <main className="agent-page">
-      <section className="stage-card" aria-label="SOLAR">
+      <section className="stage-card" aria-label="SOLAR AI AGENT">
         <div className="speech" ref={speechRef} role="status">
           {bubble.text}
           {bubble.sub && <span className="sub">{bubble.sub}</span>}
         </div>
-        <RabbitStage state={rabbitState} onRabbitClick={() => composerRef.current?.toggleVoice()} />
+        <div className="stage-area">
+          <CharacterStage character={character} state={characterState} onCharacterClick={() => composerRef.current?.toggleVoice()} />
+          <CharacterSwitcher />
+        </div>
         {!compact && (
           <div className="stage-footer">
             {QUICK_PROMPTS.map((q) => (

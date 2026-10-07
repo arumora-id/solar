@@ -1,4 +1,4 @@
-import { APP_NAME, APP_VERSION } from '../config.js';
+import { APP_SLUG, APP_VERSION } from '../config.js';
 
 export interface GithubFile {
   path: string;
@@ -35,7 +35,7 @@ export class GithubClient {
         Authorization: `Bearer ${this.token}`,
         Accept: 'application/vnd.github+json',
         'X-GitHub-Api-Version': '2022-11-28',
-        'User-Agent': `${APP_NAME}/${APP_VERSION}`,
+        'User-Agent': `${APP_SLUG}/${APP_VERSION}`,
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),

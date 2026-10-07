@@ -93,7 +93,7 @@ export class TaskManager {
         const updated: Task = {
           ...task,
           status: 'failed',
-          error: 'Task terhenti karena server SOLAR di-restart. Silakan kirim ulang permintaannya.',
+          error: 'Task terhenti karena server SOLAR AI AGENT di-restart. Silakan kirim ulang permintaannya.',
           finishedAt: nowIso(),
         };
         await this.repo.upsertTask(updated);

@@ -6,7 +6,7 @@ Dokumen ini menjelaskan cara kerja internal SOLAR untuk pengembang dan reviewer.
 
 | Komponen | Lokasi | Tanggung jawab |
 |---|---|---|
-| Web UI | `apps/web` | React 19 + Vite + TypeScript. Kelinci 3D (`src/rabbit/RabbitScene.ts`, three.js, animasi GSAP), chat + komposer suara, monitor, pengaturan. Berkomunikasi lewat REST dan Server-Sent Events. |
+| Web UI | `apps/web` | React 19 + Vite + TypeScript. Karakter 3D yang bisa dipilih (`src/character/`: Mochi, Cocoa Kelapa, Kelinci; three.js, animasi GSAP), chat + komposer suara, monitor, pengaturan. Berkomunikasi lewat REST dan Server-Sent Events. |
 | Server | `apps/server` | Express 5. `TaskManager` (antrean, status, progres, konfirmasi), agent loop OpenAI, generator + validator, `SkillStore`, `PluginStore` + `McpManager`, penyimpanan. |
 | Desktop | `apps/desktop` | Electron 44. Memuat bundle server (`server.mjs`) di main process, membuka jendela ke UI lokal, mengatur izin mikrofon, mode mini, `.env` di `%APPDATA%\SOLAR`. |
 | Shared | `packages/shared` | Kontrak tipe antara server dan UI (`Task`, `TaskEvent`, `Artifact`, `PluginView`, `StreamMessage`, ...). |
@@ -158,13 +158,28 @@ Saat server mulai, task yang tertinggal berstatus aktif dari proses sebelumnya d
 
 UI menggabungkan delta per frame animasi (requestAnimationFrame) agar tetap ringan.
 
-## 7. Kelinci 3D
+## 7. Karakter 3D (bisa dipilih)
 
-`RabbitScene` membangun karakter dari primitif three.js (tanpa aset eksternal) dengan material toon. Setiap state adalah
-timeline GSAP pada properti `Object3D`; three.js hanya merender. State diturunkan di `AgentPage`:
-`listening` (mikrofon aktif) → `happy`/`sad` (2 detik setelah task selesai/gagal) → `asking` (menunggu persetujuan) →
-`working` (ada pemanggilan tool yang belum selesai) / `thinking` → `talking` (TTS) → `idle`.
-Animasi dikurangi bila pengguna mengaktifkan *prefers-reduced-motion*; bila WebGL tidak tersedia, ikon statis ditampilkan.
+`src/character/` memisahkan **mesin animasi** dari **model karakter**:
+
+- `rig.ts` - kontrak `Rig` yang wajib disediakan setiap model: grup `body` (squash & stretch), `head` (mengikuti kursor,
+  memuat wajah), `earL/earR` (telinga kelinci, daun sakura Mochi, payung & sedotan Cocoa Kelapa), `armL/armR` (berporos di
+  bahu), mata, mulut, pipi, tablet, titik jangkar lencana "?"/"!" dan kotak bingkai kamera, plus nilai pose istirahat
+  (tinggi kepala, sudut telinga/lengan, kelenturan telinga, amplitudo napas). `Kit` berisi pembuat bagian bersama
+  (mata, kacamata, pipi, mulut, tablet, dekorasi di permukaan elipsoid).
+- `models/mochi.ts`, `models/cocoa.ts`, `models/rabbit.ts` - geometri prosedural three.js (tanpa aset eksternal) dengan
+  material toon. Pada Mochi dan Cocoa Kelapa tubuh bulatnya adalah `head`, sehingga wajah tetap menempel saat menoleh.
+- `CharacterScene.ts` - lampu, bayangan, cincin mendengarkan, titik berpikir, lencana, interaksi (hover/klik), framing
+  kamera dari `rig.frame`, dan satu set timeline GSAP untuk semua karakter (nilai pose relatif terhadap pose istirahat
+  rig). three.js hanya merender.
+- `characters.ts` - daftar karakter (Mochi default), preferensi `solar.character` di `localStorage` dan event
+  `solar:character`; `CharacterStage` membuat ulang scene saat karakter diganti dan langsung memakai state saat itu.
+  Pemilih ada di panggung (`CharacterSwitcher`) dan di *Pengaturan → Karakter* (`CharacterCards`).
+
+State diturunkan di `AgentPage`: `listening` (mikrofon aktif) → `happy`/`sad` (2 detik setelah task selesai/gagal) →
+`asking` (menunggu persetujuan) → `working` (ada pemanggilan tool yang belum selesai) / `thinking` → `talking` (TTS) →
+`idle`. Animasi dikurangi bila pengguna mengaktifkan *prefers-reduced-motion*; bila WebGL tidak tersedia, ilustrasi SVG
+karakter (`public/characters/*.svg`) ditampilkan.
 
 ## 8. Suara
 

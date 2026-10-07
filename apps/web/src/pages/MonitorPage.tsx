@@ -98,7 +98,7 @@ export function MonitorPage({ selectedId }: { selectedId: string | null }) {
       <div className="row">
         <div style={{ flex: 1 }}>
           <h1>Monitor Task</h1>
-          <div className="hint">Pembaruan realtime dari agent SOLAR - progres, langkah kerja, persetujuan, biaya dan artefak.</div>
+          <div className="hint">Pembaruan realtime dari SOLAR AI AGENT - progres, langkah kerja, persetujuan, biaya dan artefak.</div>
         </div>
         <button type="button" className="btn small" onClick={() => void refreshTasks()}>
           <RefreshIcon /> Muat ulang

@@ -85,7 +85,7 @@ const STRINGS = {
   definition: { id: 'Definisi', en: 'Definition' },
   references: { id: 'Referensi', en: 'References' },
   mermaidSource: { id: 'Sumber Mermaid', en: 'Mermaid source' },
-  generatedBy: { id: 'Dokumen ini disusun dengan bantuan SOLAR (AI Solution Architect Assistant)', en: 'This document was prepared with SOLAR (AI Solution Architect Assistant)' },
+  generatedBy: { id: 'Dokumen ini disusun dengan bantuan SOLAR AI AGENT (AI Solution Architect Assistant)', en: 'This document was prepared with SOLAR AI AGENT (AI Solution Architect Assistant)' },
 } as const;
 
 export type StringKey = keyof typeof STRINGS;

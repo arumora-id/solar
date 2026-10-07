@@ -1,7 +1,8 @@
-# SOLAR - Solution Architect Rabbit 🐰
+# SOLAR AI AGENT 🍡
 
-**SOLAR** (*SOLution ARchitect*) adalah AI agent berwujud **kelinci 3D beranimasi** yang membantu seorang
-Solution Architect men-deliver pekerjaan lebih cepat dan konsisten:
+**SOLAR AI AGENT** (*SOLution ARchitect*, singkatnya SOLAR) adalah AI agent dengan **karakter 3D beranimasi yang bisa
+dipilih** - **Mochi** (default), **Cocoa Kelapa**, atau **Kelinci** klasik - yang membantu seorang Solution Architect
+men-deliver pekerjaan lebih cepat dan konsisten:
 
 - **Diagram ArchiMate 3.2** - divalidasi terhadap tabel relasi resmi ArchiMate, diekspor ke
   *Open Group ArchiMate Exchange Format* (bisa di-import ke Archi, Visual Paradigm, BiZZdesign, Sparx EA) + SVG per view.
@@ -50,10 +51,10 @@ konfirmasi wajib), dan setiap pekerjaan bisa dipantau di **web monitoring task**
 
 | Area | Kemampuan |
 |---|---|
-| Karakter 3D | Kelinci prosedural (three.js) dengan animasi **GSAP**: idle, mendengarkan, berpikir, bekerja (membawa tablet), berbicara, bertanya (menunggu persetujuan), senang, sedih. Mata mengikuti kursor; klik kelinci untuk mulai bicara. |
+| Karakter 3D | **Bisa dipilih**: **Mochi** (kue mochi merah muda, default), **Cocoa Kelapa** (kelapa cokelat bersedotan & payung kecil), atau **Kelinci** klasik - lewat tombol karakter di pojok panggung atau *Pengaturan → Karakter* (tersimpan di perangkat). Dibangun prosedural (three.js, tanpa aset) dengan animasi **GSAP**: idle, mendengarkan, berpikir, bekerja (membawa tablet), berbicara, bertanya (menunggu persetujuan), senang, sedih. Mata mengikuti kursor; klik karakter untuk mulai bicara. |
 | Dokumen proyek | **Lampirkan** PDF, Word (.docx), Excel (.xlsx/.xlsm/.csv), PowerPoint (.pptx), Markdown atau teks (klip kertas, seret & lepas, atau tempel). SOLAR membaca isinya (judul, tabel, sheet, slide, catatan pembicara) sebelum merancang, lalu menyebut sumbernya. |
 | Input | Ketik (Enter kirim) atau **suara**: Web Speech API di Chrome/Edge, atau **Whisper lokal** (transformers.js, offline setelah model diunduh) - otomatis dipakai di aplikasi desktop. Berhenti otomatis saat hening. |
-| Output suara | Kelinci membacakan ringkasan hasil (text-to-speech suara sistem, Bahasa Indonesia/English). |
+| Output suara | Karakter membacakan ringkasan hasil (text-to-speech suara sistem, Bahasa Indonesia/English). |
 | Agent | **OpenAI** (API key ChatGPT) lewat Responses API - default **GPT-6.1 Sol** (`gpt-6.1-sol`) dengan reasoning, streaming, tool call paralel, mode stateless (`store: false`); satu task = satu proses end-to-end ("sekali proses"). Model bisa diganti lewat `SOLAR_MODEL`. |
 | Deliverable | ArchiMate (Exchange XML + SVG + JSON), sequence diagram (SVG + Mermaid + PlantUML + JSON), TSD (Markdown + HTML + JSON), unduh semua sebagai ZIP. |
 | Skills | 6 skill bawaan (delivery package, ArchiMate, sequence, TSD, backlog Plane, publish GitHub); tambah/impor/edit/nonaktifkan dari UI. |
@@ -69,7 +70,7 @@ konfirmasi wajib), dan setiap pekerjaan bisa dipantau di **web monitoring task**
 flowchart LR
     U([Solution Architect]) -- ketik / suara --> UI
     subgraph Client["Web UI - React + Vite + TypeScript + GSAP"]
-        UI[Agent page<br/>kelinci 3D three.js]
+        UI[Agent page<br/>karakter 3D three.js]
         MON[Monitor page]
         SET[Pengaturan<br/>skills & plugin]
     end
@@ -141,7 +142,7 @@ npm run desktop:dev           # build lalu buka jendela SOLAR (memakai .env dan 
 
 ```bash
 npm install
-npm run desktop:dist:win      # hasil: apps/desktop/release/SOLAR-Setup-1.0.0.exe
+npm run desktop:dist:win      # hasil: apps/desktop/release/SOLAR-AI-AGENT-Setup-1.0.0.exe
 ```
 
 Atau dari GitHub: tab **Actions → "Desktop installer (Windows)" → Run workflow**, lalu unduh artifact installer.
@@ -149,6 +150,8 @@ Atau dari GitHub: tab **Actions → "Desktop installer (Windows)" → Run workfl
 Catatan aplikasi desktop:
 
 - Server SOLAR berjalan **di dalam aplikasi** (satu proses), UI dimuat dari `http://127.0.0.1:8790`.
+- Nama aplikasi & shortcut: **SOLAR AI AGENT**. Folder data tetap `%APPDATA%\SOLAR`, sehingga pengguna versi sebelumnya
+  tidak kehilangan `.env`, task, maupun artefak setelah memperbarui.
 - Saat pertama kali dibuka, file konfigurasi dibuat di `%APPDATA%\SOLAR\.env` dan dialog menawarkan untuk membukanya.
   Isi kredensial lalu jalankan ulang. Data & artefak lokal disimpan di `%APPDATA%\SOLAR\data`.
 - Menu **Jendela → Mode mini (selalu di atas)** menjadikan SOLAR jendela kecil yang selalu tampil - cocok sebagai
@@ -188,11 +191,12 @@ dan object storage diisi, data baru otomatis disimpan di sana.
 ## Cara pakai
 
 1. Buka SOLAR (browser atau desktop). Status **Terhubung** tampil di kanan atas.
-2. Ketik perintah atau klik **kelinci / tombol mikrofon** lalu bicara. Tombol cepat di bawah kelinci mengisi template perintah.
+2. Ketik perintah atau klik **karakter / tombol mikrofon** lalu bicara. Tombol cepat di bawah karakter mengisi template perintah.
+   Ganti karakter (Mochi, Cocoa Kelapa, Kelinci) lewat tombol bernama karakter di pojok kiri bawah panggung.
 3. SOLAR mengerjakan **seluruh permintaan dalam satu proses**: membuat rencana, memuat skill yang relevan,
    membuat & memvalidasi diagram, menyusun dokumen, lalu memberi ringkasan + daftar artefak. Asumsi dicatat eksplisit
    (tidak berhenti untuk bertanya kecuali benar-benar menghalangi).
-4. Bila aksi butuh persetujuan (mis. Visual Paradigm), kelinci mengangkat tangan dan dialog **Perlu persetujuan Anda**
+4. Bila aksi butuh persetujuan (mis. Visual Paradigm), karakter mengangkat tangan dan dialog **Perlu persetujuan Anda**
    muncul berisi data yang akan dikirim. Setujui atau tolak (bisa dengan catatan).
 5. Pratinjau, unduh per file, atau **Unduh semua (ZIP)**. Progres rinci ada di **Monitor**.
 
@@ -388,7 +392,7 @@ solar/
 │  ├─ server/        Node.js + Express: agent loop OpenAI, task manager, generator & validator,
 │  │                 pembaca dokumen lampiran (src/documents), skills, plugin MCP, storage Neon/S3/lokal,
 │  │                 REST + SSE  (test: vitest)
-│  ├─ web/           React + Vite + TypeScript + GSAP + three.js: kelinci 3D, chat, suara, monitor, pengaturan
+│  ├─ web/           React + Vite + TypeScript + GSAP + three.js: karakter 3D, chat, suara, monitor, pengaturan
 │  └─ desktop/       Electron: menjalankan server + UI sebagai aplikasi Windows (installer NSIS)
 ├─ packages/shared/  Tipe TypeScript bersama (Task, Event, Artifact, Plugin, Skill, ...)
 ├─ skills/           Skill bawaan (SKILL.md)
@@ -427,7 +431,7 @@ zip bomb, PDF hasil scan, file rusak, ekstensi yang salah, API unggah dan tool d
 
 | Gejala | Solusi |
 |---|---|
-| Balon kelinci: "OPENAI_API_KEY belum diisi" | Isi di `.env` (desktop: `%APPDATA%\SOLAR\.env`, menu *File → Buka file .env*), lalu restart. |
+| Balon karakter: "OPENAI_API_KEY belum diisi" | Isi di `.env` (desktop: `%APPDATA%\SOLAR\.env`, menu *File → Buka file .env*), lalu restart. |
 | Upgrade dari versi Anthropic (`.env` lama) | Tambahkan `OPENAI_API_KEY`; `ANTHROPIC_API_KEY` tidak dipakai lagi. `SOLAR_MODEL=claude-…` otomatis diganti `gpt-6.1-sol` (dengan peringatan di log) - sebaiknya hapus/ubah barisnya. |
 | Task gagal "Autentikasi OpenAI gagal" | API key salah/dicabut - buat key baru di platform.openai.com/api-keys. |
 | Task gagal "Saldo/kuota API OpenAI habis (insufficient_quota)" | Tambahkan kredit di platform.openai.com → Billing (langganan ChatGPT tidak berlaku untuk API). |
@@ -435,7 +439,7 @@ zip bomb, PDF hasil scan, file rusak, ekstensi yang salah, API unggah dan tool d
 | Plugin "Belum dikonfigurasi" | Isi variabel yang disebut di kartu plugin pada `.env`, lalu *Hubungkan ulang*. |
 | Plugin Plane error saat terhubung | Pastikan Node.js/npx terpasang dan bisa mengakses npm registry; cek `PLANE_API_HOST_URL=https://plane.mesthi.com`. |
 | Mikrofon tidak bekerja di browser | Izinkan mikrofon; Web Speech API butuh Chrome/Edge + internet. Pilih *Whisper lokal* di Pengaturan → Suara. |
-| Kelinci tampil sebagai gambar statis | WebGL tidak tersedia (driver/GPU). Fitur lain tetap berjalan normal. |
+| Karakter tampil sebagai gambar statis | WebGL tidak tersedia (driver/GPU). Fitur lain tetap berjalan normal. |
 | Port 8790 dipakai | Ubah `PORT` di `.env` (desktop otomatis memilih port lain). |
 | Lampiran ditolak "dilindungi kata sandi" | Buka file di Office → *File → Info → Protect → Encrypt with Password*, kosongkan kata sandi, simpan, lampirkan lagi (PDF: simpan salinan tanpa kata sandi). |
 | Lampiran ditolak "Format Word 97-2003 (.doc)" dsb. | Simpan ulang sebagai .docx/.xlsx/.pptx (*File → Save As*) atau ekspor ke PDF. |
