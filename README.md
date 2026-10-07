@@ -177,6 +177,7 @@ Semua kredensial berada di `.env` (tidak pernah di-commit). Nilai kosong = fitur
 | `PLANE_PROJECT_ID` | | UUID project backlog default (opsional). |
 | `PLANE_CONFIRM` | | `never` (default) atau `always`. |
 | `VP_MCP_URL`, `VP_MCP_TOKEN` | | Endpoint MCP Visual Paradigm. **Setiap** pemanggilan selalu dikonfirmasi. |
+| `ATTACHMENT_MAX_MB` | | Ukuran maksimum satu dokumen lampiran (default `25`). |
 | `TASK_CONCURRENCY`, `CONFIRMATION_TIMEOUT_MINUTES`, `SOLAR_MAX_TOKENS`, `SOLAR_MAX_TURNS`, `LOG_LEVEL` | | Penyetelan lanjutan. |
 
 Tanpa `DATABASE_URL`/`S3_*`, SOLAR tetap berjalan penuh dengan penyimpanan file lokal (`data/`). Begitu kredensial Neon

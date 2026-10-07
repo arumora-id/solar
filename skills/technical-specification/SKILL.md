@@ -33,6 +33,8 @@ the content. Read `nfr-catalog.md` (via `read_skill_file`) when writing non-func
 - **security, deployment, observability, migration, testing**: concise Markdown.
 - **risks**: `RSK-nn` with impact, likelihood, mitigation; **openIssues**: `OI-nn`.
 - **glossary**: domain terms and acronyms used in the document.
+- **references**: every attached source document used (file name, version/date if stated, what it
+  contributed), plus external standards cited.
 
 ## Requirement writing rules
 - One requirement = one testable statement ("The system shall ..." / "Sistem harus ...").
@@ -44,3 +46,6 @@ the content. Read `nfr-catalog.md` (via `read_skill_file`) when writing non-func
 - Every FR is covered by at least one component/API; every integration has a security control.
 - Every diagram created in this task is referenced (architecture.diagrams or processFlows).
 - Assumptions and open issues are honest - nothing invented to look complete.
+- When documents were attached: requirements, integrations and NFRs reflect them (keep their IDs/names),
+  each is traceable to its source (`file, page/slide/sheet` in the description), and conflicts between
+  sources are open issues.

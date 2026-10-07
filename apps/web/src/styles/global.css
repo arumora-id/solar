@@ -576,6 +576,165 @@ details.activity summary {
   min-height: 18px;
 }
 
+/* ---- attachments ------------------------------------------------------------ */
+.muted {
+  color: var(--ink-3);
+}
+.warn-box {
+  border: 1px solid color-mix(in srgb, var(--warning) 55%, transparent);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  color: var(--warning-text);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 13px;
+  margin-bottom: 10px;
+  display: grid;
+  gap: 4px;
+}
+.attach-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  color: var(--ink-2);
+  flex: none;
+}
+.attach-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.attach-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.att-list,
+.att-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.att-strip {
+  align-self: flex-end;
+  justify-content: flex-end;
+  max-width: 88%;
+  margin-top: -8px;
+}
+.att-chip {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  max-width: 100%;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  border-radius: 10px;
+  font-size: 12.5px;
+  min-width: 0;
+}
+.att-chip.error {
+  border-color: color-mix(in srgb, var(--critical) 55%, transparent);
+}
+.att-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  min-width: 0;
+  max-width: 280px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+button.att-open {
+  cursor: pointer;
+}
+button.att-open:hover .att-name {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.att-type {
+  font-size: 10.5px;
+  font-weight: 750;
+  letter-spacing: 0.3px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--surface-3);
+  color: var(--ink-2);
+  flex: none;
+}
+.att-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.att-meta {
+  color: var(--ink-3);
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+.att-flag {
+  display: inline-flex;
+  flex: none;
+}
+.att-flag.warn {
+  color: var(--warning-text);
+}
+.att-flag.error {
+  color: var(--critical-text);
+}
+.att-remove {
+  border: 0;
+  background: none;
+  color: var(--ink-3);
+  cursor: pointer;
+  padding: 5px 7px 5px 2px;
+  display: grid;
+  place-items: center;
+}
+.att-remove:hover {
+  color: var(--critical-text);
+}
+.att-error {
+  flex-basis: 100%;
+  padding: 0 8px 6px;
+  color: var(--critical-text);
+  font-size: 12px;
+  max-width: 340px;
+}
+.chat {
+  position: relative;
+}
+.drop-overlay {
+  position: absolute;
+  inset: 8px;
+  border: 2px dashed var(--accent);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  display: grid;
+  place-items: center;
+  text-align: center;
+  z-index: 5;
+  pointer-events: none;
+  color: var(--accent);
+  font-weight: 650;
+  padding: 16px;
+}
+.drop-overlay small {
+  display: block;
+  color: var(--ink-2);
+  font-weight: 500;
+  margin-top: 4px;
+}
+
 /* ---- status & meters ----------------------------------------------------- */
 .badge {
   display: inline-flex;

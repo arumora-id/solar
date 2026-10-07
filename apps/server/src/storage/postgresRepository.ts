@@ -1,5 +1,5 @@
 import pg from 'pg';
-import type { Artifact, Confirmation, Task, TaskEvent, TaskStats, TaskStatus, TaskUsage } from '@solar/shared';
+import type { Artifact, Attachment, Confirmation, Task, TaskEvent, TaskStats, TaskStatus, TaskUsage } from '@solar/shared';
 import { EMPTY_USAGE } from '@solar/shared';
 import { emptyStats, type ListTasksOptions, type Repository } from './repository.js';
 
@@ -64,6 +64,25 @@ CREATE TABLE IF NOT EXISTS solar_confirmations (
   note          text
 );
 CREATE INDEX IF NOT EXISTS solar_confirmations_status_idx ON solar_confirmations (status, created_at);
+
+ALTER TABLE solar_tasks ADD COLUMN IF NOT EXISTS attachment_ids jsonb NOT NULL DEFAULT '[]'::jsonb;
+
+CREATE TABLE IF NOT EXISTS solar_attachments (
+  id           text PRIMARY KEY,
+  session_id   text NOT NULL,
+  name         text NOT NULL,
+  kind         text NOT NULL,
+  mime_type    text NOT NULL,
+  size         integer NOT NULL,
+  parts        integer,
+  chars        integer NOT NULL,
+  outline      jsonb NOT NULL DEFAULT '[]'::jsonb,
+  warnings     jsonb NOT NULL DEFAULT '[]'::jsonb,
+  storage_key  text NOT NULL,
+  text_key     text NOT NULL,
+  created_at   timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS solar_attachments_session_idx ON solar_attachments (session_id, created_at);
 `;
 
 const iso = (v: Date | string | null): string | null => (v === null ? null : new Date(v).toISOString());
@@ -86,6 +105,25 @@ function toTask(r: Row): Task {
     result: (r.result as string | null) ?? null,
     error: (r.error as string | null) ?? null,
     usage: { ...EMPTY_USAGE, ...((r.usage as Partial<TaskUsage> | null) ?? {}) },
+    attachmentIds: (r.attachment_ids as string[] | null) ?? [],
+  };
+}
+
+function toAttachment(r: Row): Attachment {
+  return {
+    id: r.id as string,
+    sessionId: r.session_id as string,
+    name: r.name as string,
+    kind: r.kind as Attachment['kind'],
+    mimeType: r.mime_type as string,
+    size: Number(r.size),
+    parts: r.parts === null || r.parts === undefined ? null : Number(r.parts),
+    chars: Number(r.chars),
+    outline: (r.outline as string[] | null) ?? [],
+    warnings: (r.warnings as string[] | null) ?? [],
+    storageKey: r.storage_key as string,
+    textKey: r.text_key as string,
+    createdAt: iso(r.created_at as Date)!,
   };
 }
 
@@ -150,8 +188,8 @@ export class PostgresRepository implements Repository {
   async upsertTask(t: Task): Promise<void> {
     await this.pool.query(
       `INSERT INTO solar_tasks (id, session_id, title, prompt, status, progress, current_step, model, created_at,
-         started_at, finished_at, result, error, usage)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+         started_at, finished_at, result, error, usage, attachment_ids)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
        ON CONFLICT (id) DO UPDATE SET
          title = EXCLUDED.title, status = EXCLUDED.status, progress = EXCLUDED.progress,
          current_step = EXCLUDED.current_step, started_at = EXCLUDED.started_at,
@@ -172,6 +210,7 @@ export class PostgresRepository implements Repository {
         t.result,
         t.error,
         JSON.stringify(t.usage),
+        JSON.stringify(t.attachmentIds ?? []),
       ],
     );
   }
@@ -302,5 +341,63 @@ export class PostgresRepository implements Repository {
       params,
     );
     return rows.map(toConfirmation);
+  }
+
+  async saveAttachment(a: Attachment): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO solar_attachments (id, session_id, name, kind, mime_type, size, parts, chars, outline, warnings, storage_key, text_key, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, parts = EXCLUDED.parts, chars = EXCLUDED.chars,
+         outline = EXCLUDED.outline, warnings = EXCLUDED.warnings, storage_key = EXCLUDED.storage_key, text_key = EXCLUDED.text_key`,
+      [
+        a.id,
+        a.sessionId,
+        a.name,
+        a.kind,
+        a.mimeType,
+        a.size,
+        a.parts,
+        a.chars,
+        JSON.stringify(a.outline),
+        JSON.stringify(a.warnings),
+        a.storageKey,
+        a.textKey,
+        a.createdAt,
+      ],
+    );
+  }
+
+  async getAttachment(id: string): Promise<Attachment | null> {
+    const { rows } = await this.pool.query('SELECT * FROM solar_attachments WHERE id = $1', [id]);
+    return rows[0] ? toAttachment(rows[0]) : null;
+  }
+
+  async listAttachments(filter: { sessionId?: string; ids?: string[] }): Promise<Attachment[]> {
+    if (filter.ids && filter.ids.length === 0) return [];
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (filter.sessionId) {
+      params.push(filter.sessionId);
+      where.push(`session_id = $${params.length}`);
+    }
+    if (filter.ids) {
+      params.push(filter.ids);
+      where.push(`id = ANY($${params.length}::text[])`);
+    }
+    const { rows } = await this.pool.query(
+      `SELECT * FROM solar_attachments ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at ASC`,
+      params,
+    );
+    return rows.map(toAttachment);
+  }
+
+  async deleteAttachment(id: string): Promise<void> {
+    await this.pool.query('DELETE FROM solar_attachments WHERE id = $1', [id]);
+  }
+
+  async isAttachmentReferenced(id: string): Promise<boolean> {
+    // jsonb `?` tests whether the string is an element of the top-level array
+    const { rows } = await this.pool.query('SELECT 1 FROM solar_tasks WHERE attachment_ids ? $1 LIMIT 1', [id]);
+    return rows.length > 0;
   }
 }

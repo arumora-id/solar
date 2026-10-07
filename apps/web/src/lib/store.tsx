@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
-import type { Artifact, Confirmation, PluginStatus, PublicConfig, StreamMessage, Task, TaskEvent } from '@solar/shared';
+import type { Artifact, Attachment, Confirmation, PluginStatus, PublicConfig, StreamMessage, Task, TaskEvent } from '@solar/shared';
 import { api, ApiError, setToken, withToken } from './api';
 import { getSessionId, newSessionId } from './session';
 
@@ -16,6 +16,8 @@ interface State {
   tasks: Record<string, Task>;
   events: Record<string, TaskEvent[]>;
   artifacts: Record<string, Artifact[]>;
+  /** Attachment metadata by id (from uploads and task details). */
+  attachments: Record<string, Attachment>;
   drafts: Record<string, Draft>;
   plugins: PluginStatus[];
   confirmations: Confirmation[];
@@ -29,7 +31,8 @@ type Action =
   | { type: 'session'; id: string }
   | { type: 'tasks'; tasks: Task[] }
   | { type: 'task'; task: Task }
-  | { type: 'detail'; task: Task; events: TaskEvent[]; artifacts: Artifact[] }
+  | { type: 'detail'; task: Task; events: TaskEvent[]; artifacts: Artifact[]; attachments: Attachment[] }
+  | { type: 'attachments'; list: Attachment[] }
   | { type: 'event'; event: TaskEvent }
   | { type: 'deltas'; items: Array<{ taskId: string; channel: 'text' | 'thinking'; text: string }> }
   | { type: 'plugins'; plugins: PluginStatus[] }
@@ -91,7 +94,10 @@ function reducer(state: State, action: Action): State {
         tasks: { ...state.tasks, [action.task.id]: mergeTask(state.tasks[action.task.id], action.task) },
         events: { ...state.events, [action.task.id]: mergeEvents(state.events[action.task.id], action.events) },
         artifacts: { ...state.artifacts, [action.task.id]: mergeArtifacts(state.artifacts[action.task.id], action.artifacts) },
+        attachments: action.attachments.length ? { ...state.attachments, ...Object.fromEntries(action.attachments.map((a) => [a.id, a])) } : state.attachments,
       };
+    case 'attachments':
+      return action.list.length ? { ...state, attachments: { ...state.attachments, ...Object.fromEntries(action.list.map((a) => [a.id, a])) } } : state;
     case 'event': {
       const e = action.event;
       const list = state.events[e.taskId] ?? [];
@@ -129,7 +135,8 @@ function reducer(state: State, action: Action): State {
 }
 
 interface SolarContextValue extends State {
-  submit(prompt: string): Promise<Task>;
+  submit(prompt: string, attachmentIds?: string[]): Promise<Task>;
+  rememberAttachments(list: Attachment[]): void;
   cancel(taskId: string): Promise<void>;
   loadTask(taskId: string): Promise<void>;
   refreshTasks(): Promise<void>;
@@ -150,6 +157,7 @@ export function SolarProvider({ children }: { children: ReactNode }) {
     tasks: {},
     events: {},
     artifacts: {},
+    attachments: {},
     drafts: {},
     plugins: [],
     confirmations: [],
@@ -191,7 +199,7 @@ export function SolarProvider({ children }: { children: ReactNode }) {
     async (taskId: string) => {
       try {
         const d = await api.task(taskId);
-        dispatch({ type: 'detail', task: d.task, events: d.events, artifacts: d.artifacts });
+        dispatch({ type: 'detail', task: d.task, events: d.events, artifacts: d.artifacts, attachments: d.attachments ?? [] });
       } catch (err) {
         handleError(err);
       }
@@ -285,13 +293,15 @@ export function SolarProvider({ children }: { children: ReactNode }) {
   }, [state.authRequired, streamNonce, reloadConfig, refreshTasks, loadTask, handleError]);
 
   const submit = useCallback(
-    async (prompt: string) => {
-      const task = await api.createTask(prompt, state.sessionId);
+    async (prompt: string, attachmentIds: string[] = []) => {
+      const task = await api.createTask(prompt, state.sessionId, attachmentIds);
       dispatch({ type: 'task', task });
       return task;
     },
     [state.sessionId],
   );
+
+  const rememberAttachments = useCallback((list: Attachment[]) => dispatch({ type: 'attachments', list }), []);
 
   const cancel = useCallback(
     async (taskId: string) => {
@@ -322,8 +332,8 @@ export function SolarProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<SolarContextValue>(
-    () => ({ ...state, submit, cancel, loadTask, refreshTasks, resolveConfirmation, startNewSession, reloadConfig, submitToken }),
-    [state, submit, cancel, loadTask, refreshTasks, resolveConfirmation, startNewSession, reloadConfig, submitToken],
+    () => ({ ...state, submit, rememberAttachments, cancel, loadTask, refreshTasks, resolveConfirmation, startNewSession, reloadConfig, submitToken }),
+    [state, submit, rememberAttachments, cancel, loadTask, refreshTasks, resolveConfirmation, startNewSession, reloadConfig, submitToken],
   );
   return <SolarContext.Provider value={value}>{children}</SolarContext.Provider>;
 }

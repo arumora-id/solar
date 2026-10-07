@@ -86,6 +86,26 @@ sequenceDiagram
 Jika validasi gagal, tool mengembalikan `is_error` berisi daftar error bernomor dan **tidak menyimpan apa pun**, sehingga
 model memperbaiki input lalu memanggil ulang.
 
+## 3b. Lampiran dokumen proyek
+
+1. UI mengunggah file (tombol klip, seret-lepas, atau tempel) ke `POST /api/attachments` - isi file mentah, maks.
+   `ATTACHMENT_MAX_MB`. `AttachmentService` memvalidasi nama & ekstensi lalu memanggil `documents/extractDocument`.
+2. Ekstraksi (modul `apps/server/src/documents`) mengubah setiap format menjadi **Markdown** yang menjaga struktur:
+   judul, daftar, tabel Markdown, penanda `<!-- page N -->` (PDF), `## Slide N: judul` + catatan pembicara (PowerPoint),
+   `## Sheet: nama` + tabel dengan nilai yang sudah diformat (Excel/CSV). Batas keamanan: ukuran file, ukuran hasil
+   dekompresi ZIP (anti zip bomb), jumlah baris/kolom, panjang teks (2 juta karakter) dan batas waktu. File lama
+   (`.doc/.xls/.ppt`), terenkripsi atau rusak ditolak dengan pesan yang jelas.
+3. File asli dan hasil ekstraksi disimpan di object store (`attachments/<id>/…`), metadata (`Attachment`) di repository
+   (`solar_attachments` / `data/attachments/*.json`). UI menampilkan chip + pratinjau teks hasil ekstraksi.
+4. `POST /api/tasks` membawa `attachmentIds` (harus satu percakapan). Pesan pertama ke model berisi blok
+   `<attached_documents>`: teks lengkap bila total ≤ 60.000 karakter, selain itu daftar + outline dan instruksi untuk
+   membaca dengan tool.
+5. Tool agent: `list_documents`, `read_document` (potongan berdasarkan offset, lanjut dengan `next_offset`),
+   `search_documents` (frasa, lalu semua kata; mengembalikan lokasi halaman/slide/sheet terdekat). Dokumen percakapan
+   sebelumnya tetap bisa dibaca task berikutnya.
+6. Prompt-injection: isi dokumen dibingkai sebagai data dari pengguna; system prompt dan deskripsi tool melarang mengikuti
+   instruksi di dalam dokumen. Aksi eksternal tetap tunduk pada aturan konfirmasi plugin.
+
 ## 4. Konfirmasi (human-in-the-loop)
 
 - Setiap tool punya fungsi `confirmation(input)`; plugin MCP mengikuti kebijakan `never | writes | always`
@@ -98,8 +118,8 @@ model memperbaiki input lalu memanggil ulang.
 
 | Data | Tanpa konfigurasi | Dengan konfigurasi |
 |---|---|---|
-| Task, event timeline, metadata artefak, konfirmasi | `data/tasks/*.json` + `*.events.jsonl` | Neon Postgres (`DATABASE_URL`): tabel `solar_tasks`, `solar_task_events`, `solar_artifacts`, `solar_confirmations` (dibuat otomatis). |
-| File artefak | `data/artifacts/tasks/<task>/<artifact>/<file>` | Object storage S3-compatible (`S3_*`) dengan prefix `S3_PREFIX`. |
+| Task, event timeline, metadata artefak, konfirmasi, metadata lampiran | `data/tasks/*.json` + `*.events.jsonl`, `data/attachments/*.json` | Neon Postgres (`DATABASE_URL`): tabel `solar_tasks`, `solar_task_events`, `solar_artifacts`, `solar_confirmations`, `solar_attachments` (dibuat/dimigrasi otomatis). |
+| File artefak & lampiran | `data/artifacts/tasks/<task>/<artifact>/<file>`, `data/artifacts/attachments/<id>/…` | Object storage S3-compatible (`S3_*`) dengan prefix `S3_PREFIX`. |
 | Skill pengguna, plugin, status skill | `data/skills/`, `data/plugins.json`, `data/skills-state.json` | sama |
 
 Saat server mulai, task yang tertinggal berstatus aktif dari proses sebelumnya ditandai gagal ("server di-restart").

@@ -2,6 +2,7 @@ import gsap from 'gsap';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Task } from '@solar/shared';
 import { AgentBubble } from '../components/AgentBubble';
+import { AttachmentStrip } from '../components/Attachments';
 import { Composer, type ComposerHandle } from '../components/Composer';
 import { PlusIcon, VolumeIcon } from '../components/Icons';
 import { isActive } from '../lib/format';
@@ -14,6 +15,10 @@ import { speak, stopSpeaking, ttsAvailable } from '../voice/tts';
 import { useVoicePrefs } from '../voice/useVoice';
 
 const QUICK_PROMPTS = [
+  {
+    label: 'Dari dokumen',
+    text: 'Pelajari semua dokumen terlampir, lalu buatkan paket arsitektur lengkap (model ArchiMate, sequence diagram skenario utama dan error, serta Technical Specification Document) sesuai isinya. Catat asumsi dan pertanyaan terbuka. Fokus: ',
+  },
   {
     label: 'Paket lengkap',
     text: 'Buatkan paket arsitektur lengkap dalam sekali proses: model ArchiMate (Layered View dan Application Cooperation View), sequence diagram untuk skenario utama dan alur error, serta Technical Specification Document. Sistem: ',
@@ -36,6 +41,8 @@ export function AgentPage() {
   const [listening, setListening] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [mood, setMood] = useState<'happy' | 'sad' | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const dragDepth = useRef(0);
   const [compact, setCompact] = useState(() => readPref('compactStage', false));
 
   useEffect(() => {
@@ -114,13 +121,15 @@ export function AgentPage() {
   }, [sessionTasks.length, current?.progress]);
 
   const handleSubmit = useCallback(
-    async (text: string) => {
+    async (text: string, attachmentIds: string[]) => {
       stopSpeaking();
       setSpeaking(false);
-      await submit(text);
+      await submit(text, attachmentIds);
     },
     [submit],
   );
+
+  const hasFiles = (e: { dataTransfer: DataTransfer }) => Array.from(e.dataTransfer.types).includes('Files');
 
   return (
     <main className="agent-page">
@@ -141,7 +150,41 @@ export function AgentPage() {
         )}
       </section>
 
-      <section className="chat" aria-label="Percakapan">
+      <section
+        className="chat"
+        aria-label="Percakapan"
+        onDragEnter={(e) => {
+          if (!hasFiles(e)) return;
+          e.preventDefault();
+          dragDepth.current += 1;
+          setDragging(true);
+        }}
+        onDragOver={(e) => {
+          if (!hasFiles(e)) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+        }}
+        onDragLeave={(e) => {
+          if (!hasFiles(e)) return;
+          dragDepth.current = Math.max(0, dragDepth.current - 1);
+          if (dragDepth.current === 0) setDragging(false);
+        }}
+        onDrop={(e) => {
+          if (!hasFiles(e)) return;
+          e.preventDefault();
+          dragDepth.current = 0;
+          setDragging(false);
+          composerRef.current?.addFiles(Array.from(e.dataTransfer.files));
+        }}
+      >
+        {dragging && (
+          <div className="drop-overlay" aria-hidden="true">
+            <div>
+              Lepaskan untuk melampirkan dokumen
+              <small>PDF, Word, Excel, PowerPoint, Markdown atau teks</small>
+            </div>
+          </div>
+        )}
         <div className="chat-head">
           <h2>Percakapan</h2>
           {speaking && (
@@ -170,11 +213,13 @@ export function AgentPage() {
                 Contoh: “Buatkan paket arsitektur lengkap untuk sistem pemesanan online dengan pembayaran via payment gateway, deploy di Kubernetes,
                 database PostgreSQL.”
               </p>
+              <p>Punya dokumen proyek? Lampirkan PDF, Word, Excel, PowerPoint atau Markdown dengan tombol klip, atau seret file ke sini.</p>
             </div>
           ) : (
             sessionTasks.map((t) => (
               <div key={t.id} style={{ display: 'contents' }}>
                 <div className="bubble user">{t.prompt}</div>
+                <AttachmentStrip ids={t.attachmentIds ?? []} />
                 <AgentBubble task={t} />
               </div>
             ))

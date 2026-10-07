@@ -1,5 +1,6 @@
 import type {
   Artifact,
+  Attachment,
   Confirmation,
   Task,
   TaskDetail,
@@ -39,6 +40,8 @@ export interface TaskRunContext {
   readonly task: Task;
   readonly signal: AbortSignal;
   readonly sessionContext: string;
+  /** Documents attached to this task, in the order the user attached them. */
+  readonly attachments: Attachment[];
   emit(payload: TaskEventPayload): Promise<void>;
   delta(text: string, channel?: 'text' | 'thinking'): void;
   /** Updates the "current step" shown in the UI without adding a timeline event. */
@@ -102,7 +105,7 @@ export class TaskManager {
     }
   }
 
-  async create(prompt: string, sessionId: string): Promise<Task> {
+  async create(prompt: string, sessionId: string, attachmentIds: string[] = []): Promise<Task> {
     const firstLine = prompt.trim().split(/\r?\n/)[0] ?? '';
     const title = firstLine.length > 90 ? `${firstLine.slice(0, 87)}...` : firstLine || 'Untitled task';
     const task: Task = {
@@ -120,6 +123,7 @@ export class TaskManager {
       result: null,
       error: null,
       usage: { ...EMPTY_USAGE },
+      attachmentIds: [...new Set(attachmentIds)],
     };
     await this.repo.upsertTask(task);
     this.seq.set(task.id, 0);
@@ -137,12 +141,13 @@ export class TaskManager {
   async detail(id: string): Promise<TaskDetail | null> {
     const task = await this.get(id);
     if (!task) return null;
-    const [events, artifacts, confirmations] = await Promise.all([
+    const [events, artifacts, confirmations, attachments] = await Promise.all([
       this.repo.listEvents(id),
       this.repo.listArtifacts(id),
       this.repo.listConfirmations({ taskId: id }),
+      this.attachmentsOf(task),
     ]);
-    return { task, events, artifacts, confirmations };
+    return { task, events, artifacts, confirmations, attachments };
   }
 
   async cancel(id: string): Promise<boolean> {
@@ -205,7 +210,7 @@ export class TaskManager {
       // everything that touches storage stays inside the try: a database outage fails this task, not the process
       await this.save(active.task);
       await this.emit(id, { type: 'status', status: 'running', message: 'Agent mulai bekerja' });
-      const ctx = this.buildContext(active, await this.buildSessionContext(stored));
+      const ctx = this.buildContext(active, await this.buildSessionContext(stored), await this.attachmentsOf(stored));
       const { result } = await runner(ctx);
       if (controller.signal.aborted) throw controller.signal.reason ?? new Error('Dibatalkan');
       await this.finish(active.task, 'completed', { result });
@@ -272,6 +277,14 @@ export class TaskManager {
     return event;
   }
 
+  /** The task's attachments in the order they were attached. */
+  private async attachmentsOf(task: Task): Promise<Attachment[]> {
+    const ids = task.attachmentIds ?? [];
+    if (ids.length === 0) return [];
+    const found = new Map((await this.repo.listAttachments({ ids })).map((a) => [a.id, a]));
+    return ids.map((id) => found.get(id)).filter((a): a is Attachment => Boolean(a));
+  }
+
   private async buildSessionContext(task: Task): Promise<string> {
     const previous = (await this.repo.listTasks({ limit: 6, sessionId: task.sessionId }))
       .filter((t) => t.id !== task.id && TERMINAL_TASK_STATUSES.includes(t.status))
@@ -281,12 +294,16 @@ export class TaskManager {
     const parts: string[] = [];
     for (const t of previous) {
       const artifacts = await this.repo.listArtifacts(t.id);
+      const attached = await this.attachmentsOf(t);
       const answer = (t.result ?? t.error ?? '').trim();
       parts.push(
         [
           `<previous_task id="${t.id}" status="${t.status}" created="${t.createdAt}">`,
           `<user_request>\n${t.prompt.trim()}\n</user_request>`,
           `<agent_answer>\n${answer.length > 6000 ? `${answer.slice(0, 6000)}\n[answer shortened for context]` : answer}\n</agent_answer>`,
+          attached.length
+            ? `<attached_documents>\n${attached.map((a) => `- ${a.id} | ${a.kind} | ${a.name}`).join('\n')}\n</attached_documents>`
+            : '',
           artifacts.length
             ? `<artifacts>\n${artifacts.map((a) => `- ${a.id} | ${a.kind} | ${a.name} | ${a.title}`).join('\n')}\n</artifacts>`
             : '',
@@ -299,7 +316,7 @@ export class TaskManager {
     return parts.join('\n\n');
   }
 
-  private buildContext(active: ActiveTask, sessionContext: string): TaskRunContext {
+  private buildContext(active: ActiveTask, sessionContext: string, attachments: Attachment[]): TaskRunContext {
     const id = active.task.id;
     return {
       get task() {
@@ -307,6 +324,7 @@ export class TaskManager {
       },
       signal: active.controller.signal,
       sessionContext,
+      attachments,
       emit: async (payload) => {
         await this.emit(id, payload);
       },

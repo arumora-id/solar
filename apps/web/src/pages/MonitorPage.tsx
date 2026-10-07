@@ -2,6 +2,7 @@ import gsap from 'gsap';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Task, TaskEvent, TaskStats, TaskStatus } from '@solar/shared';
 import { ArtifactList } from '../components/Artifacts';
+import { AttachmentTable } from '../components/Attachments';
 import { AlertIcon, CheckCircleIcon, ClockIcon, HandIcon, RefreshIcon, SpinnerIcon, StopIcon } from '../components/Icons';
 import { ProgressMeter, StatusBadge } from '../components/Status';
 import { api } from '../lib/api';
@@ -252,6 +253,12 @@ function TaskDetailPanel({ task, now }: { task: Task; now: number }) {
         <h3>Permintaan</h3>
         <div style={{ whiteSpace: 'pre-wrap', fontSize: 13 }}>{task.prompt}</div>
       </div>
+      {(task.attachmentIds?.length ?? 0) > 0 && (
+        <div className="detail-section">
+          <h3>Dokumen terlampir ({task.attachmentIds.length})</h3>
+          <AttachmentTable ids={task.attachmentIds} />
+        </div>
+      )}
       {(resultHtml || task.error) && (
         <div className="detail-section">
           <h3>Hasil</h3>
