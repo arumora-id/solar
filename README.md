@@ -14,9 +14,9 @@ Perintah diberikan dengan **mengetik atau suara**, berjalan di **browser** maupu
 bisa ditambah **skills** dan **plugin MCP** (GitHub, Plane `plane.mesthi.com` sebagai backlog, Visual Paradigm dengan
 konfirmasi wajib), dan setiap pekerjaan bisa dipantau di **web monitoring task**.
 
-![Halaman agent](docs/images/agent-light.png)
+![Halaman agent dengan karakter Mochi dan dokumen terlampir](docs/images/agent-light.png)
 
-| Hasil & artefak (tema gelap) | Konfirmasi sebelum aksi eksternal | Monitor task |
+| Hasil & artefak (tema gelap, karakter Cocoa Kelapa) | Konfirmasi sebelum aksi eksternal | Monitor task |
 |---|---|---|
 | ![Hasil](docs/images/agent-dark-result.png) | ![Konfirmasi](docs/images/confirmation.png) | ![Monitor](docs/images/monitor.png) |
 
