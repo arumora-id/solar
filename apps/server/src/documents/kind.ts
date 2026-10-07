@@ -1,5 +1,5 @@
 import type { AttachmentKind } from '@solar/shared';
-import { DocumentError } from './types.js';
+import { documentError } from './types.js';
 
 const BY_EXTENSION: Record<string, { kind: AttachmentKind; mimeType: string }> = {
   '.pdf': { kind: 'pdf', mimeType: 'application/pdf' },
@@ -30,13 +30,10 @@ export function detectKind(fileName: string): { kind: AttachmentKind; mimeType: 
   const known = BY_EXTENSION[ext];
   if (known) return known;
   if (LEGACY[ext]) {
-    throw new DocumentError(
-      `Format ${LEGACY[ext]} belum didukung. Simpan ulang sebagai ${ext}x (File → Save As) atau PDF, lalu lampirkan lagi.`,
-      415,
-    );
+    throw documentError('LEGACY_FORMAT', `Format ${LEGACY[ext]} belum didukung. Simpan ulang sebagai ${ext}x (File → Save As) atau PDF, lalu lampirkan lagi.`);
   }
-  throw new DocumentError(
+  throw documentError(
+    'UNSUPPORTED',
     `Jenis file "${ext || fileName}" tidak didukung. Gunakan PDF, Word (.docx), Excel (.xlsx/.xlsm/.csv), PowerPoint (.pptx), Markdown (.md) atau teks (.txt).`,
-    415,
   );
 }

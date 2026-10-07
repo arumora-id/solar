@@ -1,4 +1,5 @@
 /** Text-based formats: Markdown, plain text and CSV. */
+import { documentError } from './types.js';
 
 // Windows-1252 differs from Latin-1 in 0x80-0x9F (curly quotes, dashes, €, ...). Node's TextDecoder('windows-1252')
 // decodes that range as C1 control characters, so map it explicitly (undefined bytes stay as the replacement char).
@@ -18,6 +19,14 @@ export function decodeText(buffer: Buffer): string {
   }
   if (buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe) return new TextDecoder('utf-16le').decode(buffer.subarray(2));
   if (buffer.length >= 2 && buffer[0] === 0xfe && buffer[1] === 0xff) return new TextDecoder('utf-16be').decode(buffer.subarray(2));
+  // many NUL bytes outside UTF-16 mean a binary file (an image, archive, ...) with a text extension; a stray one is
+  // tolerated (and removed later)
+  const probe = buffer.subarray(0, 65_536);
+  let nul = 0;
+  for (const byte of probe) if (byte === 0) nul += 1;
+  if (nul > Math.max(1, probe.length / 1000)) {
+    throw documentError('UNSUPPORTED', 'File ini tampaknya file biner, bukan teks. Lampirkan PDF, Word, Excel, PowerPoint, Markdown, CSV atau teks biasa.');
+  }
   try {
     // valid UTF-8 never fails strict decoding; a single invalid sequence means the file uses another encoding
     return strictUtf8.decode(buffer);

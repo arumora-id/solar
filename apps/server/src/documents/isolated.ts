@@ -72,12 +72,16 @@ export async function extractIsolated(buffer: Buffer, fileName: string, options:
       const timer = setTimeout(
         () =>
           finish(() =>
-            reject(new DocumentError(`Membaca "${fileName}" melebihi batas waktu ${Math.round(limitMs / 1000)} detik. Pecah dokumen menjadi beberapa file.`)),
+            reject(new DocumentError(`Membaca "${fileName}" melebihi batas waktu ${Math.round(limitMs / 1000)} detik. Pecah dokumen menjadi beberapa file.`, 422, 'TIMEOUT')),
           ),
         limitMs,
       );
       worker.once('message', (msg: WorkerResponse) =>
-        finish(() => (msg.ok ? resolve(msg.result) : reject(msg.status ? new DocumentError(msg.message, msg.status as 413 | 415 | 422) : new Error(msg.message)))),
+        finish(() =>
+          msg.ok
+            ? resolve(msg.result)
+            : reject(msg.status ? new DocumentError(msg.message, msg.status as 413 | 415 | 422, msg.code ?? undefined) : new Error(msg.message)),
+        ),
       );
       worker.once('error', (err: Error & { code?: string }) =>
         finish(() =>
