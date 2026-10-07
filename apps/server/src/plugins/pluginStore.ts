@@ -131,8 +131,11 @@ export class PluginStore {
     return p ? { ...p } : undefined;
   }
 
-  async create(input: PluginInput): Promise<PluginConfig> {
-    const candidate = { ...input, id: input.id?.trim() ? input.id : slugify(input.name ?? 'plugin', 'plugin') };
+  /** `id` may be omitted: it is then derived from the name. */
+  async create(input: Omit<PluginInput, 'id'> & { id?: string }): Promise<PluginConfig> {
+    // ids are limited to 40 characters (see PluginConfigBaseSchema); slugify allows longer names
+    const derived = slugify(input.name ?? 'plugin', 'plugin').slice(0, 40).replace(/-+$/, '') || 'plugin';
+    const candidate = { ...input, id: input.id?.trim() ? input.id : derived };
     const config = PluginConfigSchema.parse(candidate) as PluginConfig;
     if (this.plugins.some((p) => p.id === config.id)) throw new Error(`Plugin "${config.id}" already exists`);
     this.plugins.push(config);

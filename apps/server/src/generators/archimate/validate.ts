@@ -91,6 +91,26 @@ export function validateArchimateModel(model: ArchimateModel): ValidationResult<
   });
 
   // --- junctions ----------------------------------------------------------
+  // Non-junction elements reached by following relationships through (chains of) junctions.
+  const ends = (start: string, direction: 'in' | 'out'): Set<string> => {
+    const found = new Set<string>();
+    const visited = new Set<string>([start]);
+    const stack = [start];
+    while (stack.length) {
+      const id = stack.pop()!;
+      for (const r of relationships) {
+        const next = direction === 'in' ? (r.target === id ? r.source : null) : r.source === id ? r.target : null;
+        if (!next || visited.has(next)) continue;
+        visited.add(next);
+        const nextEl = elements.get(next);
+        if (!nextEl) continue;
+        if (isJunction(nextEl.type)) stack.push(next);
+        else found.add(next);
+      }
+    }
+    return found;
+  };
+  const checkedThroughJunction = new Set<string>();
   for (const el of elements.values()) {
     if (!isJunction(el.type)) continue;
     const incoming = relationships.filter((r) => r.target === el.id);
@@ -101,6 +121,28 @@ export function validateArchimateModel(model: ArchimateModel): ValidationResult<
         path: `elements[${model.elements.indexOf(el)}]`,
         message: `Junction "${el.name}" connects relationships of different types (${[...types].join(', ')}); all relationships of a junction must have the same type`,
       });
+    } else if (types.size === 1) {
+      // A relationship through a junction is only valid if the direct relationship between its end elements is valid.
+      const type = [...types][0]!;
+      for (const srcId of ends(el.id, 'in')) {
+        for (const tgtId of ends(el.id, 'out')) {
+          const key = `${srcId}|${tgtId}|${type}`;
+          if (checkedThroughJunction.has(key)) continue;
+          checkedThroughJunction.add(key);
+          const src = elements.get(srcId)!;
+          const tgt = elements.get(tgtId)!;
+          const allowed = allowedRelationships(src.type, tgt.type);
+          if (!allowed.includes(type)) {
+            errors.push({
+              path: `elements[${model.elements.indexOf(el)}]`,
+              message:
+                `Via junction "${el.name}", ${type} connects ${src.type} "${src.name}" to ${tgt.type} "${tgt.name}", which is not allowed in ArchiMate 3.2 ` +
+                `(a relationship through a junction must also be valid directly). ` +
+                (allowed.length ? `Allowed: ${allowed.join(', ')}.` : 'No relationship is allowed between these types.'),
+            });
+          }
+        }
+      }
     }
     if (incoming.length === 0 || outgoing.length === 0) {
       warnings.push({ path: `elements[${model.elements.indexOf(el)}]`, message: `Junction "${el.name}" should have at least one incoming and one outgoing relationship` });

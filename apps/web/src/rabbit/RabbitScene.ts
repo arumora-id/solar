@@ -76,6 +76,9 @@ function glyphSprite(text: string, color: string): THREE.Sprite {
  * Procedural, asset-free 3D rabbit ("SOLAR") animated with GSAP.
  * Every pose is a GSAP timeline on Object3D properties; three.js only renders.
  */
+/** Resting height of the i-th thinking dot above the head. */
+const dotBaseY = (i: number) => 1.95 + i * 0.22;
+
 export class RabbitScene {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
@@ -269,7 +272,7 @@ export class RabbitScene {
     // thinking dots & state sprites above the head
     for (let i = 0; i < 3; i++) {
       const dot = new THREE.Mesh(new THREE.SphereGeometry(0.08, 16, 12), new THREE.MeshBasicMaterial({ color: PALETTE.accent }));
-      dot.position.set(0.75 + i * 0.28, 1.95 + i * 0.22, 0.2);
+      dot.position.set(0.75 + i * 0.28, dotBaseY(i), 0.2);
       dot.scale.setScalar(0.001);
       this.head.add(dot);
       this.dots.push(dot);
@@ -399,6 +402,7 @@ export class RabbitScene {
       .to(this.ring.material as THREE.MeshBasicMaterial, { opacity: 0, duration: 0.3 }, 0)
       .to(this.ring.scale, { x: 1, y: 1, z: 1, duration: 0.3 }, 0)
       .to(this.dots.map((d2) => d2.scale), { x: 0.001, y: 0.001, z: 0.001, duration: 0.2 }, 0)
+      .to(this.dots.map((d2) => d2.position), { y: (i: number) => dotBaseY(i), duration: 0.2 }, 0)
       .to(this.eyes.map((e) => e.position), { y: 0.62, duration: 0.3 }, 0);
     if (next !== 'working') {
       tl.to(this.tablet.scale, { x: 0.001, y: 0.001, z: 0.001, duration: 0.25, onComplete: () => void (this.tablet.visible = false) }, 0);
@@ -459,7 +463,8 @@ export class RabbitScene {
               gsap
                 .timeline({ repeat: -1, repeatDelay: 0.3 })
                 .to(dot.scale, { x: 1, y: 1, z: 1, duration: 0.25, ease: 'back.out(3)' })
-                .to(dot.position, { y: `+=0.12`, duration: 0.35, yoyo: true, repeat: 1, ease: 'sine.inOut' })
+                // absolute target: an interrupted bounce must not shift the dot's base position
+                .to(dot.position, { y: dotBaseY(i) + 0.12, duration: 0.35, yoyo: true, repeat: 1, ease: 'sine.inOut' })
                 .to(dot.scale, { x: 0.6, y: 0.6, z: 0.6, duration: 0.25 }),
               0.2 + i * 0.25,
             );

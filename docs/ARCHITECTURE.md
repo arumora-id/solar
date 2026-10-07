@@ -7,7 +7,7 @@ Dokumen ini menjelaskan cara kerja internal SOLAR untuk pengembang dan reviewer.
 | Komponen | Lokasi | Tanggung jawab |
 |---|---|---|
 | Web UI | `apps/web` | React 19 + Vite + TypeScript. Kelinci 3D (`src/rabbit/RabbitScene.ts`, three.js, animasi GSAP), chat + komposer suara, monitor, pengaturan. Berkomunikasi lewat REST dan Server-Sent Events. |
-| Server | `apps/server` | Express 5. `TaskManager` (antrean, status, progres, konfirmasi), agent loop Claude, generator + validator, `SkillStore`, `PluginStore` + `McpManager`, penyimpanan. |
+| Server | `apps/server` | Express 5. `TaskManager` (antrean, status, progres, konfirmasi), agent loop OpenAI, generator + validator, `SkillStore`, `PluginStore` + `McpManager`, penyimpanan. |
 | Desktop | `apps/desktop` | Electron 44. Memuat bundle server (`server.mjs`) di main process, membuka jendela ke UI lokal, mengatur izin mikrofon, mode mini, `.env` di `%APPDATA%\SOLAR`. |
 | Shared | `packages/shared` | Kontrak tipe antara server dan UI (`Task`, `TaskEvent`, `Artifact`, `PluginView`, `StreamMessage`, ...). |
 
@@ -21,16 +21,16 @@ sequenceDiagram
     participant API as Server API
     participant TM as TaskManager
     participant AG as Agent loop
-    participant C as Claude API
+    participant C as OpenAI Responses API
     participant T as Tools (generator / MCP)
     SA->>UI: perintah (ketik / suara)
     UI->>API: POST /api/tasks
     API->>TM: create + enqueue
     TM-->>UI: SSE task (queued)
     TM->>AG: run(task)
-    loop sampai end_turn
-        AG->>C: messages.stream (system + tools beku, riwayat append-only)
-        C-->>AG: thinking ringkas, teks, tool_use
+    loop sampai tidak ada function_call lagi
+        AG->>C: responses.stream (instructions + tools beku, input append-only, store=false)
+        C-->>AG: ringkasan reasoning, teks, function_call
         AG-->>UI: SSE delta (teks / thinking)
         opt tool butuh persetujuan
             AG->>TM: confirm()
@@ -49,20 +49,30 @@ sequenceDiagram
 
 ### Detail agent loop (`apps/server/src/agent/agent.ts`)
 
-- **Model**: `SOLAR_MODEL` (default `claude-opus-5-5`), `thinking: { type: "adaptive", display: "summarized" }`,
-  `output_config.effort` = `SOLAR_EFFORT`, streaming dengan `max_tokens` 64 000 (dinaikkan ke 128 000 sekali bila sebuah
-  pemanggilan tool terpotong).
-- **Refusal fallback**: beta `server-side-fallback-2026-07-01` + `fallbacks: "default"` (dapat dimatikan dengan
-  `SOLAR_REFUSAL_FALLBACK=false`). `stop_reason: "refusal"` dilaporkan sebagai kegagalan task yang jelas.
-- **Prompt caching**: system prompt tidak berisi data volatil (tanggal & id task ada di pesan user pertama), daftar tool
-  diurutkan deterministik, `cache_control` otomatis di level request.
-- **Riwayat append-only**: system prompt dan daftar tool dibekukan per task; respons asisten (termasuk blok thinking) dikirim
-  kembali apa adanya. Konteks percakapan sebelumnya (maks. 5 task dalam sesi yang sama) diringkas ke pesan pertama
-  ("simple compaction"), sehingga tidak ada pengeditan riwayat.
-- **Eager input streaming** untuk tool bawaan berinput besar (model ArchiMate, TSD); setiap input divalidasi skema zod
-  sebelum dijalankan. Input yang tidak bisa di-parse menyebabkan giliran diulang (maks. 2 kali).
-- **Tool paralel**: semua `tool_use` dalam satu giliran dieksekusi bersamaan dan seluruh `tool_result` dikirim dalam satu
-  pesan user.
+- **Provider**: OpenAI Responses API lewat SDK resmi `openai` (`client.responses.stream`). Kunci: `OPENAI_API_KEY`;
+  opsional `OPENAI_ORG_ID`, `OPENAI_PROJECT_ID`, `OPENAI_BASE_URL`. Client dibuat saat task pertama sehingga server tetap
+  bisa start (dan UI menampilkan petunjuk) walau key belum diisi.
+- **Model**: `SOLAR_MODEL` (default `gpt-6.1-sol`), `reasoning: { effort: SOLAR_EFFORT, summary: "auto" }` untuk model
+  reasoning (GPT-5/6, o-series); model non-reasoning (GPT-4.1/4o, `*-chat-latest`) dipanggil tanpa parameter `reasoning`.
+  `max_output_tokens` = `SOLAR_MAX_TOKENS` (default 64 000, dibatasi maksimum model) dan dinaikkan sekali ke maksimum
+  model bila respons `incomplete` - pemanggilan tool yang terpotong tidak pernah dijalankan.
+- **Stateless & privasi**: `store: false` + `include: ["reasoning.encrypted_content"]` - tidak ada percakapan yang disimpan
+  di OpenAI; item reasoning terenkripsi dikirim balik apa adanya sehingga penalaran model tetap utuh antar giliran.
+- **Penolakan / filter**: konten `refusal` atau `incomplete_details.reason = "content_filter"` dilaporkan sebagai kegagalan
+  task yang jelas. Error API dipetakan ke pesan Bahasa Indonesia (key salah, `insufficient_quota`, rate limit, model tidak
+  tersedia, koneksi).
+- **Prompt caching**: otomatis di OpenAI untuk prefix ≥ 1024 token. `instructions` tidak berisi data volatil (tanggal & id
+  task ada di pesan user pertama), daftar tool diurutkan deterministik, dan `prompt_cache_key: "solar-agent"` dipakai
+  bersama oleh semua task. Token cache terlihat di monitor.
+- **Input append-only**: `instructions` dan daftar tool dibekukan per task; semua item output (reasoning, pesan,
+  `function_call`) dikirim kembali apa adanya diikuti `function_call_output`. Konteks percakapan sebelumnya (maks. 5 task
+  dalam sesi yang sama) diringkas ke pesan pertama ("simple compaction"), sehingga tidak ada pengeditan riwayat.
+- **Validasi input tool**: argumen `function_call` di-parse sebagai JSON lalu divalidasi skema zod; JSON rusak atau input
+  tidak valid dikembalikan ke model sebagai `ERROR: …` agar diperbaiki di giliran berikutnya. Deskripsi tool MCP dipotong
+  ke 1024 karakter (batas OpenAI).
+- **Tool paralel**: `parallel_tool_calls: true`; semua `function_call` dalam satu giliran dieksekusi bersamaan.
+- **Estimasi biaya**: tabel harga per model di `agent/models.ts` (termasuk tarif konteks panjang GPT-6 > 272K token);
+  bisa ditimpa `SOLAR_PRICE_PER_MTOK`.
 - **Batas**: `SOLAR_MAX_TURNS` giliran per task; pembatalan menghentikan stream dan menolak konfirmasi yang tertunda.
 
 ## 3. Generator & validator

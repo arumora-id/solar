@@ -10,6 +10,9 @@ const MSG_FONT = 12;
 const MAX_MSG_W = 260;
 const NOTE_W = 200;
 const ACT_W = 10;
+const HEAD_LABEL_W = 200;
+const HEAD_FONT = 12.5;
+const LINE_H = 15;
 
 const f = (n: number) => Math.round(n * 10) / 10;
 
@@ -17,6 +20,8 @@ interface Column {
   p: Participant;
   x: number;
   w: number;
+  /** Participant label wrapped to the head box (max 3 lines). */
+  lines: string[];
 }
 
 interface FragmentBox {
@@ -30,8 +35,13 @@ interface FragmentBox {
   depth: number;
 }
 
+function headLines(p: Participant): string[] {
+  return wrapText(p.label, HEAD_LABEL_W - 16, HEAD_FONT, 3);
+}
+
 function headWidth(p: Participant): number {
-  return Math.max(96, Math.min(200, textWidth(p.label, 12.5) + 28));
+  const widest = Math.max(...headLines(p).map((l) => textWidth(l, HEAD_FONT)));
+  return Math.max(96, Math.min(HEAD_LABEL_W, widest + 28));
 }
 
 /** Column centres: minimum spacing, then widened until every message / note label fits. */
@@ -85,13 +95,21 @@ function computeColumns(d: SequenceDiagram): Column[] {
       }
     }
   }
-  return d.participants.map((p, i) => ({ p, x: xs[i]!, w: widths[i]! }));
+  return d.participants.map((p, i) => ({ p, x: xs[i]!, w: widths[i]!, lines: headLines(p) }));
 }
 
-function participantHead(c: Column, y: number): string {
-  const { p, x, w } = c;
-  const label = escapeXml(p.label);
-  const text = (ty: number) => `<text x="${f(x)}" y="${f(ty)}" text-anchor="middle" font-size="12.5" font-weight="600" fill="${INK}">${label}</text>`;
+/** `headH` grows with the longest wrapped participant label so every head has the same height. */
+function participantHead(c: Column, y: number, headH: number): string {
+  const { p, x, w, lines } = c;
+  // icon heads put the label below the icon (first line at `ty`); box heads centre it around `ty`
+  const label = (ty: number, centred: boolean) => {
+    const first = centred ? ty - ((lines.length - 1) * LINE_H) / 2 : ty;
+    return lines
+      .map((l, i) => `<text x="${f(x)}" y="${f(first + i * LINE_H)}" text-anchor="middle" font-size="${HEAD_FONT}" font-weight="600" fill="${INK}">${escapeXml(l)}</text>`)
+      .join('');
+  };
+  const text = (ty: number) => label(ty, false);
+  const boxText = (ty: number) => label(ty, true);
   const stroke = `stroke="${LINE}" stroke-width="1.2"`;
   switch (p.kind) {
     case 'actor':
@@ -101,21 +119,21 @@ function participantHead(c: Column, y: number): string {
       );
     case 'database':
       return (
-        `<path d="M${f(x - w / 2)} ${y + 8}V${y + HEAD_H - 8}A${w / 2} 8 0 0 0 ${f(x + w / 2)} ${y + HEAD_H - 8}V${y + 8}" fill="#f6f8fa" ${stroke}/>` +
+        `<path d="M${f(x - w / 2)} ${y + 8}V${y + headH - 8}A${w / 2} 8 0 0 0 ${f(x + w / 2)} ${y + headH - 8}V${y + 8}" fill="#f6f8fa" ${stroke}/>` +
         `<ellipse cx="${f(x)}" cy="${y + 8}" rx="${f(w / 2)}" ry="8" fill="#f6f8fa" ${stroke}/>` +
-        text(y + 32)
+        boxText(y + headH / 2 + 8)
       );
     case 'queue':
       return (
-        `<path d="M${f(x - w / 2 + 8)} ${y + 6}H${f(x + w / 2 - 8)}A8 ${(HEAD_H - 12) / 2} 0 0 1 ${f(x + w / 2 - 8)} ${y + HEAD_H - 6}H${f(x - w / 2 + 8)}A8 ${(HEAD_H - 12) / 2} 0 0 1 ${f(x - w / 2 + 8)} ${y + 6}Z" fill="#f6f8fa" ${stroke}/>` +
-        `<ellipse cx="${f(x + w / 2 - 8)}" cy="${y + HEAD_H / 2}" rx="8" ry="${(HEAD_H - 12) / 2}" fill="none" ${stroke}/>` +
-        text(y + HEAD_H / 2 + 4)
+        `<path d="M${f(x - w / 2 + 8)} ${y + 6}H${f(x + w / 2 - 8)}A8 ${(headH - 12) / 2} 0 0 1 ${f(x + w / 2 - 8)} ${y + headH - 6}H${f(x - w / 2 + 8)}A8 ${(headH - 12) / 2} 0 0 1 ${f(x - w / 2 + 8)} ${y + 6}Z" fill="#f6f8fa" ${stroke}/>` +
+        `<ellipse cx="${f(x + w / 2 - 8)}" cy="${y + headH / 2}" rx="8" ry="${(headH - 12) / 2}" fill="none" ${stroke}/>` +
+        boxText(y + headH / 2 + 4)
       );
     case 'collections':
       return (
-        `<rect x="${f(x - w / 2 + 6)}" y="${y + 2}" width="${f(w - 6)}" height="${HEAD_H - 10}" rx="4" fill="#f6f8fa" ${stroke}/>` +
-        `<rect x="${f(x - w / 2)}" y="${y + 8}" width="${f(w - 6)}" height="${HEAD_H - 10}" rx="4" fill="#f6f8fa" ${stroke}/>` +
-        text(y + HEAD_H / 2 + 7)
+        `<rect x="${f(x - w / 2 + 6)}" y="${y + 2}" width="${f(w - 6)}" height="${headH - 10}" rx="4" fill="#f6f8fa" ${stroke}/>` +
+        `<rect x="${f(x - w / 2)}" y="${y + 8}" width="${f(w - 6)}" height="${headH - 10}" rx="4" fill="#f6f8fa" ${stroke}/>` +
+        boxText(y + headH / 2 + 7)
       );
     case 'boundary':
       return `<g fill="none" ${stroke}><circle cx="${f(x + 5)}" cy="${y + 14}" r="11"/><path d="M${f(x - 14)} ${y + 3}V${y + 25}M${f(x - 14)} ${y + 14}H${f(x - 6)}"/></g>${text(y + 44)}`;
@@ -124,10 +142,10 @@ function participantHead(c: Column, y: number): string {
     case 'entity':
       return `<g fill="none" ${stroke}><circle cx="${f(x)}" cy="${y + 13}" r="11"/><path d="M${f(x - 11)} ${y + 27}H${f(x + 11)}"/></g>${text(y + 44)}`;
     case 'external':
-      return `<rect x="${f(x - w / 2)}" y="${y + 6}" width="${f(w)}" height="${HEAD_H - 12}" rx="6" fill="#ffffff" stroke="${LINE}" stroke-width="1.2" stroke-dasharray="5 3"/>${text(y + HEAD_H / 2 + 4)}`;
+      return `<rect x="${f(x - w / 2)}" y="${y + 6}" width="${f(w)}" height="${headH - 12}" rx="6" fill="#ffffff" stroke="${LINE}" stroke-width="1.2" stroke-dasharray="5 3"/>${boxText(y + headH / 2 + 4)}`;
     case 'participant':
     default:
-      return `<rect x="${f(x - w / 2)}" y="${y + 6}" width="${f(w)}" height="${HEAD_H - 12}" rx="6" fill="#f6f8fa" stroke="${LINE}" stroke-width="1.2"/>${text(y + HEAD_H / 2 + 4)}`;
+      return `<rect x="${f(x - w / 2)}" y="${y + 6}" width="${f(w)}" height="${headH - 12}" rx="6" fill="#f6f8fa" stroke="${LINE}" stroke-width="1.2"/>${boxText(y + headH / 2 + 4)}`;
   }
 }
 
@@ -148,9 +166,14 @@ export function toSequenceSvg(d: SequenceDiagram): string {
   const minX = Math.min(...cols.map((c) => c.x - c.w / 2));
   const maxX = Math.max(...cols.map((c) => c.x + c.w / 2));
 
+  const headH = HEAD_H + (Math.max(...cols.map((c) => c.lines.length)) - 1) * LINE_H;
   const descLines = d.description ? wrapText(d.description, Math.max(400, maxX - MARGIN), 11.5, 3) : [];
   const headTop = MARGIN + 30 + descLines.length * 15 + 8;
-  let y = headTop + HEAD_H + 26;
+  let y = headTop + headH + 26;
+  // text outside the participant columns that the canvas must still fit
+  let textRight = MARGIN + textWidth(d.title, 17) * 1.08;
+  for (const l of descLines) textRight = Math.max(textRight, MARGIN + textWidth(l, 11.5));
+  const dividers: Array<{ y: number; text: string; tw: number }> = [];
 
   const body: string[] = [];
   const overlays: string[] = [];
@@ -229,6 +252,7 @@ export function toSequenceSvg(d: SequenceDiagram): string {
         const h = lines.length * 15 + 12;
         const cx = span ? (xs[0]! + xs[1]!) / 2 : xs[0]!;
         const x0 = cx - width / 2;
+        rightmost = Math.max(rightmost, x0 + width);
         overlays.push(
           `<path d="M${f(x0)} ${f(y)}H${f(x0 + width - 10)}L${f(x0 + width)} ${f(y + 10)}V${f(y + h)}H${f(x0)}Z" fill="#fff8c5" stroke="#d4a72c" stroke-width="1"/>` +
             `<path d="M${f(x0 + width - 10)} ${f(y)}V${f(y + 10)}H${f(x0 + width)}" fill="none" stroke="#d4a72c" stroke-width="1"/>` +
@@ -238,13 +262,11 @@ export function toSequenceSvg(d: SequenceDiagram): string {
         break;
       }
       case 'divider': {
-        const x0 = MARGIN;
-        const tw = textWidth(step.text, 11.5) + 24;
-        overlays.push(
-          `<path d="M${x0} ${f(y + 10)}H{RIGHT}M${x0} ${f(y + 14)}H{RIGHT}" stroke="${LINE}" stroke-width="1"/>` +
-            `<rect x="{MIDX-${f(tw / 2)}}" y="${f(y)}" width="${f(tw)}" height="24" rx="4" fill="#eaeef2" stroke="${LINE}" stroke-width="1"/>` +
-            `<text x="{MIDX}" y="${f(y + 16)}" text-anchor="middle" font-size="11.5" font-weight="600" fill="${INK}">${escapeXml(step.text)}</text>`,
-        );
+        // drawn once the canvas width is known (see below)
+        const tw = textWidth(step.text, 11.5) * 1.08 + 24;
+        dividers.push({ y, text: step.text, tw });
+        overlays.push(`{DIVIDER:${dividers.length - 1}}`);
+        textRight = Math.max(textRight, MARGIN + tw);
         y += 40;
         break;
       }
@@ -303,10 +325,20 @@ export function toSequenceSvg(d: SequenceDiagram): string {
     while (stack.length) closeBar(id, lifelineEnd - 4);
   }
 
-  const width = Math.ceil(Math.max(rightmost, maxX) + MARGIN + 10);
+  const width = Math.ceil(Math.max(rightmost, maxX, textRight) + MARGIN + 10);
   const footTop = lifelineEnd + 6;
-  const height = footTop + HEAD_H + MARGIN;
+  const height = footTop + headH + MARGIN;
   const midX = (minX + maxX) / 2;
+  const dividerSvg = (i: number) => {
+    const dv = dividers[i]!;
+    // centred on the participants, but never past either canvas edge
+    const cx = Math.min(Math.max(midX, MARGIN + dv.tw / 2), width - MARGIN - dv.tw / 2);
+    return (
+      `<path d="M${MARGIN} ${f(dv.y + 10)}H${width - MARGIN}M${MARGIN} ${f(dv.y + 14)}H${width - MARGIN}" stroke="${LINE}" stroke-width="1"/>` +
+      `<rect x="${f(cx - dv.tw / 2)}" y="${f(dv.y)}" width="${f(dv.tw)}" height="24" rx="4" fill="#eaeef2" stroke="${LINE}" stroke-width="1"/>` +
+      `<text x="${f(cx)}" y="${f(dv.y + 16)}" text-anchor="middle" font-size="11.5" font-weight="600" fill="${INK}">${escapeXml(dv.text)}</text>`
+    );
+  };
 
   const sortedFragments = [...fragments].sort((a, b) => a.depth - b.depth);
   const fragmentBg = sortedFragments
@@ -340,14 +372,14 @@ export function toSequenceSvg(d: SequenceDiagram): string {
     .join('');
 
   const lifelines = cols
-    .map((c) => `<path d="M${f(c.x)} ${headTop + HEAD_H}V${footTop}" stroke="#afb8c1" stroke-width="1.2" stroke-dasharray="6 5"/>`)
+    .map((c) => `<path d="M${f(c.x)} ${headTop + headH}V${footTop}" stroke="#afb8c1" stroke-width="1.2" stroke-dasharray="6 5"/>`)
     .join('');
   const barSvg = bars
     .sort((a, b) => a.level - b.level)
     .map((b) => `<rect x="${f(b.x - ACT_W / 2 + (b.level - 1) * 5)}" y="${f(b.y0)}" width="${ACT_W}" height="${f(Math.max(6, b.y1 - b.y0))}" fill="#ddf4ff" stroke="#0969da" stroke-width="1"/>`)
     .join('');
-  const heads = cols.map((c) => participantHead(c, headTop) + participantHead(c, footTop)).join('');
-  const overlaySvg = overlays.join('').replace(/\{RIGHT\}/g, String(width - MARGIN)).replace(/\{MIDX-([0-9.]+)\}/g, (_, w: string) => String(f(midX - Number(w)))).replace(/\{MIDX\}/g, String(f(midX)));
+  const heads = cols.map((c) => participantHead(c, headTop, headH) + participantHead(c, footTop, headH)).join('');
+  const overlaySvg = overlays.map((o) => o.replace(/^\{DIVIDER:(\d+)\}$/, (_, i: string) => dividerSvg(Number(i)))).join('');
 
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" font-family="${FONT}">`,

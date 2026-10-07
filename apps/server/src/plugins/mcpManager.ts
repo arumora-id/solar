@@ -5,6 +5,7 @@ import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotoc
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { PluginConfig, PluginStatus } from '@solar/shared';
+import type { ToolResultBlock } from '../agent/types.js';
 import { APP_NAME, APP_VERSION } from '../config.js';
 import { createLogger } from '../logger.js';
 import type { EventBus } from '../tasks/eventBus.js';
@@ -30,9 +31,7 @@ export interface McpToolBinding {
   tool: McpToolDescriptor;
 }
 
-export type McpResultBlock =
-  | { type: 'text'; text: string }
-  | { type: 'image'; source: { type: 'base64'; media_type: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'; data: string } };
+export type McpResultBlock = ToolResultBlock;
 
 export interface McpCallResult {
   blocks: McpResultBlock[];
@@ -45,9 +44,15 @@ interface Connection {
   status: PluginStatus;
   tools: McpToolDescriptor[];
   connecting: Promise<void> | null;
+  /** Bumped by every connect/disconnect: an attempt that sees a newer generation gives up. */
+  gen: number;
+  /** Client of the attempt in flight (closed when a newer request supersedes it). */
+  pending: Client | null;
 }
 
-/** Anthropic tool names must match ^[a-zA-Z0-9_-]{1,64}$. */
+class Superseded extends Error {}
+
+/** OpenAI function names must match ^[a-zA-Z0-9_-]{1,64}$. */
 export function qualifyToolName(pluginId: string, toolName: string): string {
   const plugin = pluginId.replace(/[^a-zA-Z0-9]/g, '_');
   const tool = toolName.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -105,6 +110,8 @@ export class McpManager {
         transport: null,
         tools: [],
         connecting: null,
+        gen: 0,
+        pending: null,
         status: { id, state: 'disabled', error: null, tools: [], connectedAt: null },
       };
       this.connections.set(id, c);
@@ -131,17 +138,46 @@ export class McpManager {
     for (const p of this.store.list()) void this.connect(p.id).catch(() => undefined);
   }
 
+  /**
+   * (Re)connects with the plugin's current config. A newer connect/disconnect supersedes an attempt in flight,
+   * so an edit, disable or delete during a slow start never leaves the old config connected.
+   */
   async connect(id: string): Promise<void> {
     const c = this.conn(id);
-    if (c.connecting) return c.connecting;
-    c.connecting = this.doConnect(id).finally(() => {
-      c.connecting = null;
+    const gen = ++c.gen;
+    await this.closePending(c);
+    const previous = c.connecting;
+    const tracked: Promise<void> = (async () => {
+      if (previous) await previous.catch(() => undefined);
+      if (c.gen !== gen) return;
+      await this.doConnect(id, gen);
+    })().finally(() => {
+      if (c.connecting === tracked) c.connecting = null;
     });
-    return c.connecting;
+    c.connecting = tracked;
+    return tracked;
   }
 
-  private async doConnect(id: string): Promise<void> {
-    await this.disconnect(id, false);
+  private async closePending(c: Connection): Promise<void> {
+    const pending = c.pending;
+    c.pending = null;
+    if (pending) await pending.close().catch(() => undefined);
+  }
+
+  private async closeCurrent(c: Connection): Promise<void> {
+    const client = c.client;
+    c.client = null;
+    c.transport = null;
+    c.tools = [];
+    if (client) await client.close().catch(() => undefined);
+  }
+
+  private async doConnect(id: string, gen: number): Promise<void> {
+    const c = this.conn(id);
+    const superseded = () => c.gen !== gen;
+    await this.closeCurrent(c);
+    // from here until `c.pending = client` there is no await, so a newer request cannot slip in unnoticed
+    if (superseded()) return;
     const config = this.store.get(id);
     if (!config) throw new Error(`Plugin "${id}" not found`);
     if (!config.enabled) {
@@ -161,6 +197,17 @@ export class McpManager {
 
     this.setStatus(id, { state: 'connecting', error: null });
     let transport: Transport;
+    let endpoint: URL | null = null;
+    if (config.transport !== 'stdio') {
+      try {
+        endpoint = new URL(resolved.url ?? '');
+        if (endpoint.protocol !== 'http:' && endpoint.protocol !== 'https:') throw new Error('unsupported protocol');
+      } catch {
+        const message = `URL tidak valid: "${resolved.url ?? ''}" (harus diawali http:// atau https://)`;
+        this.setStatus(id, { state: 'error', error: message, tools: [], connectedAt: null });
+        throw new Error(message);
+      }
+    }
     if (config.transport === 'stdio') {
       const stdio = new StdioClientTransport({
         command: resolved.command!,
@@ -171,12 +218,12 @@ export class McpManager {
       stdio.stderr?.on('data', (chunk: Buffer) => log.debug(`[${id}] ${chunk.toString().trim()}`));
       transport = stdio;
     } else if (config.transport === 'http') {
-      transport = new StreamableHTTPClientTransport(new URL(resolved.url!), {
+      transport = new StreamableHTTPClientTransport(endpoint!, {
         requestInit: { headers: resolved.headers },
       });
     } else {
       const headers = resolved.headers;
-      transport = new SSEClientTransport(new URL(resolved.url!), {
+      transport = new SSEClientTransport(endpoint!, {
         requestInit: { headers },
         eventSourceInit: {
           fetch: (url, init) => fetch(url, { ...init, headers: { ...(init?.headers as Record<string, string>), ...headers } }),
@@ -185,11 +232,12 @@ export class McpManager {
     }
 
     const client = new Client({ name: APP_NAME.toLowerCase(), version: APP_VERSION }, { capabilities: {} });
-    const c = this.conn(id);
+    c.pending = client;
     try {
       const timeoutMs = config.transport === 'stdio' ? 180_000 : 45_000;
       // first start of an `npx` server downloads the package: allow the same time for the MCP handshake
       await withTimeout(client.connect(transport, { timeout: timeoutMs }), timeoutMs, `Connecting to ${config.name}`);
+      if (superseded()) throw new Superseded();
       const tools: McpToolDescriptor[] = [];
       let cursor: string | undefined;
       do {
@@ -203,8 +251,10 @@ export class McpManager {
           });
         }
         cursor = page.nextCursor;
+        if (superseded()) throw new Superseded();
       } while (cursor);
 
+      c.pending = null;
       c.client = client;
       c.transport = transport;
       c.tools = tools;
@@ -222,9 +272,12 @@ export class McpManager {
       });
       log.info(`Connected to ${config.name} (${tools.length} tools)`);
     } catch (err) {
+      if (c.pending === client) c.pending = null;
+      await client.close().catch(() => undefined);
+      // a newer connect/disconnect owns the status now
+      if (err instanceof Superseded || superseded()) return;
       const message = err instanceof Error ? err.message : String(err);
       log.warn(`Could not connect to ${config.name}: ${message}`);
-      await client.close().catch(() => undefined);
       this.setStatus(id, { state: 'error', error: message, tools: [], connectedAt: null });
       throw err;
     }
@@ -232,11 +285,9 @@ export class McpManager {
 
   async disconnect(id: string, publish = true): Promise<void> {
     const c = this.conn(id);
-    const client = c.client;
-    c.client = null;
-    c.transport = null;
-    c.tools = [];
-    if (client) await client.close().catch(() => undefined);
+    c.gen += 1;
+    await this.closePending(c);
+    await this.closeCurrent(c);
     if (publish) this.setStatus(id, { state: 'disabled', error: null, tools: [], connectedAt: null });
   }
 
@@ -305,10 +356,7 @@ export function convertResult(result: { content?: unknown[]; structuredContent?:
       case 'image': {
         const mime = String(block.mimeType ?? '');
         if (IMAGE_TYPES.has(mime) && typeof block.data === 'string') {
-          blocks.push({
-            type: 'image',
-            source: { type: 'base64', media_type: mime as 'image/png', data: block.data },
-          });
+          blocks.push({ type: 'image', mimeType: mime, data: block.data });
         } else {
           pushText(`[image omitted: unsupported type ${mime || 'unknown'}]`);
         }

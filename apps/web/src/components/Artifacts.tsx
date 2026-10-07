@@ -88,12 +88,14 @@ export function ArtifactPreview({ artifact, siblings, onClose }: { artifact: Art
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
   }, [artifact.id, isSvg, isHtml]);
 
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onCloseRef.current();
     window.addEventListener('keydown', onKey);
-    if (modalRef.current) gsap.from(modalRef.current, { y: 16, opacity: 0, duration: 0.25, ease: 'power2.out' });
+    if (modalRef.current) gsap.fromTo(modalRef.current, { y: 16, opacity: 0 }, { y: 0, opacity: 1, duration: 0.25, ease: 'power2.out', overwrite: true });
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, []);
 
   const html = useMemo(() => {
     if (!isMarkdown || text === null) return '';

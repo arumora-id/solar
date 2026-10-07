@@ -30,7 +30,8 @@ export function toPlantUml(d: SequenceDiagram): string {
   for (const step of d.steps) {
     switch (step.type) {
       case 'message': {
-        const suffix = `${step.activate ? ' ++' : ''}${step.deactivate ? ' --' : ''}`;
+        // PlantUML: "--" ends the sender's activation, "++" starts the receiver's; combined it must be "--++"
+        const suffix = step.activate && step.deactivate ? ' --++' : step.activate ? ' ++' : step.deactivate ? ' --' : '';
         out.push(`${pad()}${step.from} ${ARROW[step.style]} ${step.to}${suffix} : ${plantText(step.text)}`);
         break;
       }

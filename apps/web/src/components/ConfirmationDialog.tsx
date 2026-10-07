@@ -15,7 +15,7 @@ export function ConfirmationDialog() {
   useEffect(() => {
     setNote('');
     setError('');
-    if (current && ref.current) gsap.from(ref.current, { scale: 0.94, opacity: 0, duration: 0.3, ease: 'back.out(2)' });
+    if (current && ref.current) gsap.fromTo(ref.current, { scale: 0.94, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.3, ease: 'back.out(2)', overwrite: true });
   }, [current?.id]);
 
   if (!current) return null;

@@ -52,7 +52,7 @@ konfirmasi wajib), dan setiap pekerjaan bisa dipantau di **web monitoring task**
 | Karakter 3D | Kelinci prosedural (three.js) dengan animasi **GSAP**: idle, mendengarkan, berpikir, bekerja (membawa tablet), berbicara, bertanya (menunggu persetujuan), senang, sedih. Mata mengikuti kursor; klik kelinci untuk mulai bicara. |
 | Input | Ketik (Enter kirim) atau **suara**: Web Speech API di Chrome/Edge, atau **Whisper lokal** (transformers.js, offline setelah model diunduh) - otomatis dipakai di aplikasi desktop. Berhenti otomatis saat hening. |
 | Output suara | Kelinci membacakan ringkasan hasil (text-to-speech suara sistem, Bahasa Indonesia/English). |
-| Agent | Claude **Opus 5.5** (`claude-opus-5-5`) dengan adaptive thinking, streaming, fallback otomatis saat penolakan, satu task = satu proses end-to-end ("sekali proses"). |
+| Agent | **OpenAI** (API key ChatGPT) lewat Responses API - default **GPT-6.1 Sol** (`gpt-6.1-sol`) dengan reasoning, streaming, tool call paralel, mode stateless (`store: false`); satu task = satu proses end-to-end ("sekali proses"). Model bisa diganti lewat `SOLAR_MODEL`. |
 | Deliverable | ArchiMate (Exchange XML + SVG + JSON), sequence diagram (SVG + Mermaid + PlantUML + JSON), TSD (Markdown + HTML + JSON), unduh semua sebagai ZIP. |
 | Skills | 6 skill bawaan (delivery package, ArchiMate, sequence, TSD, backlog Plane, publish GitHub); tambah/impor/edit/nonaktifkan dari UI. |
 | Plugin MCP | GitHub (remote MCP resmi), Plane `plane.mesthi.com` (MCP resmi Plane), Visual Paradigm (selalu konfirmasi), plugin custom (HTTP/SSE/stdio). |
@@ -74,7 +74,7 @@ flowchart LR
     subgraph Server["SOLAR server - Node.js / Express"]
         API[REST API + SSE stream]
         TM[Task manager<br/>antrean, progres, konfirmasi]
-        AG[Agent loop<br/>Claude Opus 5.5]
+        AG[Agent loop<br/>OpenAI GPT-6.1 Sol]
         GEN[Generator + validator<br/>ArchiMate, Sequence, TSD]
         SK[Skill store]
         MCP[MCP client manager]
@@ -86,7 +86,7 @@ flowchart LR
     AG --> GEN
     AG --> SK
     AG --> MCP
-    AG -- Messages API --> CLAUDE[(Anthropic API)]
+    AG -- Responses API --> OPENAI[(OpenAI API)]
     MCP --> GH[GitHub MCP]
     MCP --> PL[Plane MCP<br/>plane.mesthi.com]
     MCP --> VP[Visual Paradigm MCP]
@@ -102,7 +102,8 @@ Detail desain (alur agent, prompt caching, konfirmasi, penyimpanan) ada di
 ## Prasyarat
 
 - **Node.js 22 LTS** (≥ 22.12) dan npm 10 - <https://nodejs.org>
-- **API key Anthropic** (Claude) - <https://console.anthropic.com>
+- **API key OpenAI** ("API key ChatGPT") - buat di <https://platform.openai.com/api-keys>. Akun API butuh saldo/billing
+  tersendiri di *platform.openai.com → Billing*; langganan ChatGPT Plus/Pro **tidak** termasuk kredit API.
 - Opsional: database **Neon**, object storage S3, token **GitHub**, API key **Plane**, endpoint MCP **Visual Paradigm**.
 - Plugin Plane memakai `npx` (sudah termasuk di Node.js) sehingga butuh akses internet saat pertama kali dijalankan.
 
@@ -113,7 +114,7 @@ git clone https://github.com/arumora-id/solar.git
 cd solar
 npm install
 cp .env.example .env          # Windows PowerShell: Copy-Item .env.example .env
-# isi minimal ANTHROPIC_API_KEY di .env
+# isi minimal OPENAI_API_KEY di .env
 
 npm run build                 # build web UI + bundle server
 npm start                     # http://localhost:8790  (monitor: http://localhost:8790/monitor)
@@ -159,8 +160,11 @@ Semua kredensial berada di `.env` (tidak pernah di-commit). Nilai kosong = fitur
 
 | Variabel | Wajib | Keterangan |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | ✅ | API key Claude. |
-| `SOLAR_MODEL` / `SOLAR_EFFORT` | | Default `claude-opus-5-5` / `high` (`low`…`max`). |
+| `OPENAI_API_KEY` | ✅ | API key OpenAI (`sk-…`) dari platform.openai.com. |
+| `OPENAI_ORG_ID`, `OPENAI_PROJECT_ID` | | Opsional, bila key Anda dipakai di beberapa organisasi/project. |
+| `OPENAI_BASE_URL` | | Opsional: endpoint kompatibel Responses API (mis. gateway/proxy perusahaan). Default `https://api.openai.com/v1`. |
+| `SOLAR_MODEL` / `SOLAR_EFFORT` | | Default `gpt-6.1-sol` / `high`. Effort: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` (tidak semua model mendukung semua nilai; `gpt-6.1-sol`: `low`…`max`). Alternatif: `gpt-6-astra` (paling kuat, 5× lebih mahal), `gpt-6-luna` (paling hemat). |
+| `SOLAR_PRICE_PER_MTOK` | | Opsional `input,cached_input,output` (USD per 1 juta token) untuk estimasi biaya bila harga berubah. |
 | `PORT`, `HOST` | | Default `8790`, `127.0.0.1` (hanya komputer ini). |
 | `SOLAR_ACCESS_TOKEN` | jika `HOST=0.0.0.0` | Token akses UI/API saat dibuka dari jaringan. |
 | `DATABASE_URL` | | Connection string **Neon** (`postgresql://…neon.tech/neondb?sslmode=require`). Tabel dibuat otomatis. |
@@ -323,6 +327,7 @@ Buka `/monitor` (mis. <http://localhost:8790/monitor>):
 ## Keamanan
 
 - Server default hanya mendengarkan `127.0.0.1`. Untuk akses jaringan set `HOST=0.0.0.0` **dan** `SOLAR_ACCESS_TOKEN`.
+- Tanpa `SOLAR_ACCESS_TOKEN`, API hanya melayani permintaan dengan Host/Origin lokal (`127.0.0.1`, `localhost`, `[::1]`); halaman web lain tidak bisa memakai API lewat *DNS rebinding* (mis. menambah plugin stdio).
 - Rahasia hanya di `.env`; nilai rahasia literal di konfigurasi plugin disamarkan saat dikirim ke browser.
 - Artefak disajikan dengan `Content-Security-Policy: sandbox` dan pratinjau HTML di iframe sandbox - dokumen hasil AI
   tidak dapat menjalankan script. Markdown dirender dengan sanitasi (DOMPurify / HTML mentah di-escape).
@@ -334,7 +339,7 @@ Buka `/monitor` (mis. <http://localhost:8790/monitor>):
 ```text
 solar/
 ├─ apps/
-│  ├─ server/        Node.js + Express: agent loop Claude, task manager, generator & validator,
+│  ├─ server/        Node.js + Express: agent loop OpenAI, task manager, generator & validator,
 │  │                 skills, plugin MCP, storage Neon/S3/lokal, REST + SSE  (test: vitest)
 │  ├─ web/           React + Vite + TypeScript + GSAP + three.js: kelinci 3D, chat, suara, monitor, pengaturan
 │  └─ desktop/       Electron: menjalankan server + UI sebagai aplikasi Windows (installer NSIS)
@@ -373,8 +378,11 @@ pembuatan 11 artefak, ZIP, header keamanan, dan riwayat percakapan append-only.
 
 | Gejala | Solusi |
 |---|---|
-| Balon kelinci: "ANTHROPIC_API_KEY belum diisi" | Isi di `.env` (desktop: `%APPDATA%\SOLAR\.env`, menu *File → Buka file .env*), lalu restart. |
-| Task gagal "Autentikasi Anthropic gagal" | API key salah/kedaluwarsa. |
+| Balon kelinci: "OPENAI_API_KEY belum diisi" | Isi di `.env` (desktop: `%APPDATA%\SOLAR\.env`, menu *File → Buka file .env*), lalu restart. |
+| Upgrade dari versi Anthropic (`.env` lama) | Tambahkan `OPENAI_API_KEY`; `ANTHROPIC_API_KEY` tidak dipakai lagi. `SOLAR_MODEL=claude-…` otomatis diganti `gpt-6.1-sol` (dengan peringatan di log) - sebaiknya hapus/ubah barisnya. |
+| Task gagal "Autentikasi OpenAI gagal" | API key salah/dicabut - buat key baru di platform.openai.com/api-keys. |
+| Task gagal "Saldo/kuota API OpenAI habis (insufficient_quota)" | Tambahkan kredit di platform.openai.com → Billing (langganan ChatGPT tidak berlaku untuk API). |
+| Task gagal "Model … tidak ditemukan" / "Akses OpenAI ditolak" | Model belum tersedia untuk akun/project Anda (beberapa model butuh verifikasi organisasi). Ganti `SOLAR_MODEL`, mis. `gpt-6-sol`. |
 | Plugin "Belum dikonfigurasi" | Isi variabel yang disebut di kartu plugin pada `.env`, lalu *Hubungkan ulang*. |
 | Plugin Plane error saat terhubung | Pastikan Node.js/npx terpasang dan bisa mengakses npm registry; cek `PLANE_API_HOST_URL=https://plane.mesthi.com`. |
 | Mikrofon tidak bekerja di browser | Izinkan mikrofon; Web Speech API butuh Chrome/Edge + internet. Pilih *Whisper lokal* di Pengaturan → Suara. |

@@ -54,7 +54,7 @@ export function AgentBubble({ task }: { task: Task }) {
 
   useEffect(() => {
     void loadTask(task.id);
-    if (ref.current) gsap.from(ref.current, { y: 12, opacity: 0, duration: 0.35, ease: 'power2.out' });
+    if (ref.current) gsap.fromTo(ref.current, { y: 12, opacity: 0 }, { y: 0, opacity: 1, duration: 0.35, ease: 'power2.out', overwrite: true });
   }, [task.id, loadTask]);
 
   const activity = useMemo(() => activityFromEvents(taskEvents), [taskEvents]);

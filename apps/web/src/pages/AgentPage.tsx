@@ -52,20 +52,28 @@ export function AgentPage() {
 
   // react to a finished task: celebrate (or not) and read the summary aloud
   const handled = useRef<string | null>(null);
+  // the effect below is keyed on lastFinished only: later task updates (another task's progress)
+  // must not cancel the pending "back to normal + read the summary" timer
+  const latest = useRef({ tasks, sessionId, voicePrefs });
+  latest.current = { tasks, sessionId, voicePrefs };
+  const finishTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(finishTimer.current), []);
   useEffect(() => {
     if (!lastFinished || handled.current === `${lastFinished.taskId}:${lastFinished.at}`) return;
     handled.current = `${lastFinished.taskId}:${lastFinished.at}`;
-    const task = tasks[lastFinished.taskId];
-    if (!task || task.sessionId !== sessionId) return;
+    const task = latest.current.tasks[lastFinished.taskId];
+    if (!task || task.sessionId !== latest.current.sessionId) return;
     setMood(lastFinished.status === 'completed' ? 'happy' : 'sad');
-    const timer = window.setTimeout(() => {
+    window.clearTimeout(finishTimer.current);
+    finishTimer.current = window.setTimeout(() => {
       setMood(null);
-      if (lastFinished.status === 'completed' && voicePrefs.speakReplies && ttsAvailable() && task.result) {
-        speak(speakableSummary(task.result), voicePrefs.lang, { onStart: () => setSpeaking(true), onEnd: () => setSpeaking(false) });
+      const { tasks: now, voicePrefs: prefs } = latest.current;
+      const result = (now[lastFinished.taskId] ?? task).result;
+      if (lastFinished.status === 'completed' && prefs.speakReplies && ttsAvailable() && result) {
+        speak(speakableSummary(result), prefs.lang, { onStart: () => setSpeaking(true), onEnd: () => setSpeaking(false) });
       }
     }, 1800);
-    return () => window.clearTimeout(timer);
-  }, [lastFinished, tasks, sessionId, voicePrefs.speakReplies, voicePrefs.lang]);
+  }, [lastFinished]);
 
   const rabbitState: RabbitState = useMemo(() => {
     if (listening) return 'listening';
@@ -86,7 +94,7 @@ export function AgentPage() {
 
   const bubble = useMemo(() => {
     if (!connected) return { text: 'Menghubungkan ke server SOLAR…', sub: '' };
-    if (config && !config.anthropicConfigured) return { text: 'ANTHROPIC_API_KEY belum diisi di .env', sub: 'Isi lalu restart server agar saya bisa bekerja.' };
+    if (config && !config.openaiConfigured) return { text: 'OPENAI_API_KEY belum diisi di .env', sub: 'Isi lalu restart server agar saya bisa bekerja.' };
     if (listening) return { text: 'Saya mendengarkan…', sub: 'Bicaralah, saya berhenti otomatis saat Anda diam.' };
     if (mood === 'happy') return { text: 'Selesai! Semua deliverable siap.', sub: 'Lihat artefak di panel percakapan.' };
     if (mood === 'sad') return { text: 'Ada kendala…', sub: 'Detail error ada di percakapan dan monitor.' };

@@ -5,56 +5,76 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Artifact, Confirmation, Task, TaskDetail } from '@solar/shared';
-import type { MessagesStreamer, MessageStreamLike } from '../src/agent/agent.js';
+import type { ResponsesStreamer, ResponseStreamLike, StreamDeltaEvent, StreamParams } from '../src/agent/agent.js';
 import type { AgentTool } from '../src/agent/types.js';
 import { loadConfig } from '../src/config.js';
 import { startServer, type RunningServer } from '../src/server.js';
 import { sampleArchimate, sampleSequence, sampleTechSpec } from './fixtures.js';
 
-type Block = Record<string, unknown>;
+type Item = Record<string, unknown>;
+type Step = (input: Item[]) => { output: Item[]; status?: 'completed' | 'incomplete' };
 
-/** A scripted "model": each turn inspects the conversation so far and returns the next message. */
-class ScriptedModel implements MessagesStreamer {
-  readonly calls: Array<{ system: string; tools: string; messages: string }> = [];
+/** A scripted "model": each turn inspects the input so far and returns the next Responses API output. */
+class ScriptedModel implements ResponsesStreamer {
+  readonly calls: Array<{ instructions: string; tools: string; input: string; params: StreamParams }> = [];
 
-  constructor(private readonly script: Array<(messages: Array<{ role: string; content: unknown }>) => { content: Block[]; stop: string }>) {}
+  constructor(private readonly script: Step[]) {}
 
-  stream(params: Parameters<MessagesStreamer['stream']>[0]): MessageStreamLike {
+  stream(params: StreamParams): ResponseStreamLike {
     this.calls.push({
-      system: JSON.stringify(params.system),
+      instructions: JSON.stringify(params.instructions),
       tools: JSON.stringify(params.tools),
-      messages: JSON.stringify(params.messages),
+      input: JSON.stringify(params.input),
+      params,
     });
     const step = this.script[this.calls.length - 1];
     if (!step) throw new Error('script exhausted');
-    const { content, stop } = step(params.messages as Array<{ role: string; content: unknown }>);
-    const listeners: Record<string, Array<(d: string) => void>> = {};
+    const { output, status = 'completed' } = step(params.input as unknown as Item[]);
+    const listeners: Record<string, Array<(e: StreamDeltaEvent) => void>> = {};
     return {
       on(event, listener) {
         (listeners[event] ??= []).push(listener);
         return this;
       },
-      async finalMessage() {
-        for (const b of content) if (b.type === 'text') listeners.text?.forEach((l) => l(String(b.text)));
+      async finalResponse() {
+        for (const item of output) {
+          if (item.type === 'message') {
+            for (const part of item.content as Item[]) listeners['response.output_text.delta']?.forEach((l) => l({ delta: String(part.text) }));
+          }
+          if (item.type === 'reasoning') {
+            (item.summary as Item[]).forEach((part, i) =>
+              listeners['response.reasoning_summary_text.delta']?.forEach((l) => l({ delta: String(part.text), item_id: String(item.id), summary_index: i })),
+            );
+          }
+        }
         return {
-          id: `msg_${Math.random()}`,
-          type: 'message',
-          role: 'assistant',
-          model: 'claude-opus-5-5',
-          content,
-          stop_reason: stop,
-          stop_sequence: null,
-          stop_details: null,
-          usage: { input_tokens: 1000, output_tokens: 200, cache_read_input_tokens: 500, cache_creation_input_tokens: 100 },
+          id: `resp_${Math.random()}`,
+          object: 'response',
+          model: 'gpt-6.1-sol-2026-09-01',
+          status,
+          output,
+          error: null,
+          incomplete_details: status === 'incomplete' ? { reason: 'max_output_tokens' } : null,
+          usage: {
+            input_tokens: 1500,
+            input_tokens_details: { cached_tokens: 500, cache_write_tokens: 0 },
+            output_tokens: 200,
+            output_tokens_details: { reasoning_tokens: 120 },
+            total_tokens: 1700,
+          },
         } as never;
       },
     };
   }
 }
 
-function lastToolResults(messages: Array<{ role: string; content: unknown }>): Array<{ tool_use_id: string; content: unknown; is_error?: boolean }> {
-  const last = messages[messages.length - 1]!;
-  return (last.content as Array<{ type: string; tool_use_id: string; content: unknown; is_error?: boolean }>).filter((b) => b.type === 'tool_result');
+const call = (id: string, name: string, args: unknown): Item => ({ type: 'function_call', id: `fc_${id}`, call_id: id, name, arguments: JSON.stringify(args), status: 'completed' });
+const message = (text: string): Item => ({ type: 'message', id: `msg_${Math.random()}`, role: 'assistant', status: 'completed', content: [{ type: 'output_text', text, annotations: [] }] });
+
+function outputsOf(input: Item[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const item of input) if (item.type === 'function_call_output') out.set(String(item.call_id), typeof item.output === 'string' ? item.output : JSON.stringify(item.output));
+  return out;
 }
 
 const approvalTool: AgentTool = {
@@ -107,47 +127,53 @@ beforeAll(async () => {
   config.plane.apiKey = undefined;
 
   let svgArtifactId = '';
+  let truncatedOnce = false;
   model = new ScriptedModel([
     () => ({
-      stop: 'tool_use',
-      content: [
-        { type: 'thinking', thinking: 'Plan: model, sequence, spec.', signature: 'sig' },
-        { type: 'tool_use', id: 'tu_1', name: 'update_progress', input: { percent: 5, step: 'Plan ready' } },
-        { type: 'tool_use', id: 'tu_2', name: 'create_archimate_model', input: sampleArchimate },
+      output: [
+        { type: 'reasoning', id: 'rs_1', summary: [{ type: 'summary_text', text: 'Plan: model, sequence, spec.' }], encrypted_content: 'enc-1' },
+        call('tu_1', 'update_progress', { percent: 5, step: 'Plan ready' }),
+        call('tu_2', 'create_archimate_model', sampleArchimate),
       ],
     }),
-    (messages) => {
-      const results = lastToolResults(messages);
-      const archimate = results.find((r) => r.tool_use_id === 'tu_2')!;
-      expect(archimate.is_error).toBeFalsy();
-      svgArtifactId = (JSON.parse(String(archimate.content)) as { views: Array<{ svgArtifactId: string }> }).views[0]!.svgArtifactId;
+    (input) => {
+      const outputs = outputsOf(input);
+      const archimate = outputs.get('tu_2')!;
+      expect(archimate.startsWith('ERROR:')).toBe(false);
+      svgArtifactId = (JSON.parse(archimate) as { views: Array<{ svgArtifactId: string }> }).views[0]!.svgArtifactId;
+      // the reasoning item is carried forward verbatim (stateless, store: false)
+      expect(input.some((i) => i.type === 'reasoning' && i.encrypted_content === 'enc-1')).toBe(true);
       return {
-        stop: 'tool_use',
-        content: [
-          { type: 'tool_use', id: 'tu_3', name: 'create_sequence_diagram', input: sampleSequence },
-          { type: 'tool_use', id: 'tu_4', name: 'test_external_write', input: { value: 'diagram' } },
-          { type: 'tool_use', id: 'tu_5', name: 'create_sequence_diagram', input: { title: 'broken', participants: [], steps: [] } },
+        output: [
+          call('tu_3', 'create_sequence_diagram', sampleSequence),
+          call('tu_4', 'test_external_write', { value: 'diagram' }),
+          call('tu_5', 'create_sequence_diagram', { title: 'broken', participants: [], steps: [] }),
+          { type: 'function_call', id: 'fc_tu_7', call_id: 'tu_7', name: 'list_artifacts', arguments: '{"broken', status: 'completed' },
         ],
       };
     },
-    (messages) => {
-      const results = lastToolResults(messages);
-      expect(results.find((r) => r.tool_use_id === 'tu_3')!.is_error).toBeFalsy();
-      expect(String(results.find((r) => r.tool_use_id === 'tu_4')!.content)).toBe('wrote diagram');
-      expect(results.find((r) => r.tool_use_id === 'tu_5')!.is_error).toBe(true);
-      return {
-        stop: 'tool_use',
-        content: [{ type: 'tool_use', id: 'tu_6', name: 'create_technical_specification', input: sampleTechSpec(svgArtifactId) }],
-      };
+    (input) => {
+      const outputs = outputsOf(input);
+      expect(outputs.get('tu_3')!.startsWith('ERROR:')).toBe(false);
+      expect(outputs.get('tu_4')).toBe('wrote diagram');
+      expect(outputs.get('tu_5')!.startsWith('ERROR:')).toBe(true);
+      expect(outputs.get('tu_7')).toContain('not valid JSON');
+      // first attempt is cut off by max_output_tokens: the half-written call must not run
+      truncatedOnce = true;
+      return { status: 'incomplete', output: [{ type: 'function_call', id: 'fc_cut', call_id: 'tu_cut', name: 'list_artifacts', arguments: '{', status: 'incomplete' }] };
     },
-    (messages) => {
-      const results = lastToolResults(messages);
-      expect(results[0]!.is_error).toBeFalsy();
-      return { stop: 'end_turn', content: [{ type: 'text', text: 'Selesai: ArchiMate, sequence, dan TSD sudah dibuat.' }] };
+    (input) => {
+      expect(truncatedOnce).toBe(true);
+      expect(outputsOf(input).has('tu_cut')).toBe(false);
+      return { output: [call('tu_6', 'create_technical_specification', sampleTechSpec(svgArtifactId))] };
+    },
+    (input) => {
+      expect(outputsOf(input).get('tu_6')!.startsWith('ERROR:')).toBe(false);
+      return { output: [message('Selesai: ArchiMate, sequence, dan TSD sudah dibuat.')] };
     },
   ]);
 
-  server = await startServer({ config, port: 0, messages: model, extraTools: [approvalTool] });
+  server = await startServer({ config, port: 0, responses: model, extraTools: [approvalTool] });
 });
 
 afterAll(async () => {
@@ -178,7 +204,9 @@ describe('agent end-to-end (scripted model)', () => {
     expect(detail!.task.status, detail!.task.error ?? '').toBe('completed');
     expect(detail!.task.progress).toBe(100);
     expect(detail!.task.result).toContain('Selesai');
-    expect(detail!.task.usage.apiCalls).toBe(4);
+    expect(detail!.task.usage.apiCalls).toBe(5);
+    expect(detail!.task.usage.cacheReadTokens).toBe(2500);
+    expect(detail!.task.usage.inputTokens).toBe(5000);
     expect(detail!.task.usage.costUsd).toBeGreaterThan(0);
 
     const kinds = detail!.artifacts.map((a: Artifact) => a.kind).sort();
@@ -213,15 +241,31 @@ describe('agent end-to-end (scripted model)', () => {
     expect((await zip.arrayBuffer()).byteLength).toBeGreaterThan(1000);
   });
 
-  it('keeps the conversation append-only with a frozen system prompt and tool list', () => {
-    expect(model.calls).toHaveLength(4);
+  it('keeps the input append-only with frozen instructions and tool list', () => {
+    expect(model.calls).toHaveLength(5);
     for (let i = 1; i < model.calls.length; i++) {
-      expect(model.calls[i]!.system).toBe(model.calls[0]!.system);
+      expect(model.calls[i]!.instructions).toBe(model.calls[0]!.instructions);
       expect(model.calls[i]!.tools).toBe(model.calls[0]!.tools);
-      const prev = JSON.parse(model.calls[i - 1]!.messages) as unknown[];
-      const next = JSON.parse(model.calls[i]!.messages) as unknown[];
-      expect(next.slice(0, prev.length)).toEqual(prev);
+      const prev = JSON.parse(model.calls[i - 1]!.input) as unknown[];
+      const next = JSON.parse(model.calls[i]!.input) as unknown[];
+      // the truncated turn (call 3) is retried, not appended
+      if (i === 3) expect(next).toEqual(prev);
+      else expect(next.slice(0, prev.length)).toEqual(prev);
     }
+  });
+
+  it('sends stateless reasoning requests with a larger budget after truncation', () => {
+    const first = model.calls[0]!.params;
+    expect(first.model).toBe('gpt-6.1-sol');
+    expect(first.store).toBe(false);
+    expect(first.include).toEqual(['reasoning.encrypted_content']);
+    expect(first.reasoning).toEqual({ effort: 'high', summary: 'auto' });
+    expect(first.parallel_tool_calls).toBe(true);
+    expect(first.max_output_tokens).toBe(64000);
+    expect(model.calls[3]!.params.max_output_tokens).toBe(128000);
+    const tools = first.tools as Array<{ type: string; name: string; strict: boolean; parameters: { type: string } }>;
+    expect(tools.every((t) => t.type === 'function' && t.strict === false && t.parameters.type === 'object')).toBe(true);
+    expect(tools.map((t) => t.name)).toContain('create_archimate_model');
   });
 
   it('exposes stats and supports cancelling unknown tasks with 409', async () => {

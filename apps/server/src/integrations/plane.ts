@@ -40,6 +40,34 @@ interface PlaneLabel {
   name: string;
 }
 
+const MAX_THROTTLE_RETRIES = 4;
+
+/** Retry-After is seconds (DRF) or an HTTP date; default to Plane's one-minute window. */
+export function retryAfterMs(header: string | null): number {
+  if (header) {
+    const seconds = Number(header);
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.min(120, seconds) * 1000 + 250;
+    const at = Date.parse(header);
+    if (!Number.isNaN(at)) return Math.min(120_000, Math.max(0, at - Date.now())) + 250;
+  }
+  return 60_000;
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason ?? new Error('Aborted'));
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal!.reason ?? new Error('Aborted'));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 const LABEL_COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#64748b'];
 
 /** Plane REST API (same endpoints as the official Plane MCP server). */
@@ -51,19 +79,26 @@ export class PlaneClient {
   }
 
   private async request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
-    const res = await fetch(`${this.base}${path}`, {
-      method,
-      signal,
-      headers: {
-        'X-API-Key': this.cfg.apiKey,
-        Accept: 'application/json',
-        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    const text = await res.text();
-    if (!res.ok) throw new Error(`Plane ${method} ${path} failed (${res.status}): ${text.slice(0, 500)}`);
-    return (text ? JSON.parse(text) : {}) as T;
+    for (let attempt = 0; ; attempt++) {
+      const res = await fetch(`${this.base}${path}`, {
+        method,
+        signal,
+        headers: {
+          'X-API-Key': this.cfg.apiKey,
+          Accept: 'application/json',
+          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      const text = await res.text();
+      // Plane throttles API keys (default 60 requests/minute): wait as told by Retry-After, then retry
+      if (res.status === 429 && attempt < MAX_THROTTLE_RETRIES) {
+        await sleep(retryAfterMs(res.headers.get('retry-after')), signal);
+        continue;
+      }
+      if (!res.ok) throw new Error(`Plane ${method} ${path} failed (${res.status}): ${text.slice(0, 500)}`);
+      return (text ? JSON.parse(text) : {}) as T;
+    }
   }
 
   private async listAll<T>(path: string, signal?: AbortSignal): Promise<T[]> {
@@ -103,7 +138,7 @@ export class PlaneClient {
     projectId: string,
     items: BacklogItemInput[],
     options: { skipExisting: boolean; signal?: AbortSignal },
-  ): Promise<{ project: PlaneProject; created: CreatedBacklogItem[] }> {
+  ): Promise<{ project: PlaneProject; created: CreatedBacklogItem[]; error?: string }> {
     const { signal } = options;
     const project = await this.getProject(projectId, signal);
     const pid = encodeURIComponent(projectId);
@@ -156,6 +191,29 @@ export class PlaneClient {
 
     const ids = new Map<string, string>();
     const created: CreatedBacklogItem[] = [];
+    try {
+      await this.createItems(pid, project, ordered, { existingByName, labelIds, ids, created, signal });
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      // keep what was already created so the caller can report it (and resume with skipExisting)
+      return { project, created, error: err instanceof Error ? err.message : String(err) };
+    }
+    return { project, created };
+  }
+
+  private async createItems(
+    pid: string,
+    project: PlaneProject,
+    ordered: BacklogItemInput[],
+    state: {
+      existingByName: Map<string, PlaneIssue>;
+      labelIds: Map<string, string>;
+      ids: Map<string, string>;
+      created: CreatedBacklogItem[];
+      signal?: AbortSignal;
+    },
+  ): Promise<void> {
+    const { existingByName, labelIds, ids, created, signal } = state;
     for (const item of ordered) {
       const existing = existingByName.get(item.name.trim().toLowerCase());
       if (existing) {
@@ -175,6 +233,5 @@ export class PlaneClient {
       ids.set(item.ref, issue.id);
       created.push({ ref: item.ref, id: issue.id, key: `${project.identifier}-${issue.sequence_id ?? '?'}`, name: issue.name });
     }
-    return { project, created };
   }
 }
