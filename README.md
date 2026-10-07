@@ -31,21 +31,22 @@ konfirmasi wajib), dan setiap pekerjaan bisa dipantau di **web monitoring task**
 3. [Prasyarat](#prasyarat)
 4. [Instalasi & menjalankan di browser](#instalasi--menjalankan-di-browser)
 5. [Aplikasi desktop Windows](#aplikasi-desktop-windows)
-6. [Konfigurasi kredensial (.env)](#konfigurasi-kredensial-env)
-7. [Cara pakai](#cara-pakai)
-8. [Lampiran dokumen proyek](#lampiran-dokumen-proyek)
-9. [Deliverable yang dihasilkan](#deliverable-yang-dihasilkan)
-10. [Model AI: multi-provider & cadangan](#model-ai-multi-provider--cadangan)
-11. [Knowledge base](#knowledge-base)
-12. [Skills](#skills)
-13. [Plugin MCP: GitHub, Plane, Visual Paradigm](#plugin-mcp-github-plane-visual-paradigm)
-14. [Web monitoring task](#web-monitoring-task)
-15. [Bagaimana SOLAR mencegah kesalahan](#bagaimana-solar-mencegah-kesalahan)
-16. [Keamanan](#keamanan)
-17. [Struktur repository](#struktur-repository)
-18. [Pengembangan & pengujian](#pengembangan--pengujian)
-19. [Troubleshooting](#troubleshooting)
-20. [Lisensi pihak ketiga](#lisensi-pihak-ketiga)
+6. [Web app (PWA)](#web-app-pwa)
+7. [Konfigurasi kredensial (.env)](#konfigurasi-kredensial-env)
+8. [Cara pakai](#cara-pakai)
+9. [Lampiran dokumen proyek](#lampiran-dokumen-proyek)
+10. [Deliverable yang dihasilkan](#deliverable-yang-dihasilkan)
+11. [Model AI: multi-provider & cadangan](#model-ai-multi-provider--cadangan)
+12. [Knowledge base](#knowledge-base)
+13. [Skills](#skills)
+14. [Plugin MCP: GitHub, Plane, Visual Paradigm](#plugin-mcp-github-plane-visual-paradigm)
+15. [Web monitoring task](#web-monitoring-task)
+16. [Bagaimana SOLAR mencegah kesalahan](#bagaimana-solar-mencegah-kesalahan)
+17. [Keamanan](#keamanan)
+18. [Struktur repository](#struktur-repository)
+19. [Pengembangan & pengujian](#pengembangan--pengujian)
+20. [Troubleshooting](#troubleshooting)
+21. [Lisensi pihak ketiga](#lisensi-pihak-ketiga)
 
 ---
 
@@ -134,6 +135,10 @@ npm run dev
 
 ## Aplikasi desktop Windows
 
+**Unduh installer:** halaman [Releases](https://github.com/arumora-id/solar/releases) →
+`SOLAR-AI-AGENT-Setup-<versi>.exe`. Installer belum ditandatangani: bila Windows SmartScreen muncul, pilih
+*More info → Run anyway*.
+
 **Menjalankan dari source (Windows/macOS/Linux):**
 
 ```bash
@@ -148,7 +153,8 @@ npm install
 npm run desktop:dist:win      # hasil: apps/desktop/release/SOLAR-AI-AGENT-Setup-1.0.0.exe
 ```
 
-Atau dari GitHub: tab **Actions → "Desktop installer (Windows)" → Run workflow**, lalu unduh artifact installer.
+Atau dari GitHub: tab **Actions → "Desktop installer (Windows)" → Run workflow**, lalu unduh artifact installer
+(cara menerbitkan rilis: lihat [Rilis](#rilis)).
 
 Catatan aplikasi desktop:
 
@@ -161,6 +167,22 @@ Catatan aplikasi desktop:
   "asisten di samping" saat bekerja.
 - Input suara di desktop memakai **Whisper lokal** (Chromium di Electron tidak menyertakan layanan pengenalan suara Google).
   Model diunduh sekali (pilih ukurannya di *Pengaturan → Suara*).
+
+## Web app (PWA)
+
+Web UI SOLAR adalah *Progressive Web App*: bisa dipasang sebagai aplikasi dengan jendela dan ikon sendiri di Windows,
+macOS, Linux, Android dan iPhone/iPad.
+
+- **Chrome / Edge:** tombol **Pasang aplikasi** di bilah atas, *Pengaturan → Sistem → Aplikasi*, atau menu browser →
+  *Instal SOLAR AI AGENT*. **iPhone/iPad (Safari):** Bagikan → *Tambahkan ke Layar Utama*.
+- Browser hanya mengizinkan pemasangan dari **HTTPS** atau **localhost**. Di komputer yang menjalankan SOLAR (`npm start`
+  atau aplikasi desktop) buka <http://127.0.0.1:8790> di Chrome/Edge. Untuk perangkat lain: jalankan server dengan
+  `HOST=0.0.0.0` + `SOLAR_ACCESS_TOKEN` di balik reverse proxy HTTPS - lihat [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md).
+- Tampilan aplikasi disimpan per versi oleh *service worker*, sehingga tetap terbuka (status **Terputus**) saat server
+  tidak terjangkau; task, event stream, unggahan dan unduhan (`/api`) selalu langsung ke server dan tidak pernah
+  di-cache. Saat versi baru tersedia, SOLAR menampilkan **Versi baru tersedia → Muat ulang**.
+- Paket **SOLAR-AI-AGENT-server-<versi>.zip** di halaman Releases berisi server yang sudah di-bundle + web app untuk
+  dijalankan sendiri dengan Node.js 22 (tanpa `npm install`).
 
 ## Konfigurasi kredensial (.env)
 
@@ -442,14 +464,16 @@ solar/
 │  │                 (src/knowledge), task manager, generator & validator, pembaca dokumen (src/documents),
 │  │                 skills, plugin MCP, storage Neon/S3/lokal,
 │  │                 REST + SSE  (test: vitest)
-│  ├─ web/           React + Vite + TypeScript + GSAP + three.js: karakter 3D, chat, suara, monitor, pengaturan
+│  ├─ web/           React + Vite + TypeScript + GSAP + three.js: karakter 3D, chat, suara, monitor, pengaturan;
+│  │                 PWA: public/manifest.webmanifest, pwa/ (service worker + plugin build)
 │  └─ desktop/       Electron: menjalankan server + UI sebagai aplikasi Windows (installer NSIS)
 ├─ packages/shared/  Tipe TypeScript bersama (Task, Event, Artifact, Plugin, Skill, ...)
 ├─ skills/           Skill bawaan (SKILL.md)
 ├─ knowledge/        Panduan & template knowledge base (README, _templates/)
 ├─ config/           plugins.default.json (preset GitHub, Plane, Visual Paradigm)
-├─ docs/             ARCHITECTURE.md, API.md, gambar
-├─ scripts/          generate-archimate-relationships.mjs (regenerasi tabel relasi dari Archi)
+├─ docs/             ARCHITECTURE.md, API.md, SELF-HOSTING.md, gambar
+├─ scripts/          generate-archimate-relationships.mjs (regenerasi tabel relasi dari Archi),
+│                    pack-server.mjs (paket server + web app untuk rilis)
 └─ .env.example      Template konfigurasi
 ```
 
@@ -477,6 +501,18 @@ rahasia), round-trip object storage S3-compatible, skenario agent end-to-end (mo
 pembuatan 11 artefak, ZIP, header keamanan, dan riwayat percakapan append-only, serta pembacaan lampiran dari dokumen
 nyata (`apps/server/test/fixtures/documents`: Word, PowerPoint, Excel, PDF, file terenkripsi & format lama) termasuk
 zip bomb, PDF hasil scan, file rusak, ekstensi yang salah, API unggah dan tool dokumen agent.
+
+### Rilis
+
+Workflow **Desktop installer (Windows)** membuat installer Windows dan paket server + web app, lalu menerbitkan
+GitHub Release berisi keduanya:
+
+1. Samakan versi di `package.json`, `packages/shared`, `apps/server`, `apps/web`, `apps/desktop` dan `APP_VERSION`
+   di `apps/server/src/config.ts` (workflow menolak versi yang tidak sama), lalu merge ke `main`.
+2. Push tag `v<versi>` (mis. `git tag v1.0.0 && git push origin v1.0.0`), **atau** *Actions → Desktop installer
+   (Windows) → Run workflow* dari `main` dengan **release** dicentang - tag dibuat otomatis pada commit tersebut.
+
+Tanpa tag/centang, workflow hanya menyimpan installer dan zip sebagai artifact (untuk uji coba).
 
 ## Troubleshooting
 

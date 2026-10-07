@@ -1421,3 +1421,26 @@ button.att-open:hover .att-name {
     animation: none;
   }
 }
+
+/* "new version" notice of the installed app (service worker update) */
+.pwa-update {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100vw - 32px);
+  padding: 10px 12px 10px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  font-size: 13.5px;
+}
+.pwa-update span {
+  flex: 1;
+}

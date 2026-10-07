@@ -136,3 +136,8 @@ export const FileIcon = ({ size = 14, ...p }: IconProps) => (
     <path d="M14 3v5h5" />
   </svg>
 );
+export const InstallIcon = ({ size = 18, ...p }: IconProps) => (
+  <svg {...base(size, p)}>
+    <path d="M12 3v12M7 10l5 5 5-5M5 21h14" />
+  </svg>
+);
