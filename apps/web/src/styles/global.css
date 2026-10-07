@@ -1095,6 +1095,8 @@ button.att-open:hover .att-name {
   font-weight: 600;
   color: var(--ink-2);
   border-bottom: 2px solid transparent;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .tabs button[aria-selected='true'] {
   color: var(--accent);

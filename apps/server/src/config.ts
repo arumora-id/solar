@@ -56,6 +56,7 @@ const EnvSchema = z.object({
   SOLAR_ROOT: optionalString,
   DATA_DIR: optionalString,
   SKILLS_DIR: optionalString,
+  KNOWLEDGE_DIR: optionalString,
   WEB_DIST_DIR: optionalString,
   PLUGINS_DEFAULT_FILE: optionalString,
 
@@ -115,6 +116,10 @@ export interface AppConfig {
   dataDir: string;
   builtinSkillsDir: string;
   userSkillsDir: string;
+  /** Example knowledge files shipped with SOLAR (read-only). */
+  builtinKnowledgeDir: string;
+  /** The user's knowledge base (Markdown files). */
+  userKnowledgeDir: string;
   webDistDir: string;
   defaultPluginsFile: string;
   openai: {
@@ -193,6 +198,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     dataDir,
     builtinSkillsDir: resolve(root, e.SKILLS_DIR ?? 'skills'),
     userSkillsDir: join(dataDir, 'skills'),
+    builtinKnowledgeDir: resolve(root, 'knowledge'),
+    userKnowledgeDir: e.KNOWLEDGE_DIR ? resolve(root, e.KNOWLEDGE_DIR) : join(dataDir, 'knowledge'),
     webDistDir: resolve(root, e.WEB_DIST_DIR ?? 'apps/web/dist'),
     defaultPluginsFile: resolve(root, e.PLUGINS_DEFAULT_FILE ?? 'config/plugins.default.json'),
     openai: {

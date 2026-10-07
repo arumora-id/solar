@@ -3,7 +3,7 @@
  * the rows that are shown (row/column caps) are parsed, and shared strings are read only up to the highest index used.
  */
 import { decodeOoxmlText, decodeXml, fmtInt, MB, mdCell, mdTable, parseAttrs, yieldToLoop } from './limits.js';
-import { documentError, type ParseContext, type ParsedDocument } from './types.js';
+import { documentError, type ParseContext, type ParsedDocument, type SheetTable } from './types.js';
 import { dirOf, parseRels, relsPathOf, resolvePart, type OoxmlPackage, type Relationship, type ZipArchive } from './zip.js';
 
 /** Optional namespace prefix in element names. */
@@ -338,6 +338,7 @@ export async function extractXlsx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
   }
 
   const parts: string[] = [];
+  const tables: SheetTable[] = [];
   for (let si = 0; si < sheets.length; si++) {
     const sh = sheets[si]!;
     parts.push(`## Sheet: ${sh.name}${sh.state !== 'visible' ? ' (hidden)' : ''}`);
@@ -387,6 +388,7 @@ export async function extractXlsx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
         parts.push(`**${mdCell(caption, limits.maxCellChars).replace(/\\\|/g, '|')}**`);
       }
     }
+    if (ctx.collectTables) tables.push({ name: sh.name, rows: table, truncated: sh.truncatedRows });
     parts.push(mdTable(table.map((r) => r.map((v) => mdCell(v, limits.maxCellChars)))));
     if (sh.truncatedRows) {
       let totalRows: number | null = null;
@@ -406,5 +408,5 @@ export async function extractXlsx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
     }
   }
   if (skippedForChars) warnings.push(`${skippedForChars} sheet terakhir tidak dibaca karena teks workbook sudah mencapai batas ${fmtInt(maxChars)} karakter.`);
-  return { kind: 'xlsx', markdown: parts.join('\n\n'), parts: sheets.length };
+  return { kind: 'xlsx', markdown: parts.join('\n\n'), parts: sheets.length, ...(ctx.collectTables ? { tables } : {}) };
 }

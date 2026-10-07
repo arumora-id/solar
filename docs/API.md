@@ -70,6 +70,31 @@ Dokumen proyek (PDF, Word `.docx`, Excel `.xlsx`/`.xlsm`/`.csv`, PowerPoint `.pp
 | PUT | `/skills/:id` | sebagian field | Edit (skill bawaan disimpan sebagai override) / aktif-nonaktif. |
 | DELETE | `/skills/:id` | | Hapus skill pengguna (override bawaan → kembali ke versi bawaan). |
 
+## Model AI (provider & rute)
+
+| Method | Path | Body | Keterangan |
+|---|---|---|---|
+| GET | `/llm` | | Provider (`openai` dari `.env` + provider pengguna, API key literal disamarkan) dan rute (`default` = utama lalu cadangan). |
+| POST | `/llm/providers` | `LlmProviderConfig` | Provider baru (`kind`: `openai-chat` atau `openai-responses`). |
+| PUT | `/llm/providers/:id` | sebagian field | Ubah provider. Kirim `••••••••` untuk mempertahankan API key tersimpan. |
+| DELETE | `/llm/providers/:id` | | Hapus provider. |
+| POST | `/llm/providers/:id/test` | | Tes koneksi: daftar model dari `GET /models`. |
+| PUT | `/llm/routes` | `{ routes: { default: ["provider/model", ...] } }` | Simpan rute; `{}` = kembali ke model `.env`. |
+
+## Knowledge base
+
+| Method | Path | Body | Keterangan |
+|---|---|---|---|
+| GET | `/knowledge` | | Semua file (termasuk panduan `README.md` / `_templates/`). |
+| GET | `/knowledge/search?q=&type=` | | Pencarian kata kunci dengan potongan baris. |
+| GET | `/knowledge/file?path=` | | Isi satu file + metadata. |
+| PUT | `/knowledge/file` | `{ path, content }` | Buat / ubah file (file bawaan disimpan sebagai override). |
+| DELETE | `/knowledge/file?path=` | | Hapus file pengguna (override → versi bawaan kembali). |
+| POST | `/knowledge/import` | `{ files: [{ path, content }] }` | Impor banyak file .md. |
+| POST | `/knowledge/tables?name=` | isi file (raw) | Pratinjau sheet Excel/CSV: header, jumlah baris, contoh. |
+| POST | `/knowledge/import-table?name=&options=` | isi file (raw) | Satu file per baris + `INDEX.md`. `options` (JSON): `sheet`, `idColumn`, `titleColumn?`, `statusColumn?`, `aliasColumns[]`, `folder`, `type?`, `headerRow?`, `removeStale?`. |
+| POST | `/knowledge/import-document?name=&options=` | isi file (raw) | Word/PDF/PowerPoint/Markdown sebagai knowledge. `options`: `folder`, `split` (`"none"`, `1`, `2`), `type?`, `title?`, `removeStale?`. |
+
 ## Plugin MCP
 
 | Method | Path | Body | Keterangan |

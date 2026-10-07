@@ -113,7 +113,8 @@ export function AgentPage() {
 
   const bubble = useMemo(() => {
     if (!connected) return { text: 'Menghubungkan ke server SOLAR AI AGENT…', sub: '' };
-    if (config && !config.openaiConfigured) return { text: 'OPENAI_API_KEY belum diisi di .env', sub: 'Isi lalu restart server agar saya bisa bekerja.' };
+    if (config && !config.llmConfigured)
+      return { text: 'Model AI belum siap', sub: 'Isi OPENAI_API_KEY di .env, atau tambahkan provider di Pengaturan → Model AI.' };
     if (listening) return { text: 'Saya mendengarkan…', sub: 'Bicaralah, saya berhenti otomatis saat Anda diam.' };
     if (mood === 'happy') return { text: 'Selesai! Semua deliverable siap.', sub: 'Lihat artefak di panel percakapan.' };
     if (mood === 'sad') return { text: 'Ada kendala…', sub: 'Detail error ada di percakapan dan monitor.' };

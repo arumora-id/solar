@@ -5,9 +5,13 @@ import { join } from 'node:path';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { createAgentRunner, type ResponsesStreamer } from './agent/agent.js';
 import { createBuiltinTools } from './agent/builtinTools.js';
-import { createOpenAIStreamer } from './agent/openaiClient.js';
+import { createKnowledgeTools } from './agent/knowledgeTools.js';
 import type { AgentTool } from './agent/types.js';
 import { APP_NAME, APP_VERSION, loadConfig, type AppConfig } from './config.js';
+import { KnowledgeStore } from './knowledge/knowledgeStore.js';
+import type { ChatCompletionsApi } from './llm/chatClient.js';
+import { LlmProviderStore } from './llm/providerStore.js';
+import { ModelRouter } from './llm/router.js';
 import { createLogger } from './logger.js';
 import { McpManager } from './plugins/mcpManager.js';
 import { PluginStore } from './plugins/pluginStore.js';
@@ -28,8 +32,10 @@ export interface StartOptions {
   config?: AppConfig;
   /** Override the configured port (0 = random free port, used by the desktop app). */
   port?: number;
-  /** Inject a model client (tests). Defaults to the OpenAI Responses API. */
+  /** Inject the Responses API transport of the .env provider (tests). Defaults to the OpenAI SDK. */
   responses?: ResponsesStreamer;
+  /** Inject Chat Completions transports per provider id (tests). */
+  chatApis?: Record<string, ChatCompletionsApi>;
   /** Additional tools (tests / extensions). */
   extraTools?: AgentTool[];
 }
@@ -54,35 +60,40 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   const bus = new EventBus();
   const artifacts = new ArtifactService(repo, objects);
   const attachments = new AttachmentService(repo, objects, { maxFileBytes: config.attachments.maxFileBytes });
+  const llm = new LlmProviderStore(config);
+  await llm.init();
+  const models = new ModelRouter({ config, store: llm, envStreamer: options.responses, chatApis: options.chatApis });
   const tasks = new TaskManager(repo, artifacts, bus, {
     concurrency: config.taskConcurrency,
-    model: config.openai.model,
+    model: () => models.primaryLabel(),
     confirmationTimeoutMs: config.confirmationTimeoutMs,
   });
   await tasks.recoverInterrupted();
 
   const skills = new SkillStore(config.builtinSkillsDir, config.userSkillsDir, config.dataDir);
   await skills.init();
+  const knowledge = new KnowledgeStore(config.builtinKnowledgeDir, config.userKnowledgeDir);
+  await knowledge.init();
   const plugins = new PluginStore(config.dataDir, config.defaultPluginsFile);
   await plugins.init();
   const mcp = new McpManager(plugins, bus);
 
-  const responses = options.responses ?? createOpenAIStreamer(config);
   tasks.setRunner(
     createAgentRunner({
       config,
-      responses,
+      models,
       skills,
+      knowledge,
       plugins,
       mcp,
       attachments,
-      builtinTools: [...createBuiltinTools({ config, skills, artifacts, attachments }), ...(options.extraTools ?? [])],
+      builtinTools: [...createBuiltinTools({ config, skills, artifacts, attachments }), ...createKnowledgeTools(knowledge), ...(options.extraTools ?? [])],
     }),
   );
 
   const app = express();
   app.disable('x-powered-by');
-  app.use('/api', createApiRouter({ config, repo, objectsKind: objects.kind, tasks, artifacts, attachments, bus, skills, plugins, mcp }));
+  app.use('/api', createApiRouter({ config, repo, objectsKind: objects.kind, tasks, artifacts, attachments, bus, skills, plugins, mcp, knowledge, llm, models }));
 
   if (existsSync(join(config.webDistDir, 'index.html'))) {
     app.use(express.static(config.webDistDir, { index: false, maxAge: '1h' }));
@@ -130,7 +141,8 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   gcTimer.unref();
   log.info(`${APP_NAME} ${APP_VERSION} listening on ${url}`);
   log.info(`Storage: ${repo.kind} database, ${objects.kind} artifacts (data dir: ${config.dataDir})`);
-  log.info(`Model: OpenAI ${config.openai.model} (reasoning effort ${config.openai.effort})${config.openai.configured ? '' : ' - WARNING: OPENAI_API_KEY is not set'}`);
+  log.info(`Model route: ${llm.route().join(' -> ')}${models.primaryReady() ? '' : ' - WARNING: the primary model has no API key (OPENAI_API_KEY or Pengaturan → Model AI)'}`);
+  log.info(`Knowledge base: ${(await knowledge.list()).length} file(s) in ${config.userKnowledgeDir}`);
 
   return {
     url,

@@ -9,6 +9,11 @@ description: How to build correct, readable ArchiMate 3.2 models and views with 
 relationship table. Model it right the first time with the patterns below; when unsure about a
 pair, call `archimate_relationship_rules` first.
 
+**User rules first.** If the knowledge base has ArchiMate rules (e.g. `standards/ARCHIMATE.md` - find them with
+`search_knowledge "archimate"`), read them before modelling: their mandatory viewpoints, allowed elements per layer,
+naming and layout rules override this skill. Element names and types of existing systems come from their
+`systems/*.md` files.
+
 ## Element choice
 | Need to show | Use |
 |---|---|
