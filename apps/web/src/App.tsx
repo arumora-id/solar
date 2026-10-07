@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ConfirmationDialog } from './components/ConfirmationDialog';
 import { SettingsDrawer } from './components/SettingsDrawer';
 import { TopBar } from './components/TopBar';
+import { applyUpdate, dismissUpdate, usePwa } from './lib/pwa';
 import { usePath } from './lib/router';
 import { SolarProvider, useSolar } from './lib/store';
 import { AgentPage } from './pages/AgentPage';
@@ -32,6 +33,23 @@ function TokenGate() {
   );
 }
 
+/** A newer version of the UI was downloaded (installed app / service worker): offer to switch to it. */
+function UpdateNotice() {
+  const { updateReady } = usePwa();
+  if (!updateReady) return null;
+  return (
+    <div className="pwa-update" role="status">
+      <span>Versi baru SOLAR AI AGENT tersedia.</span>
+      <button type="button" className="btn primary small" onClick={applyUpdate}>
+        Muat ulang
+      </button>
+      <button type="button" className="btn ghost small" onClick={dismissUpdate}>
+        Nanti
+      </button>
+    </div>
+  );
+}
+
 function Shell() {
   const path = usePath();
   const { authRequired } = useSolar();
@@ -44,6 +62,7 @@ function Shell() {
       {monitorMatch ? <MonitorPage selectedId={monitorMatch[1] ?? null} /> : <AgentPage />}
       <ConfirmationDialog />
       <SettingsDrawer open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <UpdateNotice />
       {authRequired && <TokenGate />}
     </div>
   );

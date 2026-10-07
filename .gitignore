@@ -5,6 +5,7 @@ node_modules/
 dist/
 apps/*/dist/
 apps/desktop/release/
+/release/
 packages/*/dist/
 
 # runtime data (tasks, artifacts, user plugins/skills, secrets)

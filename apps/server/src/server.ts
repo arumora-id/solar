@@ -96,7 +96,19 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   app.use('/api', createApiRouter({ config, repo, objectsKind: objects.kind, tasks, artifacts, attachments, bus, skills, plugins, mcp, knowledge, llm, models }));
 
   if (existsSync(join(config.webDistDir, 'index.html'))) {
-    app.use(express.static(config.webDistDir, { index: false, maxAge: '1h' }));
+    app.use(
+      express.static(config.webDistDir, {
+        index: false,
+        maxAge: '1h',
+        setHeaders(res, path) {
+          const file = path.split(/[\\/]/).slice(-2);
+          // the service worker and the manifest must be re-checked every time, or a new version is noticed late
+          if (file[1] === 'sw.js' || file[1]?.endsWith('.webmanifest')) res.setHeader('Cache-Control', 'no-cache');
+          // build output under assets/ carries a content hash in its name and never changes
+          else if (file[0] === 'assets') res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        },
+      }),
+    );
     // single page app: every non-API route serves index.html (/, /monitor, /monitor/<task>)
     app.get(/^(?!\/api\/).*/, (_req, res) => {
       res.setHeader('Cache-Control', 'no-cache');

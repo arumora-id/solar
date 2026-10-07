@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { getToken } from '../../lib/api';
+import { installApp, isElectron, syncThemeColor, usePwa } from '../../lib/pwa';
 import { readPref, writePref } from '../../lib/session';
 import { useSolar } from '../../lib/store';
 
@@ -14,6 +15,7 @@ export function applyTheme(theme: ThemePref): void {
   } catch {
     // ignore
   }
+  syncThemeColor();
 }
 
 export function currentTheme(): ThemePref {
@@ -75,6 +77,8 @@ export function SystemPanel() {
         Mode ringkas (sembunyikan tombol cepat di bawah karakter)
       </label>
 
+      {!isElectron && <AppInstall />}
+
       <h4>Konfigurasi server</h4>
       <table className="task-table" style={{ marginBottom: 14 }}>
         <tbody>
@@ -95,6 +99,32 @@ export function SystemPanel() {
       <button type="button" className="btn small" onClick={() => submitToken(token)}>
         Simpan token
       </button>
+    </div>
+  );
+}
+
+/** Installing the web UI as an app (PWA): its own window, start menu / home screen icon, opens offline. */
+function AppInstall() {
+  const { canInstall, standalone, iosManualInstall } = usePwa();
+  return (
+    <div className="field">
+      <span>Aplikasi</span>
+      {standalone ? (
+        <p className="hint">SOLAR berjalan sebagai aplikasi terpasang.</p>
+      ) : canInstall ? (
+        <div>
+          <button type="button" className="btn small" onClick={() => void installApp()}>
+            Pasang SOLAR sebagai aplikasi
+          </button>
+          <p className="hint">Jendela sendiri dan ikon di Start menu / layar utama; tampilan tetap terbuka saat server tidak terjangkau.</p>
+        </div>
+      ) : iosManualInstall ? (
+        <p className="hint">Di iPhone/iPad: ketuk Bagikan lalu Tambahkan ke Layar Utama.</p>
+      ) : (
+        <p className="hint">
+          Pasang lewat menu browser (Chrome/Edge: Instal SOLAR AI AGENT). Butuh HTTPS, atau localhost di komputer yang menjalankan server.
+        </p>
+      )}
     </div>
   );
 }

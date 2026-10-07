@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { navigate } from '../lib/router';
+import { installApp, usePwa } from '../lib/pwa';
 import { useSolar } from '../lib/store';
-import { GearIcon, MoonIcon, SunIcon } from './Icons';
+import { GearIcon, InstallIcon, MoonIcon, SunIcon } from './Icons';
 import { applyTheme, currentTheme } from './settings/SystemPanel';
 
 function isDark(): boolean {
@@ -13,6 +14,7 @@ function isDark(): boolean {
 export function TopBar({ path, onOpenSettings }: { path: string; onOpenSettings: () => void }) {
   const { connected, confirmations } = useSolar();
   const [dark, setDark] = useState(isDark);
+  const { canInstall } = usePwa();
   const link = (to: string, label: string, active: boolean) => (
     <a
       href={to}
@@ -41,6 +43,17 @@ export function TopBar({ path, onOpenSettings }: { path: string; onOpenSettings:
         <i aria-hidden="true" />
         <span>{connected ? 'Terhubung' : 'Terputus'}</span>
       </span>
+      {canInstall && (
+        <button
+          type="button"
+          className="btn small install"
+          onClick={() => void installApp()}
+          title="Pasang SOLAR AI AGENT sebagai aplikasi"
+          aria-label="Pasang aplikasi"
+        >
+          <InstallIcon size={16} /> <span className="label-wide">Pasang aplikasi</span>
+        </button>
+      )}
       <button
         type="button"
         className="btn ghost icon"
