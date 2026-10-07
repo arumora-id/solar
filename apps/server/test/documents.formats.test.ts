@@ -253,3 +253,103 @@ describe('content sniffing and hostile files', () => {
     }
   });
 });
+
+describe('review hardening', () => {
+  const W_NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
+  const para = (text: string, opts: { style?: string; num?: [number, number] } = {}) =>
+    `<w:p>${opts.style || opts.num ? `<w:pPr>${opts.style ? `<w:pStyle w:val="${opts.style}"/>` : ''}${opts.num ? `<w:numPr><w:ilvl w:val="${opts.num[1]}"/><w:numId w:val="${opts.num[0]}"/></w:numPr>` : ''}</w:pPr>` : ''}<w:r><w:t>${text}</w:t></w:r></w:p>`;
+
+  function numberedDocx(body: string): Buffer {
+    const level = (i: number, text: string) => `<w:lvl w:ilvl="${i}"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="${text}"/></w:lvl>`;
+    return officeZip('word/document.xml', WORD_MAIN, {
+      'word/document.xml': `<?xml version="1.0"?><w:document ${W_NS}><w:body>${body}</w:body></w:document>`,
+      'word/_rels/document.xml.rels': `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rS" Type="${REL}/styles" Target="styles.xml"/><Relationship Id="rN" Type="${REL}/numbering" Target="numbering.xml"/></Relationships>`,
+      'word/styles.xml': `<?xml version="1.0"?><w:styles ${W_NS}><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:pPr><w:numPr><w:numId w:val="3"/></w:numPr></w:pPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:pPr><w:numPr><w:ilvl w:val="1"/><w:numId w:val="3"/></w:numPr></w:pPr></w:style></w:styles>`,
+      'word/numbering.xml': `<?xml version="1.0"?><w:numbering ${W_NS}><w:abstractNum w:abstractNumId="1">${level(0, '%1.')}</w:abstractNum><w:abstractNum w:abstractNumId="3">${level(0, '%1.')}${level(1, '%1.%2')}</w:abstractNum><w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num><w:num w:numId="3"><w:abstractNumId w:val="3"/></w:num></w:numbering>`,
+    });
+  }
+
+  it('keeps Word numbering: lists continue after an interruption and numbered headings keep their numbers', async () => {
+    const body = [
+      para('Pendahuluan', { style: 'Heading1' }),
+      para('Ruang Lingkup', { style: 'Heading2' }),
+      para('satu', { num: [2, 0] }),
+      para('dua', { num: [2, 0] }),
+      para('Gambar di sini'),
+      para('tiga', { num: [2, 0] }),
+      para('Persyaratan', { style: 'Heading1' }),
+    ].join('');
+    const md = (await extractDocument(numberedDocx(body), 'nomor.docx')).markdown;
+    expect(md).toMatch(/^# 1\. Pendahuluan$/m);
+    expect(md).toMatch(/^## 1\.1 Ruang Lingkup$/m);
+    expect(md).toMatch(/^1\. satu\n2\. dua$/m);
+    expect(md).toMatch(/^3\. tiga$/m);
+    expect(md).toMatch(/^# 2\. Persyaratan$/m);
+    expect(md).not.toContain('⁣');
+  });
+
+  it('reads a Word document whose hyperlink points to a missing relationship', async () => {
+    const body = `${para('Sebelum')}<w:p><w:hyperlink r:id="rId404"><w:r><w:t>tautan</w:t></w:r></w:hyperlink></w:p>${para('Sesudah')}`;
+    const buffer = officeZip('word/document.xml', WORD_MAIN, {
+      'word/document.xml': `<?xml version="1.0"?><w:document ${W_NS} xmlns:r="${REL}"><w:body>${body}</w:body></w:document>`,
+    });
+    const doc = await extractDocument(buffer, 'rusak-sebagian.docx');
+    expect(doc.markdown).toContain('Sebelum');
+    expect(doc.markdown).toContain('tautan');
+    expect(doc.markdown).toContain('Sesudah');
+  });
+
+  it('rejects malformed Word XML quickly instead of handing it to the parser', async () => {
+    const started = Date.now();
+    const err = await extractError(docx(`<w:p><w:r><w:t>x</w:t></w:r></w:p>${'<a'.repeat(200_000)}`), 'rusak.docx');
+    expect([err.code, err.status]).toEqual(['CORRUPT', 422]);
+    expect(Date.now() - started).toBeLessThan(3_000);
+  });
+
+  it('formats elapsed times and percentages like Excel and survives unclosed tags', async () => {
+    const styles = `<?xml version="1.0"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="1"><numFmt numFmtId="164" formatCode="[h]:mm"/></numFmts><cellXfs count="3"><xf numFmtId="0"/><xf numFmtId="164"/><xf numFmtId="9"/></cellXfs></styleSheet>`;
+    const book = (rows: string) =>
+      officeZip('xl/workbook.xml', SHEET_MAIN, {
+        'xl/workbook.xml': `<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="${REL}"><sheets><sheet name="Jam" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+        'xl/_rels/workbook.xml.rels': `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${REL}/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="${REL}/styles" Target="styles.xml"/></Relationships>`,
+        'xl/styles.xml': styles,
+        'xl/worksheets/sheet1.xml': `<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rows}</sheetData></worksheet>`,
+      });
+    const rows =
+      '<row r="1"><c r="A1" t="inlineStr"><is><t>Total jam</t></is></c><c r="B1" t="inlineStr"><is><t>Progres</t></is></c></row>' +
+      `<row r="2"><c r="A2" s="1"><v>${40 / 24}</v></c><c r="B2" s="2"><v>0.145</v></c></row>`;
+    expect((await extractDocument(book(rows), 'jam.xlsx')).markdown).toContain('| 40:00 | 15% |');
+
+    const started = Date.now();
+    await extractDocument(book(`<row r="1">${'<c>'.repeat(100_000)}</row>${'<row>'.repeat(100_000)}`), 'aneh.xlsx');
+    expect(Date.now() - started).toBeLessThan(3_000);
+  });
+
+  it('caps huge PowerPoint tables and says so', async () => {
+    const P_NS = 'xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"';
+    const tbl = `<p:graphicFrame><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl><a:tr>${'<a:tc/>'.repeat(5000)}</a:tr>${'<a:tr/>'.repeat(5000)}</a:tbl></a:graphicData></a:graphic></p:graphicFrame>`;
+    const buffer = officeZip('ppt/presentation.xml', 'application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml', {
+      'ppt/presentation.xml': `<?xml version="1.0"?><p:presentation ${P_NS} xmlns:r="${REL}"><p:sldIdLst><p:sldId id="256" r:id="rId2"/></p:sldIdLst></p:presentation>`,
+      'ppt/_rels/presentation.xml.rels': `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId2" Type="${REL}/slide" Target="slides/slide1.xml"/></Relationships>`,
+      'ppt/slides/slide1.xml': `<?xml version="1.0"?><p:sld ${P_NS}><p:cSld><p:spTree>${tbl}</p:spTree></p:cSld></p:sld>`,
+    });
+    const doc = await extractDocument(buffer, 'tabel.pptx');
+    expect(doc.markdown.length).toBeLessThan(400_000);
+    expect(doc.warnings).toContain('1 tabel lebih besar dari 1000 baris × 50 kolom dan dipotong.');
+  });
+
+  it('detects CSV delimiters from several lines, CR-only line ends and UTF-16 without a BOM', async () => {
+    const semicolon = await extractDocument(Buffer.from('Laporan Bulanan Oktober\nKode;Uraian;Nilai\nA1;Galian;1.250,50\n'), 'lap.csv');
+    expect(semicolon.markdown).toContain('**Laporan Bulanan Oktober**');
+    expect(semicolon.markdown).toContain('| A1 | Galian | 1.250,50 |');
+    const mac = await extractDocument(Buffer.from('id,sistem\rINT-01,Midtrans\rINT-02,BCA\r'), 'mac.csv');
+    expect(mac.markdown).toContain('| INT-02 | BCA |');
+    const utf16 = await extractDocument(Buffer.from('Catatan rapat: café ≥ 99,9%', 'utf16le'), 'catatan.txt');
+    expect(utf16.markdown).toBe('Catatan rapat: café ≥ 99,9%');
+  });
+
+  it('reads a text note that starts with "%PDF-" as text', async () => {
+    const doc = await extractDocument(Buffer.from('%PDF-1.7 adalah versi spesifikasi yang kami pakai.\nCatatan lain.'), 'catatan.txt');
+    expect(doc.kind).toBe('text');
+  });
+});

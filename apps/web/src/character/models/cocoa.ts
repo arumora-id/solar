@@ -16,10 +16,16 @@ export function buildCocoa(parent: THREE.Object3D): Rig {
   const head = new THREE.Group();
   head.position.set(0, 1.15, 0);
   body.add(head);
+  // the shell, its opened top and what sticks out of it tilt a little towards the viewer, so the white flesh shows
+  // from the (slightly elevated) stage camera; the face stays upright on the head
+  const crown = new THREE.Group();
+  crown.rotation.x = 0.32;
+  head.add(crown);
   const radii = new THREE.Vector3(1.2, 1.12, 1.15);
-  const nut = kit.mesh(new THREE.SphereGeometry(1, 48, 36), shell);
+  // the cap above y ≈ 1.0 is left out so the opened top (flesh disc in a rim) shows
+  const nut = kit.mesh(new THREE.SphereGeometry(1, 48, 36, 0, Math.PI * 2, 0.47, Math.PI - 0.47), shell);
   nut.scale.copy(radii);
-  head.add(nut);
+  crown.add(nut);
 
   // husk fibres, away from the face
   const random = seeded(11);
@@ -28,11 +34,11 @@ export function buildCocoa(parent: THREE.Object3D): Rig {
     const azimuth = random() * Math.PI * 2;
     const elevation = -0.9 + random() * 1.75;
     const front = Math.abs(Math.atan2(Math.sin(azimuth), Math.cos(azimuth))) < 0.95;
-    if (front && elevation > -0.65 && elevation < 0.7) continue;
+    if (front && elevation > -0.65 && elevation < 1.0) continue;
     const fibre = new THREE.Mesh(new THREE.CapsuleGeometry(0.016, 0.2 + random() * 0.12, 4, 6), fibreMat);
     kit.onSurface(fibre, radii, azimuth, elevation, 0.012);
     fibre.rotateZ((random() - 0.5) * 0.5);
-    head.add(fibre);
+    crown.add(fibre);
   }
 
   // light face patch so the eyes read well on the brown shell
@@ -44,11 +50,11 @@ export function buildCocoa(parent: THREE.Object3D): Rig {
   // opened top: white coconut flesh in a brown rim
   const flesh = kit.mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.05, 40), meat);
   flesh.position.y = 1.0;
-  head.add(flesh);
+  crown.add(flesh);
   const rim = kit.mesh(new THREE.TorusGeometry(0.56, 0.05, 10, 40), shellDark);
   rim.rotation.x = Math.PI / 2;
   rim.position.y = 1.02;
-  head.add(rim);
+  crown.add(rim);
 
   // "ears": the cocktail umbrella (left) and the bendy straw (right)
   const earL = new THREE.Group();
@@ -61,7 +67,7 @@ export function buildCocoa(parent: THREE.Object3D): Rig {
   const tip = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 6), kit.toon(0xff6b6b));
   tip.position.y = 0.76;
   earL.add(stick, canopy, tip);
-  head.add(earL);
+  crown.add(earL);
 
   const earR = new THREE.Group();
   earR.position.set(0.2, 1.0, -0.06);
@@ -79,7 +85,7 @@ export function buildCocoa(parent: THREE.Object3D): Rig {
     stripe.position.y = y;
     earR.add(stripe);
   }
-  head.add(earR);
+  crown.add(earR);
 
   const eyes = kit.eyes(head, 0.3, 0.08, 1.12, 0.13);
   kit.glasses(head, 0.3, 0.08, 1.22, 0.2, 0.3);

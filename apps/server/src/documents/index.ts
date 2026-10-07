@@ -33,9 +33,11 @@ function isZip(bytes: Uint8Array): boolean {
 }
 
 function isPdf(bytes: Uint8Array, ext: string): boolean {
+  const buf = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   // some producers put junk before the header; only trust that for files that claim to be PDFs
-  const head = Buffer.from(bytes.buffer, bytes.byteOffset, Math.min(bytes.length, ext === 'pdf' ? 1024 : 5));
-  return head.indexOf('%PDF-') >= 0;
+  if (buf.subarray(0, ext === 'pdf' ? 1024 : 5).indexOf('%PDF-') < 0) return false;
+  // a text note may start with "%PDF-"; with another extension the file must also contain PDF objects
+  return ext === 'pdf' || /\d+\s+\d+\s+obj\b/.test(buf.subarray(0, 65_536).toString('latin1'));
 }
 
 /** Picks the parser from the file's content (not only its extension), so renamed or mislabelled files are handled. */

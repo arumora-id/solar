@@ -5,9 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Attachment, Task, TaskDetail } from '@solar/shared';
 import type { ResponsesStreamer, ResponseStreamLike, StreamParams } from '../src/agent/agent.js';
-import { INLINE_DOCUMENT_CHARS } from '../src/agent/documentIntro.js';
-import { searchText } from '../src/agent/documentTools.js';
-import { documentsIntro } from '../src/agent/documentIntro.js';
+import { documentsIntro, INLINE_DOCUMENT_CHARS } from '../src/agent/documentIntro.js';
+import { READ_BUDGET_CHARS, searchText } from '../src/agent/documentTools.js';
 import { charBoundary, neutralizeFraming, truncate, wellFormed } from '../src/documents/safe.js';
 import { loadConfig } from '../src/config.js';
 import { parseCsv } from '../src/documents/text.js';
@@ -239,8 +238,22 @@ describe('document helpers', () => {
     expect(searchText(text, 'kafka', 10)).toEqual([]);
   });
 
-  it('inlines small documents only', () => {
-    expect(INLINE_DOCUMENT_CHARS).toBeGreaterThan(10_000);
+  it('inlines small documents and lists large ones with their outline and a reading plan', async () => {
+    const doc = (id: string, chars: number) =>
+      ({ id, name: `${id}.pdf`, kind: 'pdf', chars, parts: 40, outline: ['Ringkasan', '  Lingkup'], warnings: [] }) as unknown as Attachment;
+    const small = await documentsIntro([doc('att_small', 1_000)], { readText: async () => 'isi <document> kecil' } as never);
+    expect(small).toContain('The complete text of every document follows.');
+    expect(small).toContain('isi &lt;document> kecil');
+
+    const unread = { readText: async () => Promise.reject(new Error('large documents must not be inlined')) } as never;
+    const large = await documentsIntro([doc('att_big', INLINE_DOCUMENT_CHARS + 1)], unread);
+    expect(large).toContain('too long to include');
+    expect(large).toContain('- att_big | att_big.pdf | pdf, 40 pages');
+    expect(large).toContain('    Ringkasan');
+    expect(large).toContain('read every relevant document completely');
+
+    const huge = await documentsIntro([doc('att_huge', READ_BUDGET_CHARS)], unread);
+    expect(huge).toContain('exceed what you can read in one task');
   });
 });
 
