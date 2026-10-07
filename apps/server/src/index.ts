@@ -18,6 +18,6 @@ startServer()
     process.on('SIGTERM', () => shutdown('SIGTERM'));
   })
   .catch((err) => {
-    log.error('SOLAR failed to start', err);
+    log.error('SOLAR AI AGENT failed to start', err);
     process.exit(1);
   });

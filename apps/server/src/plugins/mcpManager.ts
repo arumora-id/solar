@@ -6,7 +6,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { PluginConfig, PluginStatus } from '@solar/shared';
 import type { ToolResultBlock } from '../agent/types.js';
-import { APP_NAME, APP_VERSION } from '../config.js';
+import { APP_SLUG, APP_VERSION } from '../config.js';
 import { createLogger } from '../logger.js';
 import type { EventBus } from '../tasks/eventBus.js';
 import { nowIso } from '../util/ids.js';
@@ -231,7 +231,7 @@ export class McpManager {
       });
     }
 
-    const client = new Client({ name: APP_NAME.toLowerCase(), version: APP_VERSION }, { capabilities: {} });
+    const client = new Client({ name: APP_SLUG, version: APP_VERSION }, { capabilities: {} });
     c.pending = client;
     try {
       const timeoutMs = config.transport === 'stdio' ? 180_000 : 45_000;

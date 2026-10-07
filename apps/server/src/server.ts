@@ -18,6 +18,7 @@ import { LocalObjectStore, S3ObjectStore, type ObjectStore } from './storage/obj
 import { PostgresRepository } from './storage/postgresRepository.js';
 import type { Repository } from './storage/repository.js';
 import { ArtifactService } from './tasks/artifactService.js';
+import { AttachmentService } from './tasks/attachmentService.js';
 import { EventBus } from './tasks/eventBus.js';
 import { TaskManager } from './tasks/taskManager.js';
 
@@ -52,6 +53,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
 
   const bus = new EventBus();
   const artifacts = new ArtifactService(repo, objects);
+  const attachments = new AttachmentService(repo, objects, { maxFileBytes: config.attachments.maxFileBytes });
   const tasks = new TaskManager(repo, artifacts, bus, {
     concurrency: config.taskConcurrency,
     model: config.openai.model,
@@ -73,13 +75,14 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
       skills,
       plugins,
       mcp,
-      builtinTools: [...createBuiltinTools({ config, skills, artifacts }), ...(options.extraTools ?? [])],
+      attachments,
+      builtinTools: [...createBuiltinTools({ config, skills, artifacts, attachments }), ...(options.extraTools ?? [])],
     }),
   );
 
   const app = express();
   app.disable('x-powered-by');
-  app.use('/api', createApiRouter({ config, repo, objectsKind: objects.kind, tasks, artifacts, bus, skills, plugins, mcp }));
+  app.use('/api', createApiRouter({ config, repo, objectsKind: objects.kind, tasks, artifacts, attachments, bus, skills, plugins, mcp }));
 
   if (existsSync(join(config.webDistDir, 'index.html'))) {
     app.use(express.static(config.webDistDir, { index: false, maxAge: '1h' }));
@@ -119,6 +122,12 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   }
 
   mcp.startAll();
+  // documents uploaded but never sent with a request are removed after a day
+  const ATTACHMENT_GC_AGE = 24 * 3_600_000;
+  const gc = () => void attachments.collectGarbage(ATTACHMENT_GC_AGE).catch((err) => log.warn(`Attachment cleanup failed: ${String(err)}`));
+  gc();
+  const gcTimer = setInterval(gc, 6 * 3_600_000);
+  gcTimer.unref();
   log.info(`${APP_NAME} ${APP_VERSION} listening on ${url}`);
   log.info(`Storage: ${repo.kind} database, ${objects.kind} artifacts (data dir: ${config.dataDir})`);
   log.info(`Model: OpenAI ${config.openai.model} (reasoning effort ${config.openai.effort})${config.openai.configured ? '' : ' - WARNING: OPENAI_API_KEY is not set'}`);
@@ -128,6 +137,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     port: actualPort,
     config,
     async close() {
+      clearInterval(gcTimer);
       server.closeAllConnections?.();
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await mcp.shutdown();

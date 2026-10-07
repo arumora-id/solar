@@ -2,7 +2,7 @@
   "name": "@solar/desktop",
   "version": "1.0.0",
   "private": true,
-  "description": "SOLAR desktop shell (Electron) for Windows",
+  "description": "SOLAR AI AGENT desktop shell (Electron) for Windows",
   "author": "SOLAR",
   "type": "module",
   "main": "dist/main.js",
@@ -20,8 +20,8 @@
   },
   "build": {
     "appId": "com.solar.architect",
-    "productName": "SOLAR",
-    "artifactName": "SOLAR-Setup-${version}.${ext}",
+    "productName": "SOLAR AI AGENT",
+    "artifactName": "SOLAR-AI-AGENT-Setup-${version}.${ext}",
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -36,7 +36,9 @@
         "to": "server",
         "filter": [
           "server.mjs",
-          "server.mjs.map"
+          "server.mjs.map",
+          "extract-worker.mjs",
+          "extract-worker.mjs.map"
         ]
       },
       {
@@ -70,10 +72,10 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "SOLAR"
+      "shortcutName": "SOLAR AI AGENT"
     },
     "electronVersion": "44.5.1",
     "publish": null,
-    "executableName": "SOLAR"
+    "executableName": "SOLAR AI AGENT"
   }
 }

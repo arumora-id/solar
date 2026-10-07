@@ -30,7 +30,7 @@ export function TopBar({ path, onOpenSettings }: { path: string; onOpenSettings:
     <header className="topbar">
       <div className="brand">
         <img src="/favicon.svg" alt="" width={28} height={28} />
-        SOLAR <small>Solution Architect Rabbit</small>
+        SOLAR AI AGENT <small>Solution Architect</small>
       </div>
       <nav className="nav" aria-label="Navigasi utama">
         {link('/', 'Agent', path === '/')}
@@ -52,8 +52,8 @@ export function TopBar({ path, onOpenSettings }: { path: string; onOpenSettings:
       >
         {dark ? <SunIcon /> : <MoonIcon />}
       </button>
-      <button type="button" className="btn small" onClick={onOpenSettings}>
-        <GearIcon size={16} /> Pengaturan
+      <button type="button" className="btn small" onClick={onOpenSettings} aria-label="Pengaturan">
+        <GearIcon size={16} /> <span className="label-wide">Pengaturan</span>
       </button>
     </header>
   );

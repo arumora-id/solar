@@ -2,18 +2,24 @@ import gsap from 'gsap';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Task } from '@solar/shared';
 import { AgentBubble } from '../components/AgentBubble';
+import { AttachmentStrip } from '../components/Attachments';
 import { Composer, type ComposerHandle } from '../components/Composer';
 import { PlusIcon, VolumeIcon } from '../components/Icons';
 import { isActive } from '../lib/format';
 import { speakableSummary } from '../lib/markdown';
 import { readPref } from '../lib/session';
 import { useSolar } from '../lib/store';
-import type { RabbitState } from '../rabbit/RabbitScene';
-import { RabbitStage } from '../rabbit/RabbitStage';
+import type { CharacterState } from '../character/CharacterScene';
+import { CharacterStage } from '../character/CharacterStage';
+import { CharacterSwitcher, useCharacter } from '../components/CharacterPicker';
 import { speak, stopSpeaking, ttsAvailable } from '../voice/tts';
 import { useVoicePrefs } from '../voice/useVoice';
 
 const QUICK_PROMPTS = [
+  {
+    label: 'Dari dokumen',
+    text: 'Pelajari semua dokumen terlampir, lalu buatkan paket arsitektur lengkap (model ArchiMate, sequence diagram skenario utama dan error, serta Technical Specification Document) sesuai isinya. Catat asumsi dan pertanyaan terbuka. Fokus: ',
+  },
   {
     label: 'Paket lengkap',
     text: 'Buatkan paket arsitektur lengkap dalam sekali proses: model ArchiMate (Layered View dan Application Cooperation View), sequence diagram untuk skenario utama dan alur error, serta Technical Specification Document. Sistem: ',
@@ -25,7 +31,7 @@ const QUICK_PROMPTS = [
   { label: 'Publish GitHub', text: 'Publish semua artefak dari task terakhir ke GitHub di folder docs/architecture/' },
 ];
 
-const GREETING = 'Halo! Saya SOLAR, kelinci solution architect Anda. Ketik atau ucapkan kebutuhan Anda.';
+const GREETING = 'Halo! Saya SOLAR AI AGENT, asisten solution architect Anda. Ketik atau ucapkan kebutuhan Anda.';
 
 export function AgentPage() {
   const { tasks, events, sessionId, submit, startNewSession, lastFinished, config, connected } = useSolar();
@@ -36,6 +42,18 @@ export function AgentPage() {
   const [listening, setListening] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [mood, setMood] = useState<'happy' | 'sad' | null>(null);
+  const [dragging, setDragging] = useState(false);
+
+  // a drag that ends anywhere (drop elsewhere, Esc, leaving the window) must hide the overlay
+  useEffect(() => {
+    const stop = () => setDragging(false);
+    window.addEventListener('drop', stop);
+    window.addEventListener('dragend', stop);
+    return () => {
+      window.removeEventListener('drop', stop);
+      window.removeEventListener('dragend', stop);
+    };
+  }, []);
   const [compact, setCompact] = useState(() => readPref('compactStage', false));
 
   useEffect(() => {
@@ -75,12 +93,13 @@ export function AgentPage() {
     }, 1800);
   }, [lastFinished]);
 
-  const rabbitState: RabbitState = useMemo(() => {
+  const character = useCharacter();
+  const characterState: CharacterState = useMemo(() => {
     if (listening) return 'listening';
     if (mood) return mood;
     if (current?.status === 'awaiting_confirmation') return 'asking';
     if (current) {
-      // a tool call without its result yet = the rabbit is working; otherwise it is thinking
+      // a tool call without its result yet = the character is working; otherwise it is thinking
       const open = new Set<string>();
       for (const e of events[current.id] ?? []) {
         if (e.type === 'tool_call' && e.tool !== 'update_progress') open.add(e.toolUseId);
@@ -93,7 +112,7 @@ export function AgentPage() {
   }, [listening, mood, current, speaking, events]);
 
   const bubble = useMemo(() => {
-    if (!connected) return { text: 'Menghubungkan ke server SOLAR…', sub: '' };
+    if (!connected) return { text: 'Menghubungkan ke server SOLAR AI AGENT…', sub: '' };
     if (config && !config.openaiConfigured) return { text: 'OPENAI_API_KEY belum diisi di .env', sub: 'Isi lalu restart server agar saya bisa bekerja.' };
     if (listening) return { text: 'Saya mendengarkan…', sub: 'Bicaralah, saya berhenti otomatis saat Anda diam.' };
     if (mood === 'happy') return { text: 'Selesai! Semua deliverable siap.', sub: 'Lihat artefak di panel percakapan.' };
@@ -114,22 +133,27 @@ export function AgentPage() {
   }, [sessionTasks.length, current?.progress]);
 
   const handleSubmit = useCallback(
-    async (text: string) => {
+    async (text: string, attachmentIds: string[]) => {
       stopSpeaking();
       setSpeaking(false);
-      await submit(text);
+      await submit(text, attachmentIds);
     },
     [submit],
   );
 
+  const hasFiles = (e: { dataTransfer: DataTransfer }) => Array.from(e.dataTransfer.types).includes('Files');
+
   return (
     <main className="agent-page">
-      <section className="stage-card" aria-label="SOLAR">
+      <section className="stage-card" aria-label="SOLAR AI AGENT">
         <div className="speech" ref={speechRef} role="status">
           {bubble.text}
           {bubble.sub && <span className="sub">{bubble.sub}</span>}
         </div>
-        <RabbitStage state={rabbitState} onRabbitClick={() => composerRef.current?.toggleVoice()} />
+        <div className="stage-area">
+          <CharacterStage character={character} state={characterState} onCharacterClick={() => composerRef.current?.toggleVoice()} />
+          <CharacterSwitcher />
+        </div>
         {!compact && (
           <div className="stage-footer">
             {QUICK_PROMPTS.map((q) => (
@@ -141,7 +165,40 @@ export function AgentPage() {
         )}
       </section>
 
-      <section className="chat" aria-label="Percakapan">
+      <section
+        className="chat"
+        aria-label="Percakapan"
+        onDragEnter={(e) => {
+          if (!hasFiles(e)) return;
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragOver={(e) => {
+          if (!hasFiles(e)) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+        }}
+        onDragLeave={(e) => {
+          if (!hasFiles(e)) return;
+          // only when the pointer really left the chat (streamed answers replace nodes under the pointer)
+          const to = e.relatedTarget as Node | null;
+          if (!to || !e.currentTarget.contains(to)) setDragging(false);
+        }}
+        onDrop={(e) => {
+          if (!hasFiles(e)) return;
+          e.preventDefault();
+          setDragging(false);
+          composerRef.current?.addFiles(Array.from(e.dataTransfer.files));
+        }}
+      >
+        {dragging && (
+          <div className="drop-overlay" aria-hidden="true">
+            <div>
+              Lepaskan untuk melampirkan dokumen
+              <small>PDF, Word, Excel, PowerPoint, Markdown atau teks</small>
+            </div>
+          </div>
+        )}
         <div className="chat-head">
           <h2>Percakapan</h2>
           {speaking && (
@@ -170,11 +227,13 @@ export function AgentPage() {
                 Contoh: “Buatkan paket arsitektur lengkap untuk sistem pemesanan online dengan pembayaran via payment gateway, deploy di Kubernetes,
                 database PostgreSQL.”
               </p>
+              <p>Punya dokumen proyek? Lampirkan PDF, Word, Excel, PowerPoint atau Markdown dengan tombol klip, atau seret file ke sini.</p>
             </div>
           ) : (
             sessionTasks.map((t) => (
               <div key={t.id} style={{ display: 'contents' }}>
                 <div className="bubble user">{t.prompt}</div>
+                <AttachmentStrip ids={t.attachmentIds ?? []} />
                 <AgentBubble task={t} />
               </div>
             ))

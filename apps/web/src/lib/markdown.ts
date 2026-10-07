@@ -23,6 +23,23 @@ export function renderMarkdown(markdown: string, rewriteImage?: (src: string) =>
   return doc.body.firstElementChild?.innerHTML ?? clean;
 }
 
+const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+
+/** Uploaded documents: raw HTML is shown as text (never interpreted or hidden) and images are not loaded. */
+const documentMarked = new Marked({
+  gfm: true,
+  renderer: {
+    html: ({ text }) => escapeHtml(text),
+    image: ({ text }) => escapeHtml(`[gambar${text ? `: ${text}` : ''}]`),
+  },
+});
+
+/** Renders extracted document text for the preview so that it shows what the agent reads. */
+export function renderDocumentMarkdown(markdown: string): string {
+  const raw = documentMarked.parse(markdown, { async: false }) as string;
+  return DOMPurify.sanitize(raw, { USE_PROFILES: { html: true }, FORBID_TAGS: ['img', 'style'], FORBID_ATTR: ['style'] });
+}
+
 /** Plain text for speech synthesis: no code, links shown as their text, short. */
 export function speakableSummary(markdown: string, maxChars = 320): string {
   const text = markdown

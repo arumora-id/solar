@@ -53,6 +53,8 @@ export interface Task {
   result: string | null;
   error: string | null;
   usage: TaskUsage;
+  /** Documents attached to the request (see {@link Attachment}); empty for older tasks. */
+  attachmentIds: string[];
 }
 
 export type ToolSource = 'builtin' | 'mcp';
@@ -126,6 +128,38 @@ export interface Artifact {
   /** Groups the files that belong to one deliverable (e.g. one ArchiMate model). */
   bundle: string;
   description: string | null;
+  createdAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Attachments (project documents the agent reads before designing)
+// ---------------------------------------------------------------------------
+
+export type AttachmentKind = 'pdf' | 'docx' | 'xlsx' | 'csv' | 'pptx' | 'markdown' | 'text';
+
+/** File extensions accepted for attachments (lower case, with dot). */
+export const ATTACHMENT_EXTENSIONS: readonly string[] = ['.pdf', '.docx', '.xlsx', '.xlsm', '.csv', '.pptx', '.md', '.markdown', '.txt'];
+
+export interface Attachment {
+  id: string;
+  sessionId: string;
+  /** Original file name as uploaded. */
+  name: string;
+  kind: AttachmentKind;
+  mimeType: string;
+  /** Size of the original file in bytes. */
+  size: number;
+  /** Number of pages (pdf), slides (pptx) or sheets (xlsx); null when not applicable. */
+  parts: number | null;
+  /** Length of the extracted Markdown text in characters. */
+  chars: number;
+  /** First headings of the extracted text (orientation for the agent and the UI). */
+  outline: string[];
+  /** E.g. "page 4 has no text layer (scanned?)", "sheet truncated to 2000 rows". */
+  warnings: string[];
+  /** Object-store keys of the original file and of the extracted Markdown. */
+  storageKey: string;
+  textKey: string;
   createdAt: string;
 }
 
@@ -244,6 +278,11 @@ export interface PublicConfig {
   effort: string;
   openaiConfigured: boolean;
   authRequired: boolean;
+  attachments: {
+    maxFileMb: number;
+    maxPerTask: number;
+    extensions: readonly string[];
+  };
   storage: {
     database: 'neon-postgres' | 'local-file';
     objects: 's3' | 'local-file';
@@ -272,6 +311,7 @@ export interface TaskDetail {
   events: TaskEvent[];
   artifacts: Artifact[];
   confirmations: Confirmation[];
+  attachments: Attachment[];
 }
 
 export interface TaskStats {

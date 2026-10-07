@@ -11,7 +11,7 @@ export function createOpenAIStreamer(config: AppConfig): ResponsesStreamer {
   return {
     stream(params, options) {
       if (!config.openai.apiKey) {
-        throw new Error('OPENAI_API_KEY belum diisi: isi API key OpenAI di .env (lihat README) lalu restart SOLAR.');
+        throw new Error('OPENAI_API_KEY belum diisi: isi API key OpenAI di .env (lihat README) lalu restart SOLAR AI AGENT.');
       }
       client ??= new OpenAI({
         apiKey: config.openai.apiKey,

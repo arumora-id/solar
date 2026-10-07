@@ -19,3 +19,5 @@ const common = {
 
 await build({ ...common, entryPoints: ['src/index.ts'], outfile: 'dist/index.js' });
 await build({ ...common, entryPoints: ['src/server.ts'], outfile: 'dist/server.mjs' });
+// document parsing runs in a worker thread (hard timeout, memory cap); found next to the bundles at runtime
+await build({ ...common, entryPoints: ['src/documents/worker.ts'], outfile: 'dist/extract-worker.mjs' });

@@ -1,7 +1,8 @@
-# SOLAR - Solution Architect Rabbit 🐰
+# SOLAR AI AGENT 🍡
 
-**SOLAR** (*SOLution ARchitect*) adalah AI agent berwujud **kelinci 3D beranimasi** yang membantu seorang
-Solution Architect men-deliver pekerjaan lebih cepat dan konsisten:
+**SOLAR AI AGENT** (*SOLution ARchitect*, singkatnya SOLAR) adalah AI agent dengan **karakter 3D beranimasi yang bisa
+dipilih** - **Mochi** (default), **Cocoa Kelapa**, atau **Kelinci** klasik - yang membantu seorang Solution Architect
+men-deliver pekerjaan lebih cepat dan konsisten:
 
 - **Diagram ArchiMate 3.2** - divalidasi terhadap tabel relasi resmi ArchiMate, diekspor ke
   *Open Group ArchiMate Exchange Format* (bisa di-import ke Archi, Visual Paradigm, BiZZdesign, Sparx EA) + SVG per view.
@@ -13,9 +14,9 @@ Perintah diberikan dengan **mengetik atau suara**, berjalan di **browser** maupu
 bisa ditambah **skills** dan **plugin MCP** (GitHub, Plane `plane.mesthi.com` sebagai backlog, Visual Paradigm dengan
 konfirmasi wajib), dan setiap pekerjaan bisa dipantau di **web monitoring task**.
 
-![Halaman agent](docs/images/agent-light.png)
+![Halaman agent dengan karakter Mochi dan dokumen terlampir](docs/images/agent-light.png)
 
-| Hasil & artefak (tema gelap) | Konfirmasi sebelum aksi eksternal | Monitor task |
+| Hasil & artefak (tema gelap, karakter Cocoa Kelapa) | Konfirmasi sebelum aksi eksternal | Monitor task |
 |---|---|---|
 | ![Hasil](docs/images/agent-dark-result.png) | ![Konfirmasi](docs/images/confirmation.png) | ![Monitor](docs/images/monitor.png) |
 
@@ -32,16 +33,17 @@ konfirmasi wajib), dan setiap pekerjaan bisa dipantau di **web monitoring task**
 5. [Aplikasi desktop Windows](#aplikasi-desktop-windows)
 6. [Konfigurasi kredensial (.env)](#konfigurasi-kredensial-env)
 7. [Cara pakai](#cara-pakai)
-8. [Deliverable yang dihasilkan](#deliverable-yang-dihasilkan)
-9. [Skills](#skills)
-10. [Plugin MCP: GitHub, Plane, Visual Paradigm](#plugin-mcp-github-plane-visual-paradigm)
-11. [Web monitoring task](#web-monitoring-task)
-12. [Bagaimana SOLAR mencegah kesalahan](#bagaimana-solar-mencegah-kesalahan)
-13. [Keamanan](#keamanan)
-14. [Struktur repository](#struktur-repository)
-15. [Pengembangan & pengujian](#pengembangan--pengujian)
-16. [Troubleshooting](#troubleshooting)
-17. [Lisensi pihak ketiga](#lisensi-pihak-ketiga)
+8. [Lampiran dokumen proyek](#lampiran-dokumen-proyek)
+9. [Deliverable yang dihasilkan](#deliverable-yang-dihasilkan)
+10. [Skills](#skills)
+11. [Plugin MCP: GitHub, Plane, Visual Paradigm](#plugin-mcp-github-plane-visual-paradigm)
+12. [Web monitoring task](#web-monitoring-task)
+13. [Bagaimana SOLAR mencegah kesalahan](#bagaimana-solar-mencegah-kesalahan)
+14. [Keamanan](#keamanan)
+15. [Struktur repository](#struktur-repository)
+16. [Pengembangan & pengujian](#pengembangan--pengujian)
+17. [Troubleshooting](#troubleshooting)
+18. [Lisensi pihak ketiga](#lisensi-pihak-ketiga)
 
 ---
 
@@ -49,9 +51,10 @@ konfirmasi wajib), dan setiap pekerjaan bisa dipantau di **web monitoring task**
 
 | Area | Kemampuan |
 |---|---|
-| Karakter 3D | Kelinci prosedural (three.js) dengan animasi **GSAP**: idle, mendengarkan, berpikir, bekerja (membawa tablet), berbicara, bertanya (menunggu persetujuan), senang, sedih. Mata mengikuti kursor; klik kelinci untuk mulai bicara. |
+| Karakter 3D | **Bisa dipilih**: **Mochi** (kue mochi merah muda, default), **Cocoa Kelapa** (kelapa cokelat bersedotan & payung kecil), atau **Kelinci** klasik - lewat tombol karakter di pojok panggung atau *Pengaturan → Karakter* (tersimpan di perangkat). Dibangun prosedural (three.js, tanpa aset) dengan animasi **GSAP**: idle, mendengarkan, berpikir, bekerja (membawa tablet), berbicara, bertanya (menunggu persetujuan), senang, sedih. Mata mengikuti kursor; klik karakter untuk mulai bicara. |
+| Dokumen proyek | **Lampirkan** PDF, Word (.docx), Excel (.xlsx/.xlsm/.csv), PowerPoint (.pptx), Markdown atau teks (klip kertas, seret & lepas, atau tempel). SOLAR membaca isinya (judul, tabel, sheet, slide, catatan pembicara) sebelum merancang, lalu menyebut sumbernya. |
 | Input | Ketik (Enter kirim) atau **suara**: Web Speech API di Chrome/Edge, atau **Whisper lokal** (transformers.js, offline setelah model diunduh) - otomatis dipakai di aplikasi desktop. Berhenti otomatis saat hening. |
-| Output suara | Kelinci membacakan ringkasan hasil (text-to-speech suara sistem, Bahasa Indonesia/English). |
+| Output suara | Karakter membacakan ringkasan hasil (text-to-speech suara sistem, Bahasa Indonesia/English). |
 | Agent | **OpenAI** (API key ChatGPT) lewat Responses API - default **GPT-6.1 Sol** (`gpt-6.1-sol`) dengan reasoning, streaming, tool call paralel, mode stateless (`store: false`); satu task = satu proses end-to-end ("sekali proses"). Model bisa diganti lewat `SOLAR_MODEL`. |
 | Deliverable | ArchiMate (Exchange XML + SVG + JSON), sequence diagram (SVG + Mermaid + PlantUML + JSON), TSD (Markdown + HTML + JSON), unduh semua sebagai ZIP. |
 | Skills | 6 skill bawaan (delivery package, ArchiMate, sequence, TSD, backlog Plane, publish GitHub); tambah/impor/edit/nonaktifkan dari UI. |
@@ -67,7 +70,7 @@ konfirmasi wajib), dan setiap pekerjaan bisa dipantau di **web monitoring task**
 flowchart LR
     U([Solution Architect]) -- ketik / suara --> UI
     subgraph Client["Web UI - React + Vite + TypeScript + GSAP"]
-        UI[Agent page<br/>kelinci 3D three.js]
+        UI[Agent page<br/>karakter 3D three.js]
         MON[Monitor page]
         SET[Pengaturan<br/>skills & plugin]
     end
@@ -139,7 +142,7 @@ npm run desktop:dev           # build lalu buka jendela SOLAR (memakai .env dan 
 
 ```bash
 npm install
-npm run desktop:dist:win      # hasil: apps/desktop/release/SOLAR-Setup-1.0.0.exe
+npm run desktop:dist:win      # hasil: apps/desktop/release/SOLAR-AI-AGENT-Setup-1.0.0.exe
 ```
 
 Atau dari GitHub: tab **Actions → "Desktop installer (Windows)" → Run workflow**, lalu unduh artifact installer.
@@ -147,6 +150,8 @@ Atau dari GitHub: tab **Actions → "Desktop installer (Windows)" → Run workfl
 Catatan aplikasi desktop:
 
 - Server SOLAR berjalan **di dalam aplikasi** (satu proses), UI dimuat dari `http://127.0.0.1:8790`.
+- Nama aplikasi & shortcut: **SOLAR AI AGENT**. Folder data tetap `%APPDATA%\SOLAR`, sehingga pengguna versi sebelumnya
+  tidak kehilangan `.env`, task, maupun artefak setelah memperbarui.
 - Saat pertama kali dibuka, file konfigurasi dibuat di `%APPDATA%\SOLAR\.env` dan dialog menawarkan untuk membukanya.
   Isi kredensial lalu jalankan ulang. Data & artefak lokal disimpan di `%APPDATA%\SOLAR\data`.
 - Menu **Jendela → Mode mini (selalu di atas)** menjadikan SOLAR jendela kecil yang selalu tampil - cocok sebagai
@@ -177,6 +182,7 @@ Semua kredensial berada di `.env` (tidak pernah di-commit). Nilai kosong = fitur
 | `PLANE_PROJECT_ID` | | UUID project backlog default (opsional). |
 | `PLANE_CONFIRM` | | `never` (default) atau `always`. |
 | `VP_MCP_URL`, `VP_MCP_TOKEN` | | Endpoint MCP Visual Paradigm. **Setiap** pemanggilan selalu dikonfirmasi. |
+| `ATTACHMENT_MAX_MB` | | Ukuran maksimum satu dokumen lampiran (default `25`). |
 | `TASK_CONCURRENCY`, `CONFIRMATION_TIMEOUT_MINUTES`, `SOLAR_MAX_TOKENS`, `SOLAR_MAX_TURNS`, `LOG_LEVEL` | | Penyetelan lanjutan. |
 
 Tanpa `DATABASE_URL`/`S3_*`, SOLAR tetap berjalan penuh dengan penyimpanan file lokal (`data/`). Begitu kredensial Neon
@@ -185,11 +191,12 @@ dan object storage diisi, data baru otomatis disimpan di sana.
 ## Cara pakai
 
 1. Buka SOLAR (browser atau desktop). Status **Terhubung** tampil di kanan atas.
-2. Ketik perintah atau klik **kelinci / tombol mikrofon** lalu bicara. Tombol cepat di bawah kelinci mengisi template perintah.
+2. Ketik perintah atau klik **karakter / tombol mikrofon** lalu bicara. Tombol cepat di bawah karakter mengisi template perintah.
+   Ganti karakter (Mochi, Cocoa Kelapa, Kelinci) lewat tombol bernama karakter di pojok kiri bawah panggung.
 3. SOLAR mengerjakan **seluruh permintaan dalam satu proses**: membuat rencana, memuat skill yang relevan,
    membuat & memvalidasi diagram, menyusun dokumen, lalu memberi ringkasan + daftar artefak. Asumsi dicatat eksplisit
    (tidak berhenti untuk bertanya kecuali benar-benar menghalangi).
-4. Bila aksi butuh persetujuan (mis. Visual Paradigm), kelinci mengangkat tangan dan dialog **Perlu persetujuan Anda**
+4. Bila aksi butuh persetujuan (mis. Visual Paradigm), karakter mengangkat tangan dan dialog **Perlu persetujuan Anda**
    muncul berisi data yang akan dikirim. Setujui atau tolak (bisa dengan catatan).
 5. Pratinjau, unduh per file, atau **Unduh semua (ZIP)**. Progres rinci ada di **Monitor**.
 
@@ -210,6 +217,53 @@ Buat sequence diagram login SSO dengan Keycloak termasuk alur token kedaluwarsa.
 
 Percakapan dalam satu sesi saling terhubung: permintaan berikutnya (mis. "tambahkan NFR keamanan ke TSD tadi")
 mendapat konteks task sebelumnya. Tombol **Percakapan baru** memulai konteks kosong.
+
+## Lampiran dokumen proyek
+
+Lampirkan dokumen proyek (BRD, spesifikasi, inventaris integrasi, deck arsitektur, catatan rapat) agar rancangan SOLAR
+mengikuti isi dokumen tersebut, bukan asumsi.
+
+1. Klik ikon **klip kertas** di kotak perintah, **seret & lepas** file ke jendela, atau **tempel** (Ctrl+V) file.
+   Maksimal **10 dokumen** per permintaan, masing-masing maksimal `ATTACHMENT_MAX_MB` (default **25 MB**).
+2. Setiap file langsung diunggah dan dibaca; chip menampilkan jumlah halaman/slide/sheet dan peringatan bila ada
+   (mis. halaman hasil scan). Klik chip untuk **pratinjau** teks yang dibaca SOLAR (tampilan format atau Markdown mentah)
+   dan untuk mengunduh file aslinya.
+3. Kirim perintah, mis. *"Rancang arsitektur integrasi pembayaran sesuai dokumen persyaratan dan inventaris integrasi
+   terlampir"*. Lampiran yang belum terkirim tetap tersimpan bila halaman dimuat ulang.
+
+| Format | Ekstensi | Yang dibaca |
+|---|---|---|
+| PDF | `.pdf` | Teks per halaman (penanda `<!-- page N -->`), judul dikenali dari ukuran huruf (watermark miring tidak dianggap judul), halaman yang diputar dibaca normal, kolom tabel tetap berjajar. PDF berpassword pemilik (hanya pembatasan salin/cetak) tetap dibaca; halaman yang rusak dilewati. |
+| Word | `.docx` | Judul & heading bertingkat, daftar berpoin/bernomor (penomoran otomatis Word ikut terbaca, mis. "2.1" dan daftar yang berlanjut), tabel (termasuk sel gabungan), catatan kaki, versi akhir *track changes*, teks alternatif gambar. |
+| Excel | `.xlsx`, `.xlsm` | Setiap sheet (`## Sheet: nama`) sebagai tabel: tanggal ISO, persen, nilai hasil rumus, judul sel gabungan; maks. 50 sheet, 1.000 baris × 50 kolom per sheet (jumlah baris sebenarnya disebutkan). |
+| CSV | `.csv` | Satu tabel; pemisah `,` `;` tab atau `\|` dikenali otomatis (juga petunjuk `sep=;` dari Excel), baris judul di atas tabel menjadi keterangan; maks. 2.000 baris. |
+| PowerPoint | `.pptx` | Slide sesuai urutan presentasi (`## Slide N: judul`), poin bertingkat, tabel, data grafik, SmartArt, deskripsi gambar, **catatan pembicara**. |
+| Markdown / teks | `.md`, `.markdown`, `.txt` | Apa adanya (UTF-8, UTF-16 dengan atau tanpa BOM, atau Windows-1252 dari ekspor lama). |
+
+**Cara agent memakai dokumen.** Dokumen pendek (sampai 60.000 karakter) langsung disertakan ke permintaan; dokumen yang
+lebih panjang dibaca bertahap dengan tool `list_documents`, `read_document` (per bagian/halaman) dan `search_documents`
+(anggaran baca 400.000 karakter per task). Dokumen dari permintaan sebelumnya di percakapan yang sama tetap bisa dibaca.
+Agent menyebut sumber (nama dokumen + halaman/slide/sheet) di TSD dan menandai hal yang bertentangan atau tidak ada di
+dokumen sebagai asumsi.
+
+**Batasan.**
+
+- Tidak ada **OCR**: PDF hasil scan/gambar tidak punya teks yang bisa dibaca (SOLAR memberi peringatan per halaman).
+  Lampirkan PDF dengan lapisan teks atau versi Word-nya.
+- Dokumen yang **dilindungi kata sandi** (PDF atau Office terenkripsi) ditolak dengan petunjuk cara melepas kata sandinya.
+- Format lama **.doc/.xls/.ppt** (Office 97-2003), **.xlsb**, **.vsdx** dan OpenDocument (**.odt/.ods/.odp**) belum
+  didukung - simpan ulang sebagai .docx/.xlsx/.pptx atau PDF. File PDF/Word/Excel/PowerPoint yang diberi ekstensi lain
+  yang didukung (mis. `.docx` bernama `.xlsx`) dibaca sesuai isinya; file berekstensi `.doc/.xls/.ppt` selalu ditolak.
+- Teks hasil baca maksimal **2 juta karakter** per dokumen dan sel tabel maksimal 2.000 karakter; bagian yang terpotong
+  selalu disebutkan di peringatan.
+
+**Keamanan & penyimpanan.** Dokumen dibaca di *worker thread* terpisah dengan batas waktu ±95 detik dan batas memori
+±1 GB per dokumen (heap dan buffer dipantau dari luar, juga bila `NODE_OPTIONS` menaikkan batas heap; dokumen yang
+melewatinya dihentikan dengan pesan "terlalu besar"), sehingga file bermasalah tidak bisa menghentikan server. Paket Office
+dibuka dengan pembaca ZIP yang membatasi ukuran hasil dekompresi (*zip bomb* ditolak), setiap XML diperiksa dalam waktu
+linear sebelum dibaca, XML tidak pernah memuat entitas/sumber eksternal, dan makro tidak pernah dijalankan.
+File asli dan teks hasil baca disimpan di object storage (`attachments/<id>/…`), metadatanya di database; lampiran yang
+tidak pernah dikirim dihapus otomatis setelah 24 jam.
 
 ## Deliverable yang dihasilkan
 
@@ -340,8 +394,9 @@ Buka `/monitor` (mis. <http://localhost:8790/monitor>):
 solar/
 ├─ apps/
 │  ├─ server/        Node.js + Express: agent loop OpenAI, task manager, generator & validator,
-│  │                 skills, plugin MCP, storage Neon/S3/lokal, REST + SSE  (test: vitest)
-│  ├─ web/           React + Vite + TypeScript + GSAP + three.js: kelinci 3D, chat, suara, monitor, pengaturan
+│  │                 pembaca dokumen lampiran (src/documents), skills, plugin MCP, storage Neon/S3/lokal,
+│  │                 REST + SSE  (test: vitest)
+│  ├─ web/           React + Vite + TypeScript + GSAP + three.js: karakter 3D, chat, suara, monitor, pengaturan
 │  └─ desktop/       Electron: menjalankan server + UI sebagai aplikasi Windows (installer NSIS)
 ├─ packages/shared/  Tipe TypeScript bersama (Task, Event, Artifact, Plugin, Skill, ...)
 ├─ skills/           Skill bawaan (SKILL.md)
@@ -371,14 +426,16 @@ SOLAR_TEST_DATABASE_URL="postgresql://user:pass@host/db_test?sslmode=require" np
 ```
 
 Yang sudah diuji otomatis: validator & renderer ArchiMate/sequence/TSD, store skill & plugin (termasuk penyamaran
-rahasia), round-trip object storage S3-compatible, serta skenario agent end-to-end (model tiruan) dengan konfirmasi,
-pembuatan 11 artefak, ZIP, header keamanan, dan riwayat percakapan append-only.
+rahasia), round-trip object storage S3-compatible, skenario agent end-to-end (model tiruan) dengan konfirmasi,
+pembuatan 11 artefak, ZIP, header keamanan, dan riwayat percakapan append-only, serta pembacaan lampiran dari dokumen
+nyata (`apps/server/test/fixtures/documents`: Word, PowerPoint, Excel, PDF, file terenkripsi & format lama) termasuk
+zip bomb, PDF hasil scan, file rusak, ekstensi yang salah, API unggah dan tool dokumen agent.
 
 ## Troubleshooting
 
 | Gejala | Solusi |
 |---|---|
-| Balon kelinci: "OPENAI_API_KEY belum diisi" | Isi di `.env` (desktop: `%APPDATA%\SOLAR\.env`, menu *File → Buka file .env*), lalu restart. |
+| Balon karakter: "OPENAI_API_KEY belum diisi" | Isi di `.env` (desktop: `%APPDATA%\SOLAR\.env`, menu *File → Buka file .env*), lalu restart. |
 | Upgrade dari versi Anthropic (`.env` lama) | Tambahkan `OPENAI_API_KEY`; `ANTHROPIC_API_KEY` tidak dipakai lagi. `SOLAR_MODEL=claude-…` otomatis diganti `gpt-6.1-sol` (dengan peringatan di log) - sebaiknya hapus/ubah barisnya. |
 | Task gagal "Autentikasi OpenAI gagal" | API key salah/dicabut - buat key baru di platform.openai.com/api-keys. |
 | Task gagal "Saldo/kuota API OpenAI habis (insufficient_quota)" | Tambahkan kredit di platform.openai.com → Billing (langganan ChatGPT tidak berlaku untuk API). |
@@ -386,14 +443,20 @@ pembuatan 11 artefak, ZIP, header keamanan, dan riwayat percakapan append-only.
 | Plugin "Belum dikonfigurasi" | Isi variabel yang disebut di kartu plugin pada `.env`, lalu *Hubungkan ulang*. |
 | Plugin Plane error saat terhubung | Pastikan Node.js/npx terpasang dan bisa mengakses npm registry; cek `PLANE_API_HOST_URL=https://plane.mesthi.com`. |
 | Mikrofon tidak bekerja di browser | Izinkan mikrofon; Web Speech API butuh Chrome/Edge + internet. Pilih *Whisper lokal* di Pengaturan → Suara. |
-| Kelinci tampil sebagai gambar statis | WebGL tidak tersedia (driver/GPU). Fitur lain tetap berjalan normal. |
+| Karakter tampil sebagai gambar statis | WebGL tidak tersedia (driver/GPU). Fitur lain tetap berjalan normal. |
 | Port 8790 dipakai | Ubah `PORT` di `.env` (desktop otomatis memilih port lain). |
+| Lampiran ditolak "dilindungi kata sandi" | Buka file di Office → *File → Info → Protect → Encrypt with Password*, kosongkan kata sandi, simpan, lampirkan lagi (PDF: simpan salinan tanpa kata sandi). |
+| Lampiran ditolak "Format Word 97-2003 (.doc)" dsb. | Simpan ulang sebagai .docx/.xlsx/.pptx (*File → Save As*) atau ekspor ke PDF. |
+| Peringatan "tidak memiliki lapisan teks" pada PDF | PDF hasil scan; OCR belum didukung. Lampirkan versi PDF dengan teks atau dokumen Word aslinya. |
+| Lampiran ditolak "terlalu besar" | Naikkan `ATTACHMENT_MAX_MB` (maks. 200) atau pecah dokumen menjadi beberapa file. |
 | `npm install` gagal mengunduh Electron | Hanya perlu untuk desktop; untuk mode browser jalankan `ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm install`. |
 
 `npm audit` melaporkan kerentanan *moderate* pada dependency **electron-builder** (alat build installer, tidak ikut
-terpasang di aplikasi atau server).
+terpasang di aplikasi atau server) dan pada `argparse`/`sprintf-js` milik **mammoth** (hanya dipakai oleh command-line
+mammoth, tidak ikut ter-bundle ke server maupun aplikasi desktop).
 
 ## Lisensi pihak ketiga
 
-Lihat [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) (antara lain tabel relasi ArchiMate dari proyek Archi - MIT).
+Lihat [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) (antara lain tabel relasi ArchiMate dari proyek Archi - MIT,
+serta pembaca dokumen pdf.js - Apache-2.0, mammoth - BSD-2-Clause, dan turndown - MIT).
 ArchiMate® adalah merek dagang terdaftar The Open Group.

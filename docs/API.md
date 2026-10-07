@@ -1,6 +1,6 @@
 # REST API SOLAR
 
-Base URL: `http://127.0.0.1:8790/api`. Semua body JSON. Bila `SOLAR_ACCESS_TOKEN` diisi, kirim header
+Base URL: `http://127.0.0.1:8790/api`. Semua body JSON, kecuali unggah lampiran (isi file mentah). Bila `SOLAR_ACCESS_TOKEN` diisi, kirim header
 `Authorization: Bearer <token>` (atau query `?token=<token>` untuk SSE/unduhan). `GET /api/health` tidak memerlukan token.
 
 ## Sistem
@@ -15,10 +15,10 @@ Base URL: `http://127.0.0.1:8790/api`. Semua body JSON. Bila `SOLAR_ACCESS_TOKEN
 
 | Method | Path | Body / Query | Keterangan |
 |---|---|---|---|
-| POST | `/tasks` | `{ prompt, sessionId }` | Membuat task (status `queued`). Respons `201` berisi `Task`. |
+| POST | `/tasks` | `{ prompt, sessionId, attachmentIds? }` | Membuat task (status `queued`). `attachmentIds` (maks. 10) harus lampiran milik `sessionId` yang sama. Respons `201` berisi `Task`. |
 | GET | `/tasks` | `limit`, `offset`, `sessionId`, `status` | Daftar task terbaru. |
 | GET | `/tasks/stats` | | Total per status dan estimasi biaya. |
-| GET | `/tasks/:id` | | `TaskDetail`: task, events, artifacts, confirmations. |
+| GET | `/tasks/:id` | | `TaskDetail`: task, events, artifacts, confirmations, attachments. |
 | POST | `/tasks/:id/cancel` | | Membatalkan task yang antre/berjalan (`409` bila sudah selesai). |
 | GET | `/tasks/:id/artifacts.zip` | | Semua artefak task dalam ZIP. |
 
@@ -43,6 +43,21 @@ curl -s -X POST http://127.0.0.1:8790/api/tasks \
 |---|---|---|
 | GET | `/artifacts/:id` | Metadata artefak. |
 | GET | `/artifacts/:id/content` | Isi file (`?download=1` untuk unduh). Disajikan dengan `Content-Security-Policy: sandbox`. |
+
+## Lampiran dokumen
+
+Dokumen proyek (PDF, Word `.docx`, Excel `.xlsx`/`.xlsm`/`.csv`, PowerPoint `.pptx`, Markdown, `.txt`) diunggah
+**sebelum** task dibuat, lalu id-nya dikirim di `attachmentIds`. Server langsung mengekstrak teksnya menjadi Markdown
+(judul, daftar, tabel, penanda halaman/slide/sheet) - teks itulah yang dibaca agen.
+
+| Method | Path | Body / query | Keterangan |
+|---|---|---|---|
+| POST | `/attachments` | query `sessionId`, `name`; body = isi file mentah (`Content-Type: application/octet-stream`) | Unggah + ekstraksi. `201` → `Attachment` (`kind`, `parts` = halaman/slide/sheet, `chars`, `outline`, `warnings`). `413` terlalu besar (`ATTACHMENT_MAX_MB`, default 25) atau terindikasi zip bomb, `415` jenis tidak didukung (termasuk `.doc`/`.xls`/`.ppt` lama - juga bila diberi ekstensi modern, `.xlsb`, `.vsdx`, OpenDocument, file biner berekstensi teks), `400` isi file kosong, `422` file rusak, terenkripsi/berpassword, atau melewati batas waktu baca. Pesan error (`error`) berbahasa Indonesia dan bisa langsung ditampilkan. |
+| GET | `/attachments?sessionId=` | | Lampiran sebuah percakapan (terlama dulu). |
+| GET | `/attachments/:id` | | Metadata. |
+| GET | `/attachments/:id/text` | | Markdown hasil ekstraksi (persis yang dibaca agen). |
+| GET | `/attachments/:id/content` | | File asli, selalu sebagai unduhan (`Content-Disposition: attachment`, CSP `sandbox`). |
+| DELETE | `/attachments/:id` | | Menghapus lampiran yang belum dipakai task (`204`); `409` bila sudah dipakai (tetap disimpan sebagai riwayat task). |
 
 ## Skills
 

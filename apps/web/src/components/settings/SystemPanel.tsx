@@ -70,7 +70,7 @@ export function SystemPanel() {
             window.dispatchEvent(new CustomEvent('solar:layout'));
           }}
         />
-        Mode ringkas (sembunyikan tombol cepat di bawah kelinci)
+        Mode ringkas (sembunyikan tombol cepat di bawah karakter)
       </label>
 
       <h4>Konfigurasi server</h4>

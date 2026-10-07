@@ -10,8 +10,9 @@ interface RunningServer {
   close(): Promise<void>;
 }
 
-// user data (settings, .env, tasks, artifacts) in %APPDATA%/SOLAR instead of the package name
-app.setName('SOLAR');
+// user data (settings, .env, tasks, artifacts) in %APPDATA%/SOLAR instead of the package name; the folder keeps the
+// pre-rename name so existing settings and data stay where they are
+app.setName('SOLAR AI AGENT');
 app.setPath('userData', join(app.getPath('appData'), 'SOLAR'));
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -114,10 +115,10 @@ function buildMenu(url: string): void {
     {
       label: 'Bantuan',
       submenu: [
-        { label: 'Buka SOLAR di browser', click: () => void shell.openExternal(url) },
+        { label: 'Buka SOLAR AI AGENT di browser', click: () => void shell.openExternal(url) },
         { label: 'Buka Monitor Task di browser', click: () => void shell.openExternal(`${url}/monitor`) },
         { type: 'separator' },
-        { label: `SOLAR ${app.getVersion()}`, enabled: false },
+        { label: `SOLAR AI AGENT ${app.getVersion()}`, enabled: false },
       ],
     },
   ];
@@ -130,7 +131,7 @@ function createWindow(url: string): void {
     height: 860,
     minWidth: 900,
     minHeight: 620,
-    title: 'SOLAR - Solution Architect Rabbit',
+    title: 'SOLAR AI AGENT',
     backgroundColor: '#f9f9f7',
     autoHideMenuBar: false,
     webPreferences: {
@@ -186,7 +187,7 @@ if (!gotLock) {
     try {
       server = await bootServer();
     } catch (err) {
-      dialog.showErrorBox('SOLAR gagal dijalankan', err instanceof Error ? err.stack ?? err.message : String(err));
+      dialog.showErrorBox('SOLAR AI AGENT gagal dijalankan', err instanceof Error ? err.stack ?? err.message : String(err));
       app.quit();
       return;
     }
@@ -195,12 +196,12 @@ if (!gotLock) {
     if (firstRun) {
       const res = await dialog.showMessageBox({
         type: 'info',
-        title: 'Selamat datang di SOLAR',
+        title: 'Selamat datang di SOLAR AI AGENT',
         message: 'Isi kredensial di file .env terlebih dahulu',
         detail:
           `File konfigurasi dibuat di:\n${envFile}\n\n` +
           'Isi minimal OPENAI_API_KEY. Opsional: DATABASE_URL (Neon), S3_* (object storage), GITHUB_TOKEN, PLANE_* dan VP_MCP_*. ' +
-          'Simpan file lalu jalankan ulang SOLAR.',
+          'Simpan file lalu jalankan ulang SOLAR AI AGENT.',
         buttons: ['Buka file .env', 'Nanti'],
         defaultId: 0,
       });

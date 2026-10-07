@@ -9,65 +9,20 @@ import { GithubClient } from '../integrations/github.js';
 import { PlaneClient } from '../integrations/plane.js';
 import type { SkillStore } from '../skills/skillStore.js';
 import type { ArtifactService } from '../tasks/artifactService.js';
+import type { AttachmentService } from '../tasks/attachmentService.js';
 import type { TaskRunContext } from '../tasks/taskManager.js';
 import { newId, slugify } from '../util/ids.js';
+import { createDocumentTools } from './documentTools.js';
+import { json, zodTool } from './zodTool.js';
 import type { AgentTool, ToolOutput } from './types.js';
 
 export interface BuiltinToolDeps {
   config: AppConfig;
   skills: SkillStore;
   artifacts: ArtifactService;
+  attachments: AttachmentService;
 }
 
-/** JSON Schema for the Messages API from a zod schema (draft 2020-12, input side of defaults). */
-export function toInputSchema(schema: z.ZodType): Record<string, unknown> {
-  const json = z.toJSONSchema(schema, { io: 'input', unrepresentable: 'any' }) as Record<string, unknown>;
-  const clean = (node: unknown): unknown => {
-    if (Array.isArray(node)) return node.map(clean);
-    if (node && typeof node === 'object') {
-      const out: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(node)) {
-        if (k === '$schema' || k === 'propertyNames') continue;
-        out[k] = clean(v);
-      }
-      return out;
-    }
-    return node;
-  };
-  return clean(json) as Record<string, unknown>;
-}
-
-function zodTool<S extends z.ZodType>(def: {
-  name: string;
-  displayName: string;
-  description: string;
-  schema: S;
-  confirmation?: (input: z.output<S>) => string | null;
-  execute: (input: z.output<S>, ctx: TaskRunContext) => Promise<ToolOutput>;
-}): AgentTool {
-  return {
-    name: def.name,
-    displayName: def.displayName,
-    description: def.description,
-    inputSchema: toInputSchema(def.schema),
-    source: 'builtin',
-    parse(input) {
-      const parsed = def.schema.safeParse(input);
-      if (parsed.success) return { ok: true, value: parsed.data };
-      return {
-        ok: false,
-        error: formatIssues(
-          'The tool input does not match the schema',
-          parsed.error.issues.map((i) => ({ path: i.path.join('.') || '(root)', message: i.message })),
-        ),
-      };
-    },
-    confirmation: (input) => def.confirmation?.(input as z.output<S>) ?? null,
-    execute: (input, ctx) => def.execute(input as z.output<S>, ctx),
-  };
-}
-
-const json = (value: unknown) => JSON.stringify(value, null, 2);
 
 function failure(title: string, errors: ValidationIssue[], warnings: ValidationIssue[]): ToolOutput {
   return {
@@ -419,6 +374,8 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
       },
     }),
   );
+
+  tools.push(...createDocumentTools(deps.attachments));
 
   // ---- GitHub publishing ------------------------------------------------------
   if (config.github.token) {

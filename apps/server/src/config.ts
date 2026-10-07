@@ -3,7 +3,9 @@ import { dirname, join, resolve } from 'node:path';
 import { config as loadDotenv } from 'dotenv';
 import { z } from 'zod';
 
-export const APP_NAME = 'SOLAR';
+export const APP_NAME = 'SOLAR AI AGENT';
+/** APP_NAME without spaces, for User-Agent headers and protocol client names. */
+export const APP_SLUG = 'solar-ai-agent';
 export const APP_VERSION = '1.0.0';
 
 /** Walks up from `start` looking for the SOLAR monorepo root (package.json with name "solar"). */
@@ -70,6 +72,7 @@ const EnvSchema = z.object({
     .regex(/^\s*\d+(\.\d+)?\s*,\s*\d+(\.\d+)?\s*,\s*\d+(\.\d+)?\s*$/, 'expected "input,cachedInput,output" in USD per 1M tokens, e.g. 2,0.1,10')
     .optional(),
   TASK_CONCURRENCY: z.coerce.number().int().min(1).max(10).default(2),
+  ATTACHMENT_MAX_MB: z.coerce.number().int().min(1).max(200).default(25),
   CONFIRMATION_TIMEOUT_MINUTES: z.coerce.number().int().min(1).max(1440).default(60),
 
   DATABASE_URL: optionalString,
@@ -129,6 +132,10 @@ export interface AppConfig {
   };
   taskConcurrency: number;
   confirmationTimeoutMs: number;
+  attachments: {
+    maxFileBytes: number;
+    maxPerTask: number;
+  };
   databaseUrl: string | undefined;
   s3: S3Config | null;
   github: {
@@ -202,6 +209,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     },
     taskConcurrency: e.TASK_CONCURRENCY,
     confirmationTimeoutMs: e.CONFIRMATION_TIMEOUT_MINUTES * 60_000,
+    attachments: {
+      maxFileBytes: e.ATTACHMENT_MAX_MB * 1024 * 1024,
+      maxPerTask: 10,
+    },
     databaseUrl: e.DATABASE_URL,
     s3: s3Complete
       ? {

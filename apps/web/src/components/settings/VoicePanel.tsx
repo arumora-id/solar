@@ -56,13 +56,13 @@ export function VoicePanel() {
       </label>
       <label className="toggle" style={{ display: 'flex', marginBottom: 12 }}>
         <input type="checkbox" checked={prefs.speakReplies} disabled={!ttsAvailable()} onChange={(e) => update({ speakReplies: e.target.checked })} />
-        Kelinci membacakan ringkasan hasil (text-to-speech)
+        Karakter membacakan ringkasan hasil (text-to-speech)
       </label>
       <button
         type="button"
         className="btn small"
         disabled={!ttsAvailable()}
-        onClick={() => speak(prefs.lang === 'id-ID' ? 'Halo, saya SOLAR. Siap membantu desain arsitektur Anda.' : 'Hi, I am SOLAR, ready to help with your architecture.', prefs.lang)}
+        onClick={() => speak(prefs.lang === 'id-ID' ? 'Halo, saya SOLAR AI Agent. Siap membantu desain arsitektur Anda.' : 'Hi, I am SOLAR AI Agent, ready to help with your architecture.', prefs.lang)}
       >
         Tes suara
       </button>

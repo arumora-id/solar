@@ -2,13 +2,15 @@ import { timingSafeEqual } from 'node:crypto';
 import express, { type NextFunction, type Request, type Response, type Router } from 'express';
 import { zipSync, strToU8 } from 'fflate';
 import { z } from 'zod';
-import type { PluginView, PublicConfig, TaskStatus } from '@solar/shared';
+import { ATTACHMENT_EXTENSIONS, type PluginView, type PublicConfig, type TaskStatus } from '@solar/shared';
 import { APP_NAME, APP_VERSION, type AppConfig } from '../config.js';
 import type { McpManager } from '../plugins/mcpManager.js';
 import { maskPlugin, PluginConfigBaseSchema, type PluginStore } from '../plugins/pluginStore.js';
 import type { SkillStore } from '../skills/skillStore.js';
 import type { Repository } from '../storage/repository.js';
+import { DocumentError } from '../documents/index.js';
 import type { ArtifactService } from '../tasks/artifactService.js';
+import type { AttachmentService } from '../tasks/attachmentService.js';
 import type { EventBus } from '../tasks/eventBus.js';
 import type { TaskManager } from '../tasks/taskManager.js';
 
@@ -18,6 +20,7 @@ export interface ApiDeps {
   objectsKind: 's3' | 'local-file';
   tasks: TaskManager;
   artifacts: ArtifactService;
+  attachments: AttachmentService;
   bus: EventBus;
   skills: SkillStore;
   plugins: PluginStore;
@@ -32,6 +35,8 @@ export class HttpError extends Error {
     super(message);
   }
 }
+
+const ATTACHMENT_ID = /^att_[A-Za-z0-9]+$/;
 
 const TASK_STATUSES = ['queued', 'running', 'awaiting_confirmation', 'completed', 'failed', 'cancelled'] as const;
 
@@ -108,7 +113,7 @@ function contentDisposition(kind: 'inline' | 'attachment', name: string): string
 }
 
 export function createApiRouter(deps: ApiDeps): Router {
-  const { config, tasks, artifacts, skills, plugins, mcp, bus } = deps;
+  const { config, tasks, artifacts, attachments, skills, plugins, mcp, bus } = deps;
   const r = express.Router();
   r.use(express.json({ limit: '4mb' }));
 
@@ -131,6 +136,11 @@ export function createApiRouter(deps: ApiDeps): Router {
       storage: { database: deps.repo.kind, objects: deps.objectsKind },
       github: { configured: Boolean(config.github.token), defaultRepo: config.github.defaultRepo ?? null, defaultBranch: config.github.defaultBranch },
       plane: { hostUrl: config.plane.hostUrl },
+      attachments: {
+        maxFileMb: Math.round(config.attachments.maxFileBytes / 1024 / 1024),
+        maxPerTask: config.attachments.maxPerTask,
+        extensions: ATTACHMENT_EXTENSIONS,
+      },
     };
     res.json(body);
   });
@@ -156,8 +166,26 @@ export function createApiRouter(deps: ApiDeps): Router {
 
   // ---- tasks ----------------------------------------------------------------
   r.post('/tasks', async (req, res) => {
-    const body = parse(z.object({ prompt: z.string().trim().min(1).max(50_000), sessionId: z.string().trim().min(1).max(100) }), req.body);
-    res.status(201).json(await tasks.create(body.prompt, body.sessionId));
+    const body = parse(
+      z.object({
+        prompt: z.string().trim().min(1).max(50_000),
+        sessionId: z.string().trim().min(1).max(100),
+        attachmentIds: z.array(z.string().regex(ATTACHMENT_ID)).max(config.attachments.maxPerTask).default([]),
+      }),
+      req.body,
+    );
+    const ids = [...new Set(body.attachmentIds)];
+    // validated and created under the conversation lock: a concurrent DELETE cannot remove a document in between
+    const task = await attachments.withSession(body.sessionId, async () => {
+      const found = await attachments.listByIds(ids);
+      for (const id of ids) {
+        const a = found.find((x) => x.id === id);
+        if (!a) throw new HttpError(400, `Lampiran ${id} tidak ditemukan`);
+        if (a.sessionId !== body.sessionId) throw new HttpError(400, `Lampiran "${a.name}" milik percakapan lain`);
+      }
+      return tasks.create(body.prompt, body.sessionId, ids);
+    });
+    res.status(201).json(task);
   });
 
   r.get('/tasks', async (req, res) => {
@@ -234,6 +262,77 @@ export function createApiRouter(deps: ApiDeps): Router {
     res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'; img-src data: 'self'; style-src 'unsafe-inline'");
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.end(body);
+  });
+
+  // ---- attachments (project documents) ----------------------------------------
+  const rawUpload = express.raw({ type: () => true, limit: config.attachments.maxFileBytes });
+  const uploadBody = (req: Request, res: Response, next: NextFunction) =>
+    rawUpload(req, res, (err?: unknown) => {
+      if ((err as { type?: string } | undefined)?.type === 'entity.too.large') {
+        return next(new HttpError(413, `File terlalu besar (maks ${Math.round(config.attachments.maxFileBytes / 1024 / 1024)} MB).`));
+      }
+      next(err);
+    });
+
+  r.post('/attachments', uploadBody, async (req, res) => {
+    const q = parse(z.object({ sessionId: z.string().trim().min(1).max(100), name: z.string().trim().min(1).max(300) }), req.query);
+    if (!Buffer.isBuffer(req.body) || req.body.length === 0) throw new HttpError(400, 'Isi file kosong');
+    // the client may give up while the document is being read (chip removed, page left): then do not keep it
+    let clientGone = false;
+    res.on('close', () => {
+      if (!res.writableFinished) clientGone = true;
+    });
+    let created;
+    try {
+      created = await attachments.create(q.sessionId, q.name, req.body);
+    } catch (err) {
+      if (err instanceof DocumentError) throw new HttpError(err.status, err.message);
+      throw err;
+    }
+    if (clientGone) {
+      await attachments.remove(created.id);
+      return;
+    }
+    res.status(201).json(created);
+  });
+
+  r.get('/attachments', async (req, res) => {
+    const q = parse(z.object({ sessionId: z.string().trim().min(1).max(100), unsent: z.enum(['0', '1']).optional() }), req.query);
+    res.json(q.unsent === '1' ? await attachments.listUnsent(q.sessionId) : await attachments.listForSession(q.sessionId));
+  });
+
+  r.get('/attachments/:id', async (req, res) => {
+    const a = await attachments.get(req.params.id);
+    if (!a) throw new HttpError(404, 'Lampiran tidak ditemukan');
+    res.json(a);
+  });
+
+  /** The Markdown the agent reads (for the preview in the UI). */
+  r.get('/attachments/:id/text', async (req, res) => {
+    const a = await attachments.get(req.params.id);
+    if (!a) throw new HttpError(404, 'Lampiran tidak ditemukan');
+    res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+    res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.end(await attachments.readText(a));
+  });
+
+  /** The original file, always as a download (never rendered in the app origin). */
+  r.get('/attachments/:id/content', async (req, res) => {
+    const a = await attachments.get(req.params.id);
+    if (!a) throw new HttpError(404, 'Lampiran tidak ditemukan');
+    res.setHeader('Content-Type', a.mimeType);
+    res.setHeader('Content-Disposition', contentDisposition('attachment', a.name));
+    res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.end(await attachments.readOriginal(a));
+  });
+
+  r.delete('/attachments/:id', async (req, res) => {
+    const outcome = await attachments.remove(req.params.id);
+    if (outcome === 'not-found') throw new HttpError(404, 'Lampiran tidak ditemukan');
+    if (outcome === 'in-use') throw new HttpError(409, 'Lampiran sudah dipakai oleh sebuah task dan disimpan sebagai riwayatnya');
+    res.status(204).end();
   });
 
   // ---- skills ---------------------------------------------------------------

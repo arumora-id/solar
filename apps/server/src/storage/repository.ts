@@ -1,4 +1,4 @@
-import type { Artifact, Confirmation, Task, TaskEvent, TaskStats, TaskStatus } from '@solar/shared';
+import type { Artifact, Attachment, Confirmation, Task, TaskEvent, TaskStats, TaskStatus } from '@solar/shared';
 
 export interface ListTasksOptions {
   limit: number;
@@ -27,6 +27,14 @@ export interface Repository {
 
   upsertConfirmation(confirmation: Confirmation): Promise<void>;
   listConfirmations(filter: { taskId?: string; status?: Confirmation['status'] }): Promise<Confirmation[]>;
+
+  saveAttachment(attachment: Attachment): Promise<void>;
+  getAttachment(id: string): Promise<Attachment | null>;
+  /** Oldest first. With `ids`, only those (in no particular order). */
+  listAttachments(filter: { sessionId?: string; ids?: string[] }): Promise<Attachment[]>;
+  deleteAttachment(id: string): Promise<void>;
+  /** True when a task was created with this attachment (it is then kept as part of the task history). */
+  isAttachmentReferenced(id: string): Promise<boolean>;
 }
 
 export function emptyStats(): TaskStats {

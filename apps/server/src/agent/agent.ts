@@ -13,7 +13,9 @@ import { createLogger } from '../logger.js';
 import type { McpManager } from '../plugins/mcpManager.js';
 import type { PluginStore } from '../plugins/pluginStore.js';
 import type { SkillStore } from '../skills/skillStore.js';
+import type { AttachmentService } from '../tasks/attachmentService.js';
 import type { TaskRunContext, TaskRunner } from '../tasks/taskManager.js';
+import { documentsIntro } from './documentIntro.js';
 import { createMcpTools } from './mcpTools.js';
 import { capabilitiesOf, estimateCostUsd } from './models.js';
 import { buildSystemPrompt } from './systemPrompt.js';
@@ -46,6 +48,7 @@ export interface AgentDeps {
   plugins: PluginStore;
   mcp: McpManager;
   builtinTools: AgentTool[];
+  attachments: AttachmentService;
 }
 
 const MAX_EVENT_INPUT_CHARS = 20_000;
@@ -63,7 +66,7 @@ function friendlyApiError(err: InstanceType<typeof OpenAI.APIError>, model: stri
     return new Error(`Tidak dapat terhubung ke OpenAI API (cek koneksi internet / proxy / OPENAI_BASE_URL): ${err.message}`);
   }
   if (err instanceof OpenAI.AuthenticationError) {
-    return new Error('Autentikasi OpenAI gagal: isi OPENAI_API_KEY yang valid di .env lalu restart SOLAR.');
+    return new Error('Autentikasi OpenAI gagal: isi OPENAI_API_KEY yang valid di .env lalu restart SOLAR AI AGENT.');
   }
   if (err instanceof OpenAI.RateLimitError && err.code === 'insufficient_quota') {
     return new Error(
@@ -130,8 +133,9 @@ export function createAgentRunner(deps: AgentDeps): TaskRunner {
     const intro = [
       `<task_context>\nDate: ${today}\nTask id: ${ctx.task.id}\n</task_context>`,
       ctx.sessionContext
-        ? `<session_history>\nEarlier requests in this conversation (oldest first). Their artifacts can be read with read_artifact.\n${ctx.sessionContext}\n</session_history>`
+        ? `<session_history>\nEarlier requests in this conversation (oldest first). Their artifacts can be read with read_artifact and their documents with read_document.\n${ctx.sessionContext}\n</session_history>`
         : '',
+      await documentsIntro(ctx.attachments, deps.attachments),
       `<request>\n${ctx.task.prompt}\n</request>`,
     ]
       .filter(Boolean)

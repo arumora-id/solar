@@ -1,6 +1,6 @@
-import { appendFile, mkdir, readdir, readFile } from 'node:fs/promises';
+import { appendFile, mkdir, readdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Artifact, Confirmation, Task, TaskEvent, TaskStats } from '@solar/shared';
+import type { Artifact, Attachment, Confirmation, Task, TaskEvent, TaskStats } from '@solar/shared';
 import { KeyedQueue, writeFileAtomic } from '../util/fs.js';
 import { emptyStats, type ListTasksOptions, type Repository } from './repository.js';
 
@@ -14,26 +14,42 @@ interface TaskRecord {
 /**
  * Zero-configuration storage used when DATABASE_URL is not set.
  * Layout: <dataDir>/tasks/<taskId>.json, .events.jsonl, .artifacts.json, .confirmations.json
+ * and <dataDir>/attachments/<attachmentId>.json (metadata; the files themselves live in the object store).
  */
 export class FileRepository implements Repository {
   readonly kind = 'local-file' as const;
   private readonly dir: string;
   private readonly records = new Map<string, TaskRecord>();
   private readonly artifactIndex = new Map<string, Artifact>();
+  private readonly attachments = new Map<string, Attachment>();
+  private readonly attachmentDir: string;
   private readonly queue = new KeyedQueue();
 
   constructor(dataDir: string) {
     this.dir = join(dataDir, 'tasks');
+    this.attachmentDir = join(dataDir, 'attachments');
   }
 
   async init(): Promise<void> {
     await mkdir(this.dir, { recursive: true });
+    await mkdir(this.attachmentDir, { recursive: true });
+    for (const file of await readdir(this.attachmentDir)) {
+      if (!/^att_[A-Za-z0-9]+\.json$/.test(file)) continue;
+      try {
+        const a = JSON.parse(await readFile(join(this.attachmentDir, file), 'utf8')) as Attachment;
+        this.attachments.set(a.id, a);
+      } catch {
+        // skip unreadable metadata instead of refusing to start
+      }
+    }
     const files = await readdir(this.dir);
     for (const file of files) {
       if (!/^[A-Za-z0-9_-]+\.json$/.test(file)) continue;
       const id = file.slice(0, -'.json'.length);
       try {
-        const task = JSON.parse(await readFile(join(this.dir, file), 'utf8')) as Task;
+        const stored = JSON.parse(await readFile(join(this.dir, file), 'utf8')) as Task;
+        // tasks written before attachments existed have no attachmentIds
+        const task: Task = { ...stored, attachmentIds: stored.attachmentIds ?? [] };
         const artifacts = await this.readJson<Artifact[]>(`${id}.artifacts.json`, []);
         const confirmations = await this.readJson<Confirmation[]>(`${id}.confirmations.json`, []);
         this.records.set(id, { task, events: null, artifacts, confirmations });
@@ -143,6 +159,35 @@ export class FileRepository implements Repository {
     if (!record) throw new Error(`Task ${confirmation.taskId} not found`);
     record.confirmations = [...record.confirmations.filter((c) => c.id !== confirmation.id), confirmation];
     await this.persist(`${confirmation.taskId}.confirmations.json`, record.confirmations);
+  }
+
+  async saveAttachment(attachment: Attachment): Promise<void> {
+    this.attachments.set(attachment.id, attachment);
+    await this.queue.run(attachment.id, () => writeFileAtomic(join(this.attachmentDir, `${attachment.id}.json`), JSON.stringify(attachment, null, 2)));
+  }
+
+  async getAttachment(id: string): Promise<Attachment | null> {
+    return this.attachments.get(id) ?? null;
+  }
+
+  async listAttachments(filter: { sessionId?: string; ids?: string[] }): Promise<Attachment[]> {
+    let list = [...this.attachments.values()];
+    if (filter.sessionId) list = list.filter((a) => a.sessionId === filter.sessionId);
+    if (filter.ids) {
+      const ids = new Set(filter.ids);
+      list = list.filter((a) => ids.has(a.id));
+    }
+    return list.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  async deleteAttachment(id: string): Promise<void> {
+    this.attachments.delete(id);
+    await this.queue.run(id, () => rm(join(this.attachmentDir, `${id}.json`), { force: true }));
+  }
+
+  async isAttachmentReferenced(id: string): Promise<boolean> {
+    for (const { task } of this.records.values()) if (task.attachmentIds.includes(id)) return true;
+    return false;
   }
 
   async listConfirmations(filter: { taskId?: string; status?: Confirmation['status'] }): Promise<Confirmation[]> {

@@ -1,4 +1,5 @@
 import type {
+  Attachment,
   Confirmation,
   PluginConfig,
   PluginView,
@@ -72,7 +73,18 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
 export const api = {
   config: () => request<PublicConfig>('GET', '/api/config'),
-  createTask: (prompt: string, sessionId: string) => request<Task>('POST', '/api/tasks', { prompt, sessionId }),
+  createTask: (prompt: string, sessionId: string, attachmentIds: string[] = []) =>
+    request<Task>('POST', '/api/tasks', { prompt, sessionId, attachmentIds }),
+  listAttachments: (sessionId: string, unsentOnly = false) =>
+    request<Attachment[]>('GET', `/api/attachments?sessionId=${encodeURIComponent(sessionId)}${unsentOnly ? '&unsent=1' : ''}`),
+  deleteAttachment: (id: string) => request<null>('DELETE', `/api/attachments/${encodeURIComponent(id)}`),
+  attachmentDownloadUrl: (id: string) => withToken(`/api/attachments/${encodeURIComponent(id)}/content`),
+  attachmentText: async (id: string) => {
+    const token = getToken();
+    const res = await fetch(`/api/attachments/${encodeURIComponent(id)}/text`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    if (!res.ok) throw new ApiError(res.status, await res.text());
+    return res.text();
+  },
   listTasks: (params: { limit?: number; sessionId?: string; status?: TaskStatus } = {}) => {
     const q = new URLSearchParams();
     if (params.limit) q.set('limit', String(params.limit));
@@ -105,3 +117,40 @@ export const api = {
     return res.text();
   },
 };
+
+export interface UploadHandle {
+  promise: Promise<Attachment>;
+  abort(): void;
+}
+
+/**
+ * Uploads a document as the raw request body (XHR, for upload progress). The server extracts its text before
+ * answering, so `onProgress('read')` means "uploaded, now being read".
+ */
+export function uploadAttachment(file: File, sessionId: string, onProgress: (phase: 'upload' | 'read', fraction: number) => void): UploadHandle {
+  const xhr = new XMLHttpRequest();
+  const promise = new Promise<Attachment>((resolve, reject) => {
+    xhr.open('POST', `/api/attachments?sessionId=${encodeURIComponent(sessionId)}&name=${encodeURIComponent(file.name)}`);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    const token = getToken();
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && e.total > 0) onProgress('upload', e.loaded / e.total);
+    };
+    xhr.upload.onload = () => onProgress('read', 1);
+    xhr.onload = () => {
+      let data: unknown = null;
+      try {
+        data = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+      } catch {
+        data = null;
+      }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(data as Attachment);
+      else reject(new ApiError(xhr.status, (data as { error?: string } | null)?.error ?? `${xhr.status} ${xhr.statusText}`));
+    };
+    xhr.onerror = () => reject(new ApiError(0, 'Koneksi ke server terputus saat mengunggah.'));
+    xhr.onabort = () => reject(new DOMException('Upload dibatalkan', 'AbortError'));
+    xhr.send(file);
+  });
+  return { promise, abort: () => xhr.abort() };
+}
