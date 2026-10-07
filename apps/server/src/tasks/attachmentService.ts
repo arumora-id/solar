@@ -1,6 +1,7 @@
 import type { Attachment, Task } from '@solar/shared';
 import { createLogger } from '../logger.js';
-import { detectKind, DocumentError, extractDocument, outlineOf } from '../documents/index.js';
+import { detectKind, DocumentError, outlineOf } from '../documents/index.js';
+import { extractIsolated } from '../documents/isolated.js';
 import { truncate, wellFormed } from '../documents/safe.js';
 import type { ObjectStore } from '../storage/objectStore.js';
 import type { Repository } from '../storage/repository.js';
@@ -48,7 +49,7 @@ export class AttachmentService {
     }
     const { mimeType } = detectKind(name);
     const started = Date.now();
-    const extracted = await extractDocument(body, name);
+    const extracted = await extractIsolated(body, name);
     const id = newId('att');
     const safe = name.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[-.]+/, '') || 'document';
     // the original lives in its own folder, so no file name can collide with the extracted text

@@ -36,7 +36,9 @@
         "to": "server",
         "filter": [
           "server.mjs",
-          "server.mjs.map"
+          "server.mjs.map",
+          "extract-worker.mjs",
+          "extract-worker.mjs.map"
         ]
       },
       {
