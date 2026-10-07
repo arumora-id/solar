@@ -52,7 +52,7 @@ Dokumen proyek (PDF, Word `.docx`, Excel `.xlsx`/`.xlsm`/`.csv`, PowerPoint `.pp
 
 | Method | Path | Body / query | Keterangan |
 |---|---|---|---|
-| POST | `/attachments` | query `sessionId`, `name`; body = isi file mentah (`Content-Type: application/octet-stream`) | Unggah + ekstraksi. `201` → `Attachment` (`kind`, `parts` = halaman/slide/sheet, `chars`, `outline`, `warnings`). `413` terlalu besar (`ATTACHMENT_MAX_MB`, default 25), `415` jenis tidak didukung (termasuk `.doc`/`.xls`/`.ppt` lama), `422` file rusak/terenkripsi. |
+| POST | `/attachments` | query `sessionId`, `name`; body = isi file mentah (`Content-Type: application/octet-stream`) | Unggah + ekstraksi. `201` → `Attachment` (`kind`, `parts` = halaman/slide/sheet, `chars`, `outline`, `warnings`). `413` terlalu besar (`ATTACHMENT_MAX_MB`, default 25) atau terindikasi zip bomb, `415` jenis tidak didukung (termasuk `.doc`/`.xls`/`.ppt` lama - juga bila diberi ekstensi modern, `.xlsb`, `.vsdx`, OpenDocument, file biner berekstensi teks), `400` isi file kosong, `422` file rusak, terenkripsi/berpassword, atau melewati batas waktu baca. Pesan error (`error`) berbahasa Indonesia dan bisa langsung ditampilkan. |
 | GET | `/attachments?sessionId=` | | Lampiran sebuah percakapan (terlama dulu). |
 | GET | `/attachments/:id` | | Metadata. |
 | GET | `/attachments/:id/text` | | Markdown hasil ekstraksi (persis yang dibaca agen). |

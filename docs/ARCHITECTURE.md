@@ -89,24 +89,43 @@ model memperbaiki input lalu memanggil ulang.
 ## 3b. Lampiran dokumen proyek
 
 1. UI mengunggah file (tombol klip, seret-lepas, atau tempel) ke `POST /api/attachments` - isi file mentah, maks.
-   `ATTACHMENT_MAX_MB`. `AttachmentService` memvalidasi nama & ekstensi lalu memanggil `documents/extractDocument`.
-2. Ekstraksi (modul `apps/server/src/documents`) mengubah setiap format menjadi **Markdown** yang menjaga struktur:
-   judul, daftar, tabel Markdown, penanda `<!-- page N -->` (PDF), `## Slide N: judul` + catatan pembicara (PowerPoint),
-   `## Sheet: nama` + tabel dengan nilai yang sudah diformat (Excel); CSV menjadi satu tabel di bawah `# <nama file>`.
-   Teks dideteksi sebagai UTF-8/UTF-16, selain itu Windows-1252 (ekspor ANSI dari Excel). Batas keamanan: ukuran file,
-   ukuran hasil dekompresi ZIP (anti zip bomb), jumlah baris/kolom (CSV/Excel berhenti di 2.000 baris), panjang teks
-   (2 juta karakter) dan batas waktu. File lama (`.doc/.xls/.ppt`), terenkripsi atau rusak ditolak dengan pesan yang jelas.
-3. File asli dan hasil ekstraksi disimpan di object store (`attachments/<id>/…`), metadata (`Attachment`) di repository
+   `ATTACHMENT_MAX_MB`. `AttachmentService` memvalidasi nama & ekstensi lalu memanggil `documents/extractIsolated`.
+2. **Isolasi:** `extractIsolated` menjalankan ekstraksi di *worker thread* (`dist/extract-worker.mjs`, ikut terpasang di
+   aplikasi desktop) dengan batas heap 1 GB, maksimal 2 ekstraksi paralel, dan batas waktu keras (batas waktu parser
+   90 detik + 5 detik) - worker dihentikan bila melewatinya, sehingga file patologis tidak bisa memblokir event loop
+   atau menghabiskan memori server/Electron. Saat dijalankan dari source (`npm run dev`, test) ekstraksi berjalan
+   in-process.
+3. **Ekstraksi** (`apps/server/src/documents`) mengenali file dari **isinya** (`%PDF-`, paket ZIP Office, kontainer OLE2),
+   bukan hanya ekstensi, lalu mengubahnya menjadi **Markdown** yang menjaga struktur:
+   - PDF: `unpdf` (pdf.js serverless) - baris disusun ulang dari geometri teks, penanda `<!-- page N -->`, heading dari
+     ukuran huruf, peringatan untuk halaman tanpa lapisan teks (tanpa OCR).
+   - Word: `mammoth` (docx → HTML) + `turndown` (HTML → Markdown) dengan aturan tabel (colspan/rowspan), daftar,
+     catatan kaki dan gambar; Title + Heading N menjadi heading bertingkat; dokumen sangat besar dipotong di batas blok.
+   - Excel: pembaca streaming sendiri - hanya baris yang ditampilkan yang di-parse (maks. 50 sheet, 1.000 baris ×
+     50 kolom per sheet, jumlah baris sebenarnya dilaporkan), tanggal/persen sesuai format sel, nilai rumus tersimpan,
+     shared strings dibaca sampai indeks tertinggi yang dipakai. Hasilnya `## Sheet: nama` + tabel.
+   - PowerPoint: parser XML kecil sendiri (tanpa ekspansi entitas, kedalaman dibatasi) - slide sesuai urutan
+     `sldIdLst`, `## Slide N: judul`, poin bertingkat, tabel, data grafik, SmartArt, deskripsi gambar,
+     `### Speaker notes`.
+   - CSV menjadi satu tabel di bawah `# <nama file>` (maks. 2.000 baris); Markdown/teks dibaca apa adanya. Teks
+     dideteksi sebagai UTF-8/UTF-16, selain itu Windows-1252 (ekspor ANSI); file biner berekstensi teks ditolak.
+   - Setiap bagian paket Office dibaca lewat `ZipArchive` yang membatasi byte yang **benar-benar** didekompresi (ukuran
+     yang dinyatakan, ukuran aktual, total 256 MB, 10.000 entri, rasio kompresi) sehingga *zip bomb* - termasuk yang
+     header-nya berbohong - ditolak sebelum memakan memori.
+   - Error membawa kode (`EMPTY`, `TOO_LARGE`, `ZIP_BOMB`, `ENCRYPTED`, `CORRUPT`, `LEGACY_FORMAT`, `UNSUPPORTED`,
+     `TIMEOUT`) → HTTP 413/415/422 dengan pesan Bahasa Indonesia, mis. dokumen terenkripsi atau `.doc` lama yang diberi
+     ekstensi `.docx`. Hasil dibatasi 2 juta karakter; setiap pemotongan disebutkan sebagai peringatan.
+4. File asli dan hasil ekstraksi disimpan di object store (`attachments/<id>/…`), metadata (`Attachment`) di repository
    (`solar_attachments` / `data/attachments/*.json`). UI menampilkan chip + pratinjau teks hasil ekstraksi.
-4. `POST /api/tasks` membawa `attachmentIds` (harus satu percakapan; validasi + pembuatan task berjalan di bawah kunci
+5. `POST /api/tasks` membawa `attachmentIds` (harus satu percakapan; validasi + pembuatan task berjalan di bawah kunci
    per percakapan sehingga lampiran tidak bisa terhapus di tengahnya). Pesan pertama ke model berisi blok
    `<attached_documents>`: teks lengkap bila total ≤ 60.000 karakter, selain itu daftar + outline dan strategi baca.
-5. Tool agent: `list_documents`, `read_document` (potongan berdasarkan offset, lanjut dengan `next_offset`; anggaran
+6. Tool agent: `list_documents`, `read_document` (potongan berdasarkan offset, lanjut dengan `next_offset`; anggaran
    ±400.000 karakter per task karena setiap bacaan tetap ada di input model), `search_documents` (frasa, lalu semua
    kata; semua dokumen dicari secara bergiliran; mengembalikan lokasi halaman/slide/sheet terdekat). Agen hanya melihat
    dokumen yang benar-benar dikirim bersama permintaan (task ini atau task sebelumnya di percakapan yang sama).
-6. Dokumen yang diunggah tetapi belum dikirim muncul lagi sebagai chip setelah reload, dan dihapus otomatis setelah 24 jam.
-7. Prompt-injection: isi dokumen dibingkai sebagai data dari pengguna; tag pembingkai SOLAR di dalam teks dokumen
+7. Dokumen yang diunggah tetapi belum dikirim muncul lagi sebagai chip setelah reload, dan dihapus otomatis setelah 24 jam.
+8. Prompt-injection: isi dokumen dibingkai sebagai data dari pengguna; tag pembingkai SOLAR di dalam teks dokumen
    dinetralkan; system prompt dan deskripsi tool melarang mengikuti instruksi di dalam dokumen. Aksi eksternal tetap tunduk
    pada aturan konfirmasi plugin.
 

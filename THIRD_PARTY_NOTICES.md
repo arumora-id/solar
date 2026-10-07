@@ -30,6 +30,53 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## Document reading libraries
+
+The attachment reader (`apps/server/src/documents`) is bundled into `apps/server/dist/extract-worker.mjs` (and the server
+bundles), which ship with the desktop app. It includes:
+
+| Package | Licence | Copyright |
+|---|---|---|
+| pdf.js (via unpdf) | Apache-2.0 | Copyright Mozilla Foundation and contributors |
+| unpdf | MIT | Copyright (c) 2023-present Johann Schopplich |
+| mammoth, lop, option | BSD-2-Clause | Copyright (c) 2013, Michael Williamson |
+| dingbat-to-unicode | BSD-2-Clause | Copyright (c) 2021, Michael Williamson |
+| @mixmark-io/domino (used by turndown) | BSD-2-Clause | Copyright (c) 2011 The Mozilla Foundation |
+| turndown | MIT | Copyright (c) 2017 Dom Christie |
+| fflate | MIT | Copyright (c) 2026 Arjun Barrett |
+| @xmldom/xmldom, xmlbuilder, jszip (used under MIT), pako (MIT and Zlib), underscore, readable-stream and their small helpers | MIT / ISC / Zlib | their respective authors |
+
+pdf.js is licensed under the Apache License, Version 2.0 (<https://www.apache.org/licenses/LICENSE-2.0>); it is
+distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+
+The BSD-2-Clause packages above are distributed under these terms:
+
+```
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+The test documents in `apps/server/test/fixtures/documents` were generated for SOLAR; the PDFs embed subsets of the
+DejaVu Sans fonts (Bitstream Vera / DejaVu licence, free to redistribute).
+
 ## Trademarks
 
 ArchiMate® and The Open Group® are registered trademarks of The Open Group. Visual Paradigm, GitHub, Plane, Neon,

@@ -152,7 +152,11 @@ export function AttachmentPreview({ attachment, onClose }: { attachment: Attachm
   const html = useMemo(() => {
     if (text === null || raw) return '';
     // page markers would otherwise appear as escaped comments: show them as separators
-    return renderDocumentMarkdown(shown.replace(/^<!--\s*page\s+(\d+)\s*-->$/gim, '\n---\n\n*Halaman $1*\n'));
+    return renderDocumentMarkdown(
+      shown
+        .replace(/^<!--\s*page\s+(\d+)\s*-->$/gim, '\n---\n\n*Halaman $1*\n')
+        .replace(/^<!--\s*truncated:\s*pages\s+(\d+)-(\d+)\s+not included\s*-->$/gim, '\n---\n\n*Halaman $1-$2 tidak dibaca (batas panjang dokumen)*\n'),
+    );
   }, [text, raw, shown]);
 
   return (
