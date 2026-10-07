@@ -2,12 +2,12 @@ import { detectKind, extensionOf } from './kind.js';
 import { LIMITS, makeDeadline, withTimeout } from './limits.js';
 import { isOle, oleError } from './ole.js';
 import { truncate, wellFormed } from './safe.js';
-import { csvToMarkdown, decodeText, normalizeNewlines } from './text.js';
+import { csvToMarkdown, decodeText, normalizeNewlines, parseCsvLimited } from './text.js';
 import { DocumentError, documentError, type ExtractedDocument, type ExtractOptions, type ParseContext, type ParsedDocument } from './types.js';
 import { classifyOoxml, ZipArchive } from './zip.js';
 
 export { detectKind, extensionOf } from './kind.js';
-export { DocumentError, type ExtractedDocument, type ExtractOptions } from './types.js';
+export { DocumentError, type ExtractedDocument, type ExtractOptions, type SheetTable } from './types.js';
 
 export const DEFAULT_MAX_CHARS = 2_000_000;
 export const DEFAULT_TIMEOUT_MS = 90_000;
@@ -78,7 +78,9 @@ async function dispatch(ctx: ParseContext): Promise<ParsedDocument> {
     case 'csv': {
       const { markdown, warnings: csvWarnings } = csvToMarkdown(decodeText(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)), titleOf(ctx.fileName));
       warnings.push(...csvWarnings);
-      return { kind, markdown, parts: null };
+      if (!ctx.collectTables) return { kind, markdown, parts: null };
+      const parsed = parseCsvLimited(decodeText(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)), ctx.limits.maxRowsPerSheet);
+      return { kind, markdown, parts: null, tables: [{ name: titleOf(ctx.fileName), rows: parsed.rows, truncated: parsed.truncated }] };
     }
   }
 }
@@ -97,10 +99,12 @@ export async function extractDocument(buffer: Buffer, fileName: string, options:
     bytes: buffer,
     ext: extensionOf(fileName).slice(1),
     fileName,
-    limits: LIMITS,
+    // table import (knowledge base): more rows per sheet; the markdown is still capped by maxChars
+    limits: options.tableRows ? { ...LIMITS, maxRowsPerSheet: options.tableRows } : LIMITS,
     deadline: makeDeadline(timeoutMs),
     maxChars,
     warnings: [],
+    collectTables: Boolean(options.tableRows),
   };
   let result: ParsedDocument;
   try {
@@ -124,7 +128,7 @@ export async function extractDocument(buffer: Buffer, fileName: string, options:
         : 'Dokumen tidak berisi teks.',
     );
   }
-  return { kind: result.kind, markdown, parts: result.parts, warnings: [...new Set(warnings)] };
+  return { kind: result.kind, markdown, parts: result.parts, warnings: [...new Set(warnings)], ...(result.tables ? { tables: result.tables } : {}) };
 }
 
 /** First headings of a Markdown text, for orientation (UI chips, agent document list). */

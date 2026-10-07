@@ -50,6 +50,10 @@
         "to": "skills"
       },
       {
+        "from": "../../knowledge",
+        "to": "knowledge"
+      },
+      {
         "from": "../../config",
         "to": "config"
       }

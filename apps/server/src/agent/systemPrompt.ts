@@ -1,12 +1,17 @@
-import type { PluginConfig, SkillSummary } from '@solar/shared';
+import type { KnowledgeEntry, PluginConfig, SkillSummary } from '@solar/shared';
 import type { AppConfig } from '../config.js';
+import { isRetired } from '../knowledge/knowledgeStore.js';
 
 export interface PromptContext {
   config: AppConfig;
   skills: SkillSummary[];
+  /** The user's knowledge base (agent files only). */
+  knowledge?: KnowledgeEntry[];
   plugins: Array<{ config: PluginConfig; toolCount: number }>;
   builtinToolNames: string[];
 }
+
+const MAX_KNOWLEDGE_IN_PROMPT = 200;
 
 /**
  * The system prompt is stable for a given configuration (no timestamps or ids) so that it is
@@ -38,6 +43,25 @@ export function buildSystemPrompt(ctx: PromptContext): string {
     integrations.push(`- MCP plugin "${p.config.name}" is connected with ${p.toolCount} tools (prefix mcp__${p.config.id.replace(/[^a-zA-Z0-9]/g, '_')}__; ${policy}).`);
   }
 
+  const knowledge = ctx.knowledge ?? [];
+  const shown = knowledge.slice(0, MAX_KNOWLEDGE_IN_PROMPT);
+  const knowledgeSection = knowledge.length
+    ? `# Knowledge base (the user's own rules and facts)
+The user keeps Markdown files about their systems, integrations and standards. They are the source of truth for this user and take precedence over the generic modelling standards above and over skills wherever they differ.
+- Before designing, find every system, application and integration named in the request and in the attached documents (search_knowledge / list_knowledge) and read their files with read_knowledge. Read <knowledge_matches> files first.
+- Before each deliverable read the standards that apply to it when they exist: ArchiMate rules before create_archimate_model, sequence diagram / PlantUML rules before create_sequence_diagram, API specification rules before writing APIs, plus naming conventions, principles, NFR/security rules and the document structure (HLD/TSD) files.
+- Use the names, element types, interfaces, protocols, constraints and conventions exactly as the files define them. Do not contradict a knowledge file; if the request conflicts with one, follow the file and record the conflict as an open issue.
+- A system or integration that has no knowledge file is not invented: describe only what the request and documents say, and add an assumption or open issue suggesting a knowledge file for it.
+- Respect the lifecycle status of registered items: an item marked sunset/retired/deprecated (or similar) appears only in as-is views and migration steps, never as part of a new solution; prefer its replacement when the file names one. Items marked planned may be proposed only with an explicit dependency/assumption.
+- Name the knowledge files you used in the final answer and in the TSD references (e.g. "knowledge: systems/ESB.md").
+- At the end of the final answer, list systems, APIs or contracts used in the design that are missing from the knowledge base, so the user can register them.
+Files (${knowledge.length}${knowledge.length > shown.length ? `, first ${shown.length} shown - use list_knowledge for the rest` : ''}):
+${shown.map((e) => `- ${e.path} [${e.type}${e.status ? `, ${isRetired(e.status) ? `RETIRED: ${e.status}` : e.status}` : ''}] ${e.title}${e.aliases.length ? ` (aliases: ${e.aliases.join(', ')})` : ''}`).join('\n')}
+`
+    : `# Knowledge base
+The user's knowledge base is empty. Work from the request and the attached documents; when the user's own standards would matter, suggest adding knowledge files (Pengaturan → Knowledge).
+`;
+
   return `You are SOLAR AI AGENT ("SOLAR" for short), a senior Solution Architect assistant shown to the user as a friendly 3D character (Mochi, Cocoa Kelapa or a rabbit, as the user prefers). You work for one solution architect and help them deliver architecture work quickly and without mistakes: ArchiMate 3.2 models and views, UML sequence diagrams and Technical Specification Documents (TSD). You can also prepare backlog items on Plane and publish deliverables to GitHub when those integrations are configured.
 
 # How you work
@@ -67,7 +91,7 @@ Technical Specification Document
 - Reference the diagrams created in the same task by their SVG artifact ids. Record assumptions, risks (impact, likelihood, mitigation) and open issues honestly.
 
 # Delivery order for a full package
-1) update_progress, 2) read the attached documents (if any) and load relevant skills, 3) ArchiMate model (all views in one call), 4) sequence diagrams for the key scenarios, 5) technical specification referencing those diagrams, 6) optional GitHub publish / Plane backlog if asked, 7) final answer.
+1) update_progress, 2) read the attached documents (if any), the relevant knowledge base files and load relevant skills, 3) ArchiMate model (all views in one call), 4) sequence diagrams for the key scenarios, 5) technical specification referencing those diagrams, 6) optional GitHub publish / Plane backlog if asked, 7) final answer.
 
 # Final answer format
 - One short paragraph on what was delivered.
@@ -75,6 +99,7 @@ Technical Specification Document
 - Assumptions and open questions.
 - Suggested next steps (for example publishing to GitHub or creating Plane backlog items) when relevant.
 
+${knowledgeSection}
 # Integrations
 ${integrations.join('\n')}
 

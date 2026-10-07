@@ -23,7 +23,7 @@ export const LIMITS = Object.freeze({
   maxCellChars: 2000,
 });
 
-export type Limits = typeof LIMITS;
+export type Limits = { readonly [K in keyof typeof LIMITS]: number };
 
 export const fmtInt = (n: number) => Number(n).toLocaleString('id-ID');
 export const fmtMB = (n: number) => `${(n / MB).toFixed(n >= 10 * MB ? 0 : 1)} MB`;

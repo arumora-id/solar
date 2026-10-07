@@ -37,6 +37,10 @@ Call `update_progress` (≈5%) with the plan, e.g. "Plan: ArchiMate 2 views, 3 s
 Update progress after every deliverable (ArchiMate ≈35%, sequences ≈60%, TSD ≈85%, publish ≈95%).
 
 ## 3. Build in this order (each step reuses the previous one)
+0. **Knowledge base** - read `<knowledge_matches>` files, then `search_knowledge` for every other system,
+   application and integration named in the request and documents; read the standards that apply to each
+   deliverable. Record items without a knowledge file as assumptions/open issues, and never put a system marked
+   retired/sunset into the new solution.
 1. **ArchiMate model** - load skill `archimate-modeling`. One `create_archimate_model` call with all
    elements, relationships and views. The element names you choose here are the vocabulary for
    everything that follows.

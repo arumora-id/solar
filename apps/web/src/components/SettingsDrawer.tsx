@@ -2,15 +2,19 @@ import gsap from 'gsap';
 import { useEffect, useRef, useState } from 'react';
 import { CharacterCards } from './CharacterPicker';
 import { XIcon } from './Icons';
+import { KnowledgePanel } from './settings/KnowledgePanel';
+import { ModelsPanel } from './settings/ModelsPanel';
 import { PluginsPanel } from './settings/PluginsPanel';
 import { SkillsPanel } from './settings/SkillsPanel';
 import { SystemPanel } from './settings/SystemPanel';
 import { VoicePanel } from './settings/VoicePanel';
 
-type Tab = 'character' | 'skills' | 'plugins' | 'voice' | 'system';
+type Tab = 'character' | 'models' | 'knowledge' | 'skills' | 'plugins' | 'voice' | 'system';
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'character', label: 'Karakter' },
+  { id: 'models', label: 'Model AI' },
+  { id: 'knowledge', label: 'Knowledge' },
   { id: 'skills', label: 'Skills' },
   { id: 'plugins', label: 'Plugin MCP' },
   { id: 'voice', label: 'Suara' },
@@ -61,6 +65,8 @@ export function SettingsDrawer({ open, onClose }: { open: boolean; onClose: () =
               <CharacterCards />
             </div>
           )}
+          {tab === 'models' && <ModelsPanel />}
+          {tab === 'knowledge' && <KnowledgePanel />}
           {tab === 'skills' && <SkillsPanel />}
           {tab === 'plugins' && <PluginsPanel />}
           {tab === 'voice' && <VoicePanel />}

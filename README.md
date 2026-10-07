@@ -35,15 +35,17 @@ konfirmasi wajib), dan setiap pekerjaan bisa dipantau di **web monitoring task**
 7. [Cara pakai](#cara-pakai)
 8. [Lampiran dokumen proyek](#lampiran-dokumen-proyek)
 9. [Deliverable yang dihasilkan](#deliverable-yang-dihasilkan)
-10. [Skills](#skills)
-11. [Plugin MCP: GitHub, Plane, Visual Paradigm](#plugin-mcp-github-plane-visual-paradigm)
-12. [Web monitoring task](#web-monitoring-task)
-13. [Bagaimana SOLAR mencegah kesalahan](#bagaimana-solar-mencegah-kesalahan)
-14. [Keamanan](#keamanan)
-15. [Struktur repository](#struktur-repository)
-16. [Pengembangan & pengujian](#pengembangan--pengujian)
-17. [Troubleshooting](#troubleshooting)
-18. [Lisensi pihak ketiga](#lisensi-pihak-ketiga)
+10. [Model AI: multi-provider & cadangan](#model-ai-multi-provider--cadangan)
+11. [Knowledge base](#knowledge-base)
+12. [Skills](#skills)
+13. [Plugin MCP: GitHub, Plane, Visual Paradigm](#plugin-mcp-github-plane-visual-paradigm)
+14. [Web monitoring task](#web-monitoring-task)
+15. [Bagaimana SOLAR mencegah kesalahan](#bagaimana-solar-mencegah-kesalahan)
+16. [Keamanan](#keamanan)
+17. [Struktur repository](#struktur-repository)
+18. [Pengembangan & pengujian](#pengembangan--pengujian)
+19. [Troubleshooting](#troubleshooting)
+20. [Lisensi pihak ketiga](#lisensi-pihak-ketiga)
 
 ---
 
@@ -55,7 +57,8 @@ konfirmasi wajib), dan setiap pekerjaan bisa dipantau di **web monitoring task**
 | Dokumen proyek | **Lampirkan** PDF, Word (.docx), Excel (.xlsx/.xlsm/.csv), PowerPoint (.pptx), Markdown atau teks (klip kertas, seret & lepas, atau tempel). SOLAR membaca isinya (judul, tabel, sheet, slide, catatan pembicara) sebelum merancang, lalu menyebut sumbernya. |
 | Input | Ketik (Enter kirim) atau **suara**: Web Speech API di Chrome/Edge, atau **Whisper lokal** (transformers.js, offline setelah model diunduh) - otomatis dipakai di aplikasi desktop. Berhenti otomatis saat hening. |
 | Output suara | Karakter membacakan ringkasan hasil (text-to-speech suara sistem, Bahasa Indonesia/English). |
-| Agent | **OpenAI** (API key ChatGPT) lewat Responses API - default **GPT-6.1 Sol** (`gpt-6.1-sol`) dengan reasoning, streaming, tool call paralel, mode stateless (`store: false`); satu task = satu proses end-to-end ("sekali proses"). Model bisa diganti lewat `SOLAR_MODEL`. |
+| Agent | **Multi-provider**: OpenAI Responses API (default **GPT-6.1 Sol**, `gpt-6.1-sol`) atau API **Chat Completions** yang kompatibel OpenAI - OmniRoute, OpenRouter, LiteLLM, Claude, Gemini, Ollama/vLLM lokal. **Rute model** utama → cadangan dengan fallback otomatis bila provider gagal; diatur di *Pengaturan → Model AI* tanpa restart. Streaming, tool call paralel; satu task = satu proses end-to-end ("sekali proses"). |
+| Knowledge base | Aturan & fakta Anda sebagai file Markdown (sistem, integrasi, standar ArchiMate/PlantUML/API, prinsip, status lifecycle). Agent membacanya sebelum mendesain dan mengutamakannya di atas aturan bawaan. Impor registry **Excel/CSV** (satu file per baris) dan dokumen **Word/PDF/PowerPoint** (dipecah per bab). |
 | Deliverable | ArchiMate (Exchange XML + SVG + JSON), sequence diagram (SVG + Mermaid + PlantUML + JSON), TSD (Markdown + HTML + JSON), unduh semua sebagai ZIP. |
 | Skills | 6 skill bawaan (delivery package, ArchiMate, sequence, TSD, backlog Plane, publish GitHub); tambah/impor/edit/nonaktifkan dari UI. |
 | Plugin MCP | GitHub (remote MCP resmi), Plane `plane.mesthi.com` (MCP resmi Plane), Visual Paradigm (selalu konfirmasi), plugin custom (HTTP/SSE/stdio). |
@@ -284,6 +287,48 @@ Contoh output generator:
 |---|---|
 | ![ArchiMate](docs/images/sample-archimate-layered.png) | ![Sequence](docs/images/sample-sequence.png) |
 
+## Model AI: multi-provider & cadangan
+
+SOLAR tidak terikat ke satu LLM. Buka **Pengaturan → Model AI**:
+
+- **Provider**: tambah sebanyak yang Anda punya akses. Jenis API:
+  - *Chat Completions (OpenAI-compatible)* - OmniRoute, OpenRouter, LiteLLM, OpenAI, Anthropic Claude
+    (`https://api.anthropic.com/v1`), Google Gemini (`https://generativelanguage.googleapis.com/v1beta/openai`),
+    Ollama (`http://localhost:11434/v1`), vLLM, LM Studio. Tombol preset mengisi base URL.
+  - *OpenAI Responses API* - OpenAI atau gateway yang mendukung Responses API (reasoning terenkripsi dibawa antar giliran).
+- **API key** boleh ditulis langsung (disimpan di `data/llm.json`, ditampilkan tersamar) atau sebagai referensi
+  `${NAMA_VARIABEL}` ke `.env`. Model lokal tanpa key cukup diisi base URL.
+- **Model** per provider (opsional) dengan opsi `max=` (batas output), `reasoning`, `effort=`, `price=input/cached/output`
+  untuk estimasi biaya (isi `0/0/0` untuk model lokal). **Tes koneksi** menampilkan daftar model dari endpoint `/models`.
+- **Rute default**: daftar `provider/model` berurutan - yang pertama model utama, sisanya cadangan. Bila model utama gagal
+  (koneksi, kuota, rate limit, key salah, model tidak ada, respons terputus), task otomatis berlanjut di model berikutnya
+  dan monitor mencatat peralihannya. Perubahan berlaku untuk task berikutnya tanpa restart.
+
+Tanpa pengaturan apa pun, SOLAR memakai provider `openai` dari `.env` (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `SOLAR_MODEL`)
+persis seperti sebelumnya.
+
+## Knowledge base
+
+Knowledge base menyimpan **aturan dan fakta milik Anda** sebagai file Markdown, misalnya `systems/AD1GATE.md`,
+`systems/ESB.md`, `integrations/API.md`, `integrations/OGG.md`, `standards/ARCHIMATE.md`,
+`standards/api-specification.md`. Kelola di **Pengaturan → Knowledge**; file disimpan di `data/knowledge/`
+(atau `KNOWLEDGE_DIR`). Panduan struktur dan template ada di [`knowledge/`](knowledge/README.md).
+
+Cara agent memakainya:
+- Daftar file (path, jenis, judul, alias, status) ada di system prompt; file sistem/integrasi yang namanya atau aliasnya
+  muncul di permintaan atau nama dokumen disodorkan otomatis (`<knowledge_matches>`).
+- Tool `list_knowledge`, `search_knowledge`, `read_knowledge` - agent hanya membaca file yang relevan.
+- Isi knowledge mengalahkan aturan bawaan dan skill. Sistem tanpa file tidak dikarang: dicatat sebagai asumsi/open issue,
+  dan di akhir jawaban agent menyebut sistem/API yang belum terdaftar.
+- Item berstatus `sunset`/`retired`/`deprecated` hanya muncul di kondisi as-is dan migrasi, tidak dipakai untuk solusi baru.
+
+Impor:
+- **File .md / folder** - struktur folder dipertahankan.
+- **Excel/CSV registry** (daftar sistem, API, kontrak) - pilih sheet, kolom ID, nama, status dan alias; setiap baris menjadi
+  satu file plus `INDEX.md`. Impor ulang memperbarui baris yang berubah dan (opsional) menghapus file baris yang sudah tidak ada.
+- **Dokumen Word/PDF/PowerPoint/Markdown** - disimpan utuh atau dipecah per bab (heading), agar agent cukup membaca bab yang relevan.
+  PDF hasil scan (gambar) dan isi diagram tidak terbaca.
+
 ## Skills
 
 Skill = instruksi "house style" yang dimuat agent saat relevan. Format sama dengan Agent Skills: folder berisi
@@ -393,13 +438,15 @@ Buka `/monitor` (mis. <http://localhost:8790/monitor>):
 ```text
 solar/
 ├─ apps/
-│  ├─ server/        Node.js + Express: agent loop OpenAI, task manager, generator & validator,
-│  │                 pembaca dokumen lampiran (src/documents), skills, plugin MCP, storage Neon/S3/lokal,
+│  ├─ server/        Node.js + Express: agent loop, lapisan LLM multi-provider (src/llm), knowledge base
+│  │                 (src/knowledge), task manager, generator & validator, pembaca dokumen (src/documents),
+│  │                 skills, plugin MCP, storage Neon/S3/lokal,
 │  │                 REST + SSE  (test: vitest)
 │  ├─ web/           React + Vite + TypeScript + GSAP + three.js: karakter 3D, chat, suara, monitor, pengaturan
 │  └─ desktop/       Electron: menjalankan server + UI sebagai aplikasi Windows (installer NSIS)
 ├─ packages/shared/  Tipe TypeScript bersama (Task, Event, Artifact, Plugin, Skill, ...)
 ├─ skills/           Skill bawaan (SKILL.md)
+├─ knowledge/        Panduan & template knowledge base (README, _templates/)
 ├─ config/           plugins.default.json (preset GitHub, Plane, Visual Paradigm)
 ├─ docs/             ARCHITECTURE.md, API.md, gambar
 ├─ scripts/          generate-archimate-relationships.mjs (regenerasi tabel relasi dari Archi)

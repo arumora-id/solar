@@ -2,13 +2,19 @@ import { timingSafeEqual } from 'node:crypto';
 import express, { type NextFunction, type Request, type Response, type Router } from 'express';
 import { zipSync, strToU8 } from 'fflate';
 import { z } from 'zod';
-import { ATTACHMENT_EXTENSIONS, type PluginView, type PublicConfig, type TaskStatus } from '@solar/shared';
+import { ATTACHMENT_EXTENSIONS, type KnowledgeType, type PluginView, type PublicConfig, type TaskStatus } from '@solar/shared';
 import { APP_NAME, APP_VERSION, type AppConfig } from '../config.js';
+import { KNOWLEDGE_TYPES, MAX_KNOWLEDGE_FILE_BYTES, type KnowledgeStore } from '../knowledge/knowledgeStore.js';
+import { LlmProviderBaseSchema, RoutesSchema, type LlmProviderStore } from '../llm/providerStore.js';
+import type { ModelRouter } from '../llm/router.js';
 import type { McpManager } from '../plugins/mcpManager.js';
 import { maskPlugin, PluginConfigBaseSchema, type PluginStore } from '../plugins/pluginStore.js';
 import type { SkillStore } from '../skills/skillStore.js';
 import type { Repository } from '../storage/repository.js';
 import { DocumentError } from '../documents/index.js';
+import { extractIsolated } from '../documents/isolated.js';
+import { importDocument } from '../knowledge/documentImport.js';
+import { importTable, MAX_IMPORT_ROWS, previewTables } from '../knowledge/tableImport.js';
 import type { ArtifactService } from '../tasks/artifactService.js';
 import type { AttachmentService } from '../tasks/attachmentService.js';
 import type { EventBus } from '../tasks/eventBus.js';
@@ -25,6 +31,9 @@ export interface ApiDeps {
   skills: SkillStore;
   plugins: PluginStore;
   mcp: McpManager;
+  knowledge: KnowledgeStore;
+  llm: LlmProviderStore;
+  models: ModelRouter;
 }
 
 export class HttpError extends Error {
@@ -113,9 +122,11 @@ function contentDisposition(kind: 'inline' | 'attachment', name: string): string
 }
 
 export function createApiRouter(deps: ApiDeps): Router {
-  const { config, tasks, artifacts, attachments, skills, plugins, mcp, bus } = deps;
+  const { config, tasks, artifacts, attachments, skills, plugins, mcp, bus, knowledge, llm, models } = deps;
   const r = express.Router();
-  r.use(express.json({ limit: '4mb' }));
+  const jsonBody = express.json({ limit: '4mb' });
+  // the knowledge import parses its own (larger) body
+  r.use((req, res, next) => (req.path === '/knowledge/import' ? next() : jsonBody(req, res, next)));
 
   r.get('/health', (_req, res) => {
     res.json({ ok: true, name: APP_NAME, version: APP_VERSION });
@@ -124,14 +135,20 @@ export function createApiRouter(deps: ApiDeps): Router {
   r.use(localOnlyMiddleware(config.accessToken, config.host));
   r.use(authMiddleware(config.accessToken));
 
-  r.get('/config', (_req, res) => {
+  r.get('/config', async (_req, res) => {
+    const route = llm.route();
+    const primary = route[0] ?? '';
+    const ready = models.primaryReady();
     const body: PublicConfig = {
       appName: APP_NAME,
       version: APP_VERSION,
-      provider: 'OpenAI',
-      model: config.openai.model,
+      provider: llm.get(primary.slice(0, primary.indexOf('/')))?.config.name ?? 'OpenAI',
+      model: primary.slice(primary.indexOf('/') + 1) || config.openai.model,
       effort: config.openai.effort,
-      openaiConfigured: config.openai.configured,
+      llmConfigured: ready,
+      openaiConfigured: ready,
+      modelRoute: route,
+      knowledgeFiles: (await knowledge.list()).length,
       authRequired: Boolean(config.accessToken),
       storage: { database: deps.repo.kind, objects: deps.objectsKind },
       github: { configured: Boolean(config.github.token), defaultRepo: config.github.defaultRepo ?? null, defaultBranch: config.github.defaultBranch },
@@ -436,6 +453,201 @@ export function createApiRouter(deps: ApiDeps): Router {
     await mcp.disconnect(req.params.id);
     await plugins.remove(req.params.id);
     res.json({ ok: true });
+  });
+
+  // ---- LLM providers & model routes ------------------------------------------
+  r.get('/llm', (_req, res) => {
+    res.json(llm.view());
+  });
+
+  r.post('/llm/providers', async (req, res) => {
+    try {
+      await llm.create(req.body);
+    } catch (err) {
+      throw new HttpError(400, err instanceof Error ? err.message : String(err));
+    }
+    res.status(201).json(llm.view());
+  });
+
+  r.put('/llm/providers/:id', async (req, res) => {
+    const patch = onlySent(parse(LlmProviderBaseSchema.omit({ id: true }).partial(), req.body), req.body);
+    try {
+      await llm.update(req.params.id, patch);
+    } catch (err) {
+      throw new HttpError(400, err instanceof Error ? err.message : String(err));
+    }
+    res.json(llm.view());
+  });
+
+  r.delete('/llm/providers/:id', async (req, res) => {
+    try {
+      await llm.remove(req.params.id);
+    } catch (err) {
+      throw new HttpError(404, err instanceof Error ? err.message : String(err));
+    }
+    res.json(llm.view());
+  });
+
+  r.post('/llm/providers/:id/test', async (req, res) => {
+    res.json(await models.test(req.params.id));
+  });
+
+  r.put('/llm/routes', async (req, res) => {
+    const body = parse(z.object({ routes: RoutesSchema }), req.body);
+    try {
+      await llm.setRoutes(body.routes);
+    } catch (err) {
+      throw new HttpError(400, err instanceof Error ? err.message : String(err));
+    }
+    res.json(llm.view());
+  });
+
+  // ---- knowledge base ---------------------------------------------------------
+  const knowledgePath = z.string().trim().min(1).max(400);
+  const knowledgeError = (err: unknown, status = 400) => new HttpError(status, err instanceof Error ? err.message : String(err));
+
+  r.get('/knowledge', async (_req, res) => {
+    res.json(await knowledge.listAll());
+  });
+
+  r.get('/knowledge/search', async (req, res) => {
+    const q = parse(
+      z.object({ q: z.string().trim().min(1).max(300), type: z.enum(KNOWLEDGE_TYPES as [string, ...string[]]).optional() }),
+      req.query,
+    );
+    res.json(await knowledge.search(q.q, { type: q.type as KnowledgeType | undefined, limit: 20 }));
+  });
+
+  r.get('/knowledge/file', async (req, res) => {
+    const q = parse(z.object({ path: knowledgePath }), req.query);
+    let file;
+    try {
+      file = await knowledge.read(q.path);
+    } catch (err) {
+      throw knowledgeError(err);
+    }
+    if (!file) throw new HttpError(404, 'Knowledge file not found');
+    res.json(file);
+  });
+
+  r.put('/knowledge/file', async (req, res) => {
+    const body = parse(z.object({ path: knowledgePath, content: z.string().max(MAX_KNOWLEDGE_FILE_BYTES) }), req.body);
+    try {
+      res.json(await knowledge.write(body.path, body.content));
+    } catch (err) {
+      throw knowledgeError(err);
+    }
+  });
+
+  r.delete('/knowledge/file', async (req, res) => {
+    const q = parse(z.object({ path: knowledgePath }), req.query);
+    try {
+      res.json({ result: await knowledge.remove(q.path) });
+    } catch (err) {
+      throw knowledgeError(err, 404);
+    }
+  });
+
+  /** Bulk import (e.g. a whole folder of .md files picked in the browser). */
+  r.post('/knowledge/import', express.json({ limit: '50mb' }), async (req, res) => {
+    const body = parse(
+      z.object({ files: z.array(z.object({ path: knowledgePath, content: z.string().max(MAX_KNOWLEDGE_FILE_BYTES) })).min(1).max(500) }),
+      req.body,
+    );
+    const imported = [];
+    const failed: Array<{ path: string; error: string }> = [];
+    for (const f of body.files) {
+      try {
+        imported.push(await knowledge.write(f.path, f.content));
+      } catch (err) {
+        failed.push({ path: f.path, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+    res.status(imported.length ? 201 : 400).json({ imported, failed });
+  });
+
+  /** Spreadsheet (xlsx/csv) catalogs of systems, APIs or integrations: one Markdown file per row. */
+  const readTables = async (req: Request) => {
+    const q = parse(z.object({ name: z.string().trim().min(1).max(300).regex(/\.(xlsx|xlsm|csv)$/i, 'pilih file .xlsx, .xlsm atau .csv') }), req.query);
+    if (!Buffer.isBuffer(req.body) || req.body.length === 0) throw new HttpError(400, 'Isi file kosong');
+    try {
+      const doc = await extractIsolated(req.body, q.name, { tableRows: MAX_IMPORT_ROWS + 10, maxChars: 40_000_000 });
+      return { name: q.name, tables: doc.tables ?? [] };
+    } catch (err) {
+      if (err instanceof DocumentError) throw new HttpError(err.status, err.message);
+      throw err;
+    }
+  };
+
+  r.post('/knowledge/tables', uploadBody, async (req, res) => {
+    const { tables } = await readTables(req);
+    res.json(previewTables(tables));
+  });
+
+  r.post('/knowledge/import-table', uploadBody, async (req, res) => {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(String(req.query.options ?? ''));
+    } catch {
+      throw new HttpError(400, 'options: expected JSON');
+    }
+    const opts = parse(
+      z.object({
+        sheet: z.string().min(1).max(200),
+        headerRow: z.number().int().min(1).max(100).default(1),
+        idColumn: z.string().trim().min(1).max(200),
+        titleColumn: z.string().trim().max(200).optional(),
+        aliasColumns: z.array(z.string().trim().min(1).max(200)).max(10).default([]),
+        statusColumn: z.string().trim().max(200).optional(),
+        folder: z.string().trim().min(1).max(200),
+        type: z.enum(KNOWLEDGE_TYPES as [string, ...string[]]).optional(),
+        removeStale: z.boolean().default(true),
+      }),
+      raw,
+    );
+    const { name, tables } = await readTables(req);
+    const table = tables.find((t) => t.name === opts.sheet);
+    if (!table) throw new HttpError(400, `Sheet "${opts.sheet}" tidak ada di file`);
+    try {
+      res.status(201).json(await importTable(knowledge, table, name, { ...opts, titleColumn: opts.titleColumn || undefined, statusColumn: opts.statusColumn || undefined, type: opts.type as KnowledgeType | undefined }));
+    } catch (err) {
+      throw knowledgeError(err);
+    }
+  });
+
+  /** Word, PDF, PowerPoint, Markdown or text kept as knowledge (whole, or one file per chapter). */
+  r.post('/knowledge/import-document', uploadBody, async (req, res) => {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(String(req.query.options ?? '{}'));
+    } catch {
+      throw new HttpError(400, 'options: expected JSON');
+    }
+    const q = parse(z.object({ name: z.string().trim().min(1).max(300) }), req.query);
+    const opts = parse(
+      z.object({
+        folder: z.string().trim().min(1).max(200),
+        split: z.union([z.literal('none'), z.literal(1), z.literal(2)]).default('none'),
+        type: z.enum(KNOWLEDGE_TYPES as [string, ...string[]]).optional(),
+        title: z.string().trim().max(150).optional(),
+        removeStale: z.boolean().default(true),
+      }),
+      raw,
+    );
+    if (!Buffer.isBuffer(req.body) || req.body.length === 0) throw new HttpError(400, 'Isi file kosong');
+    let doc;
+    try {
+      doc = await extractIsolated(req.body, q.name);
+    } catch (err) {
+      if (err instanceof DocumentError) throw new HttpError(err.status, err.message);
+      throw err;
+    }
+    try {
+      const result = await importDocument(knowledge, doc.markdown, q.name, { ...opts, type: opts.type as KnowledgeType | undefined });
+      res.status(201).json({ ...result, warnings: [...doc.warnings, ...result.warnings] });
+    } catch (err) {
+      throw knowledgeError(err);
+    }
   });
 
   return r;

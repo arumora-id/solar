@@ -1,50 +1,37 @@
-import OpenAI from 'openai';
-import { toResponseInputItems } from 'openai/lib/responses/ResponseInputItems';
-import type { ResponseCreateAndStreamParams } from 'openai/lib/responses/ResponseStream';
-import type {
-  FunctionTool,
-  Response as ModelResponse,
-  ResponseFunctionCallOutputItemList,
-  ResponseFunctionToolCall,
-  ResponseInputItem,
-} from 'openai/resources/responses/responses';
 import type { AppConfig } from '../config.js';
+import type { KnowledgeStore } from '../knowledge/knowledgeStore.js';
+import type { ModelRouter } from '../llm/router.js';
+import { LlmError, type ConversationItem, type ModelClient, type ToolCall, type TurnResult } from '../llm/types.js';
 import { createLogger } from '../logger.js';
 import type { McpManager } from '../plugins/mcpManager.js';
 import type { PluginStore } from '../plugins/pluginStore.js';
 import type { SkillStore } from '../skills/skillStore.js';
 import type { AttachmentService } from '../tasks/attachmentService.js';
 import type { TaskRunContext, TaskRunner } from '../tasks/taskManager.js';
+import type { TokenUsage } from './models.js';
 import { documentsIntro } from './documentIntro.js';
+import { knowledgeIntro } from './knowledgeTools.js';
 import { createMcpTools } from './mcpTools.js';
-import { capabilitiesOf, estimateCostUsd } from './models.js';
+import { estimateCostUsd } from './models.js';
 import { buildSystemPrompt } from './systemPrompt.js';
 import type { AgentTool, ToolResultContent } from './types.js';
 
+// The Responses API transport types and the tool-output conversion live in the LLM layer; re-exported for tests.
+export {
+  toFunctionOutput,
+  type ResponsesStreamer,
+  type ResponseStreamLike,
+  type StreamDeltaEvent,
+  type StreamParams,
+} from '../llm/responsesClient.js';
+
 const log = createLogger('agent');
-
-export type StreamParams = ResponseCreateAndStreamParams;
-
-export interface StreamDeltaEvent {
-  delta: string;
-  item_id?: string;
-  summary_index?: number;
-}
-
-/** The part of the OpenAI SDK's ResponseStream the agent uses (lets tests inject a scripted model). */
-export interface ResponseStreamLike {
-  on(event: 'response.output_text.delta' | 'response.reasoning_summary_text.delta', listener: (event: StreamDeltaEvent) => void): unknown;
-  finalResponse(): Promise<ModelResponse>;
-}
-
-export interface ResponsesStreamer {
-  stream(params: StreamParams, options?: { signal?: AbortSignal }): ResponseStreamLike;
-}
 
 export interface AgentDeps {
   config: AppConfig;
-  responses: ResponsesStreamer;
+  models: ModelRouter;
   skills: SkillStore;
+  knowledge: KnowledgeStore;
   plugins: PluginStore;
   mcp: McpManager;
   builtinTools: AgentTool[];
@@ -52,56 +39,11 @@ export interface AgentDeps {
 }
 
 const MAX_EVENT_INPUT_CHARS = 20_000;
-/** Shared by every task: the frozen instructions + tool list prefix is identical, so caching works across tasks. */
-const PROMPT_CACHE_KEY = 'solar-agent';
 
 function previewInput(input: unknown): unknown {
   const text = JSON.stringify(input ?? null);
   if (text.length <= MAX_EVENT_INPUT_CHARS) return input;
   return { _preview: `${text.slice(0, MAX_EVENT_INPUT_CHARS)}…`, _note: `input truncated for the timeline (${text.length} characters)` };
-}
-
-function friendlyApiError(err: InstanceType<typeof OpenAI.APIError>, model: string): Error {
-  if (err instanceof OpenAI.APIConnectionError) {
-    return new Error(`Tidak dapat terhubung ke OpenAI API (cek koneksi internet / proxy / OPENAI_BASE_URL): ${err.message}`);
-  }
-  if (err instanceof OpenAI.AuthenticationError) {
-    return new Error('Autentikasi OpenAI gagal: isi OPENAI_API_KEY yang valid di .env lalu restart SOLAR AI AGENT.');
-  }
-  if (err instanceof OpenAI.RateLimitError && err.code === 'insufficient_quota') {
-    return new Error(
-      'Saldo/kuota API OpenAI habis (insufficient_quota). Tambahkan kredit di platform.openai.com → Billing. Catatan: langganan ChatGPT Plus/Pro tidak termasuk kredit API.',
-    );
-  }
-  if (err instanceof OpenAI.RateLimitError) {
-    return new Error('Batas rate OpenAI tercapai setelah percobaan ulang otomatis. Tunggu sebentar lalu kirim ulang task.');
-  }
-  if (err instanceof OpenAI.NotFoundError) {
-    return new Error(`Model "${model}" tidak ditemukan atau belum tersedia untuk API key/proyek ini. Ganti SOLAR_MODEL di .env. (${err.message})`);
-  }
-  if (err instanceof OpenAI.PermissionDeniedError) {
-    return new Error(`Akses OpenAI ditolak untuk model/proyek ini: ${err.message}`);
-  }
-  if (err instanceof OpenAI.BadRequestError) {
-    return new Error(`Permintaan ditolak oleh OpenAI API: ${err.message}`);
-  }
-  return new Error(`OpenAI API error${err.status ? ` ${err.status}` : ''}: ${err.message}`);
-}
-
-/** Converts a tool result to the Responses API `function_call_output.output` format. */
-export function toFunctionOutput(content: ToolResultContent, ok: boolean): string | ResponseFunctionCallOutputItemList {
-  if (typeof content === 'string') {
-    const text = content.trim() ? content : '(empty result)';
-    return ok ? text : `ERROR: ${text}`;
-  }
-  const items: ResponseFunctionCallOutputItemList = content.map((block) =>
-    block.type === 'text'
-      ? { type: 'input_text', text: block.text }
-      : { type: 'input_image', image_url: `data:${block.mimeType};base64,${block.data}`, detail: 'auto' },
-  );
-  if (!items.length) items.push({ type: 'input_text', text: '(empty result)' });
-  if (!ok) items.unshift({ type: 'input_text', text: 'ERROR:' });
-  return items;
 }
 
 export function createAgentRunner(deps: AgentDeps): TaskRunner {
@@ -113,21 +55,17 @@ export function createAgentRunner(deps: AgentDeps): TaskRunner {
     const tools = [...deps.builtinTools, ...createMcpTools(deps.mcp)];
     const toolMap = new Map(tools.map((t) => [t.name, t]));
     const connected = deps.mcp.statuses().filter((s) => s.state === 'connected');
+    const knowledge = await deps.knowledge.list();
     const instructions = buildSystemPrompt({
       config,
       skills: await deps.skills.list(),
+      knowledge,
       plugins: connected
         .map((s) => ({ config: deps.plugins.get(s.id), toolCount: deps.mcp.bindings().filter((b) => b.plugin.id === s.id).length }))
         .filter((p): p is { config: NonNullable<typeof p.config>; toolCount: number } => Boolean(p.config)),
       builtinToolNames: deps.builtinTools.map((t) => t.name),
     });
-    const apiTools: FunctionTool[] = tools.map((t) => ({
-      type: 'function',
-      name: t.name,
-      description: t.description,
-      parameters: t.inputSchema,
-      strict: false,
-    }));
+    const toolSpecs = tools.map((t) => ({ name: t.name, description: t.description, parameters: t.inputSchema }));
 
     const today = new Date().toISOString().slice(0, 10);
     const intro = [
@@ -136,17 +74,27 @@ export function createAgentRunner(deps: AgentDeps): TaskRunner {
         ? `<session_history>\nEarlier requests in this conversation (oldest first). Their artifacts can be read with read_artifact and their documents with read_document.\n${ctx.sessionContext}\n</session_history>`
         : '',
       await documentsIntro(ctx.attachments, deps.attachments),
+      await knowledgeIntro(deps.knowledge, knowledge, ctx.task.prompt, ctx.attachments.map((a) => a.name)),
       `<request>\n${ctx.task.prompt}\n</request>`,
     ]
       .filter(Boolean)
       .join('\n\n');
-    const input: ResponseInputItem[] = [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: intro }] }];
+    const history: ConversationItem[] = [{ role: 'user', text: intro }];
 
-    const model = config.openai.model;
-    const caps = capabilitiesOf(model);
-    let maxTokens = Math.min(config.openai.maxTokens, caps.maxOutputTokens);
+    const { clients, warnings } = deps.models.clientsFor();
+    for (const message of warnings) await ctx.emit({ type: 'log', level: 'warn', message });
+    if (!clients.length) {
+      throw new Error('Tidak ada model AI yang bisa dipakai: aktifkan provider di Pengaturan → Model AI atau isi OPENAI_API_KEY di .env.');
+    }
+    let clientIndex = 0;
+    let client: ModelClient = clients[0]!;
+    const initialMaxTokens = (c: ModelClient) => Math.min(config.openai.maxTokens, c.capabilities.maxOutputTokens);
+    let maxTokens = initialMaxTokens(client);
     let turns = 0;
     let lastText = '';
+
+    const addUsage = (usage: TokenUsage, model: string) =>
+      ctx.addUsage({ ...usage, costUsd: estimateCostUsd(model, usage, client.price) });
 
     await ctx.progress(2, 'Membaca permintaan');
 
@@ -158,90 +106,60 @@ export function createAgentRunner(deps: AgentDeps): TaskRunner {
       }
       await ctx.step(turns === 1 ? 'Merencanakan' : 'Berpikir');
 
-      const params: StreamParams = {
-        model,
-        instructions,
-        input: [...input],
-        tools: apiTools,
-        tool_choice: 'auto',
-        parallel_tool_calls: true,
-        max_output_tokens: maxTokens,
-        // stateless: nothing is stored at OpenAI; reasoning is carried forward as encrypted items
-        store: false,
-        prompt_cache_key: PROMPT_CACHE_KEY,
-        ...(caps.reasoning
-          ? { reasoning: { effort: config.openai.effort, summary: 'auto' as const }, include: ['reasoning.encrypted_content' as const] }
-          : {}),
-      };
-
-      let response: ModelResponse;
+      let response: TurnResult;
+      let thinkingKey = '';
       try {
-        const stream = deps.responses.stream(params, { signal: ctx.signal });
-        stream.on('response.output_text.delta', (e) => ctx.delta(e.delta, 'text'));
-        let summaryKey = '';
-        stream.on('response.reasoning_summary_text.delta', (e) => {
-          const key = `${e.item_id ?? ''}:${e.summary_index ?? 0}`;
-          if (summaryKey && key !== summaryKey) ctx.delta('\n\n', 'thinking');
-          summaryKey = key;
-          ctx.delta(e.delta, 'thinking');
+        response = await client.turn({
+          instructions,
+          history: [...history],
+          tools: toolSpecs,
+          maxOutputTokens: maxTokens,
+          signal: ctx.signal,
+          onText: (delta) => ctx.delta(delta, 'text'),
+          onThinking: (delta, key) => {
+            if (thinkingKey && key !== thinkingKey) ctx.delta('\n\n', 'thinking');
+            thinkingKey = key;
+            ctx.delta(delta, 'thinking');
+          },
         });
-        response = await stream.finalResponse();
       } catch (err) {
         if (ctx.signal.aborted) throw ctx.signal.reason ?? err;
-        if (err instanceof OpenAI.APIError) throw friendlyApiError(err, model);
+        const partial = (err as { usage?: TokenUsage }).usage;
+        if (partial) await addUsage(partial, client.model);
+        const next = clients[clientIndex + 1];
+        if (err instanceof LlmError && err.fallback && next) {
+          await ctx.emit({ type: 'log', level: 'warn', message: `Model ${client.key} gagal: ${err.message} Beralih ke model cadangan ${next.key}.` });
+          log.warn(`Task ${ctx.task.id}: ${client.key} failed (${err.kind}), falling back to ${next.key}`);
+          clientIndex += 1;
+          client = next;
+          maxTokens = initialMaxTokens(client);
+          turns -= 1;
+          continue;
+        }
         throw err;
       }
 
-      const u = response.usage;
-      const cached = u?.input_tokens_details?.cached_tokens ?? 0;
-      const cacheWrite = u?.input_tokens_details?.cache_write_tokens ?? 0;
-      const usage = {
-        inputTokens: Math.max(0, (u?.input_tokens ?? 0) - cached - cacheWrite),
-        outputTokens: u?.output_tokens ?? 0,
-        cacheReadTokens: cached,
-        cacheWriteTokens: cacheWrite,
-      };
-      await ctx.addUsage({ ...usage, costUsd: estimateCostUsd(response.model || model, usage, config.openai.price) });
+      await addUsage(response.usage, response.model || client.model);
 
-      if (response.status === 'failed') {
-        throw new Error(`OpenAI gagal memproses permintaan: ${response.error?.message ?? 'unknown error'}`);
-      }
-      // the SDK resolves a stream that ended without a terminal event with the partial snapshot
-      if (response.status !== 'completed' && response.status !== 'incomplete') {
-        throw new Error(`Koneksi ke OpenAI terputus sebelum respons selesai (status ${response.status ?? 'unknown'}). Kirim ulang task.`);
-      }
-
-      const texts: string[] = [];
-      let refusal = '';
-      for (const item of response.output) {
-        if (item.type === 'reasoning') {
-          const summary = item.summary.map((part) => part.text.trim()).filter(Boolean).join('\n\n');
-          if (summary) await ctx.emit({ type: 'thinking', text: summary });
-        } else if (item.type === 'message') {
-          for (const part of item.content) {
-            if (part.type === 'output_text' && part.text.trim()) texts.push(part.text.trim());
-            else if (part.type === 'refusal' && part.refusal.trim()) refusal = part.refusal.trim();
-          }
-        }
-      }
-      const answer = texts.join('\n\n');
+      for (const summary of response.thinking) await ctx.emit({ type: 'thinking', text: summary });
+      const answer = response.texts.join('\n\n');
       if (answer) {
         lastText = answer;
         await ctx.emit({ type: 'text', text: answer });
       }
-      const calls = response.output.filter((item): item is ResponseFunctionToolCall => item.type === 'function_call');
+      const calls = response.calls;
 
-      if (refusal && calls.length === 0) {
-        throw new Error(`Model menolak melanjutkan permintaan ini: "${refusal}". Ubah kalimat permintaan atau pecah menjadi bagian yang lebih kecil.`);
+      if (response.refusal && calls.length === 0) {
+        throw new Error(`Model menolak melanjutkan permintaan ini: "${response.refusal}". Ubah kalimat permintaan atau pecah menjadi bagian yang lebih kecil.`);
       }
       if (response.status === 'incomplete') {
-        const reason = response.incomplete_details?.reason;
+        const reason = response.incompleteReason;
         if (reason === 'content_filter') {
-          throw new Error('Jawaban dihentikan oleh filter konten OpenAI. Ubah kalimat permintaan atau pecah menjadi bagian yang lebih kecil.');
+          throw new Error(`Jawaban dihentikan oleh filter konten ${client.providerName}. Ubah kalimat permintaan atau pecah menjadi bagian yang lebih kecil.`);
         }
         // A truncated tool call can still look valid: never run it. Retry the same turn with more room.
-        if (maxTokens < caps.maxOutputTokens) {
-          maxTokens = caps.maxOutputTokens;
+        if (maxTokens < client.capabilities.maxOutputTokens) {
+          maxTokens = client.capabilities.maxOutputTokens;
           await ctx.emit({ type: 'log', level: 'warn', message: `Output model terpotong (${reason ?? 'incomplete'}); giliran diulang dengan max_output_tokens=${maxTokens}.` });
           turns -= 1;
           continue;
@@ -255,11 +173,10 @@ export function createAgentRunner(deps: AgentDeps): TaskRunner {
         return { result: answer || lastText || 'Selesai.' };
       }
 
-      // output items (reasoning, messages, function calls) go back in order, followed by every call's output;
-      // toResponseInputItems strips SDK-only fields (parsed, parsed_arguments) the API would reject
-      input.push(...toResponseInputItems(response.output));
+      // the assistant turn goes back in order (with the client's raw output for the same model), then every call's output
+      history.push({ role: 'assistant', text: answer, calls, native: response.native ? { clientKey: client.key, items: response.native } : undefined });
       const outputs = await Promise.all(calls.map((call) => runTool(call, toolMap, ctx)));
-      input.push(...outputs);
+      history.push(...outputs);
     }
   };
 }
@@ -273,17 +190,15 @@ function parseArguments(raw: string): { ok: true; value: unknown } | { ok: false
   }
 }
 
-async function runTool(
-  call: ResponseFunctionToolCall,
-  toolMap: Map<string, AgentTool>,
-  ctx: TaskRunContext,
-): Promise<ResponseInputItem.FunctionCallOutput> {
+type ToolOutputItem = Extract<ConversationItem, { role: 'tool' }>;
+
+async function runTool(call: ToolCall, toolMap: Map<string, AgentTool>, ctx: TaskRunContext): Promise<ToolOutputItem> {
   const tool = toolMap.get(call.name);
   const started = Date.now();
   const args = parseArguments(call.arguments);
   await ctx.emit({
     type: 'tool_call',
-    toolUseId: call.call_id,
+    toolUseId: call.id,
     tool: call.name,
     displayName: tool?.displayName ?? call.name,
     source: tool?.source ?? 'builtin',
@@ -291,9 +206,9 @@ async function runTool(
     input: previewInput(args.ok ? args.value : call.arguments),
   });
 
-  const finish = async (content: ToolResultContent, ok: boolean, summary: string): Promise<ResponseInputItem.FunctionCallOutput> => {
-    await ctx.emit({ type: 'tool_result', toolUseId: call.call_id, tool: call.name, ok, summary, durationMs: Date.now() - started });
-    return { type: 'function_call_output', call_id: call.call_id, output: toFunctionOutput(content, ok) };
+  const finish = async (content: ToolResultContent, ok: boolean, summary: string): Promise<ToolOutputItem> => {
+    await ctx.emit({ type: 'tool_result', toolUseId: call.id, tool: call.name, ok, summary, durationMs: Date.now() - started });
+    return { role: 'tool', callId: call.id, name: call.name, content, ok };
   };
 
   if (!tool) return finish(`Unknown tool "${call.name}".`, false, 'unknown tool');
@@ -308,7 +223,7 @@ async function runTool(
   const reason = tool.confirmation(parsed.value);
   if (reason) {
     const decision = await ctx.confirm({
-      toolUseId: call.call_id,
+      toolUseId: call.id,
       tool: call.name,
       displayName: tool.displayName,
       pluginId: tool.pluginId ?? null,

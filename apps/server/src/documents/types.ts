@@ -7,6 +7,18 @@ export interface ExtractedDocument {
   /** Pages (pdf), slides (pptx) or sheets (xlsx); null for text formats. */
   parts: number | null;
   warnings: string[];
+  /** Raw cell values per sheet (xlsx/csv only), when ExtractOptions.tableRows is set. First row = header. */
+  tables?: SheetTable[];
+}
+
+export interface SheetTable {
+  name: string;
+  rows: string[][];
+  /**
+   * Not every row was read: more rows than tableRows allowed, the sheet was skipped for the text limit, or the tables
+   * reached their total text limit.
+   */
+  truncated: boolean;
 }
 
 export interface ExtractOptions {
@@ -14,6 +26,8 @@ export interface ExtractOptions {
   maxChars?: number;
   /** Aborts extraction that takes longer than this. */
   timeoutMs?: number;
+  /** Also return the raw tables of spreadsheets (xlsx/csv), up to this many rows per sheet. */
+  tableRows?: number;
 }
 
 export type DocumentErrorCode =
@@ -65,6 +79,8 @@ export interface ParseContext {
   maxChars: number;
   /** User-facing notes (Indonesian), e.g. what was cut or skipped. */
   warnings: string[];
+  /** Collect raw spreadsheet tables (ExtractOptions.tableRows). */
+  collectTables?: boolean;
 }
 
 /** What a format parser returns; index.ts normalises and caps it. */
@@ -72,4 +88,5 @@ export interface ParsedDocument {
   kind: AttachmentKind;
   markdown: string;
   parts: number | null;
+  tables?: SheetTable[];
 }

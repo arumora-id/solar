@@ -78,7 +78,8 @@ export class TaskManager {
     private readonly repo: Repository,
     private readonly artifacts: ArtifactService,
     private readonly bus: EventBus,
-    private readonly options: { concurrency: number; model: string; confirmationTimeoutMs: number },
+    /** `model` may be a function: the model route can change at runtime (Pengaturan → Model AI). */
+    private readonly options: { concurrency: number; model: string | (() => string); confirmationTimeoutMs: number },
   ) {}
 
   setRunner(runner: TaskRunner): void {
@@ -116,7 +117,7 @@ export class TaskManager {
       status: 'queued',
       progress: 0,
       currentStep: 'Menunggu antrean',
-      model: this.options.model,
+      model: typeof this.options.model === 'function' ? this.options.model() : this.options.model,
       createdAt: nowIso(),
       startedAt: null,
       finishedAt: null,

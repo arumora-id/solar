@@ -5,6 +5,11 @@ description: How to model clear, correct sequence diagrams with create_sequence_
 
 # UML Sequence Diagrams
 
+**User rules first.** Read the user's sequence / PlantUML rules (`search_knowledge "sequence plantuml"`) and the
+`integrations/*.md` file of every integration pattern you draw: its standard flow, timeouts, retries and error
+handling are the template for the diagram. The PlantUML source is what the user edits later in draw.io or Visual
+Paradigm, so keep participant names exactly as in the knowledge base.
+
 ## Scenario selection
 Produce one diagram per scenario. For a typical feature: the main happy path, the most important
 failure path (validation error, timeout, payment declined...) and any asynchronous/event flow.

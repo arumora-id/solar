@@ -1,6 +1,13 @@
 import type {
   Attachment,
   Confirmation,
+  KnowledgeEntry,
+  KnowledgeFile,
+  KnowledgeSearchHit,
+  KnowledgeType,
+  LlmProviderConfig,
+  LlmSettingsView,
+  LlmTestResult,
   PluginConfig,
   PluginView,
   PublicConfig,
@@ -108,6 +115,29 @@ export const api = {
   updatePlugin: (id: string, input: Partial<PluginConfig>) => request<PluginView>('PUT', `/api/plugins/${encodeURIComponent(id)}`, input),
   reconnectPlugin: (id: string) => request<PluginView>('POST', `/api/plugins/${encodeURIComponent(id)}/reconnect`),
   deletePlugin: (id: string) => request<{ ok: true }>('DELETE', `/api/plugins/${encodeURIComponent(id)}`),
+  llm: () => request<LlmSettingsView>('GET', '/api/llm'),
+  createProvider: (input: Partial<LlmProviderConfig>) => request<LlmSettingsView>('POST', '/api/llm/providers', input),
+  updateProvider: (id: string, input: Partial<LlmProviderConfig>) => request<LlmSettingsView>('PUT', `/api/llm/providers/${encodeURIComponent(id)}`, input),
+  deleteProvider: (id: string) => request<LlmSettingsView>('DELETE', `/api/llm/providers/${encodeURIComponent(id)}`),
+  testProvider: (id: string) => request<LlmTestResult>('POST', `/api/llm/providers/${encodeURIComponent(id)}/test`),
+  setRoutes: (routes: Record<string, string[]>) => request<LlmSettingsView>('PUT', '/api/llm/routes', { routes }),
+  knowledge: () => request<KnowledgeEntry[]>('GET', '/api/knowledge'),
+  knowledgeFile: (path: string) => request<KnowledgeFile>('GET', `/api/knowledge/file?path=${encodeURIComponent(path)}`),
+  saveKnowledge: (path: string, content: string) => request<KnowledgeEntry>('PUT', '/api/knowledge/file', { path, content }),
+  deleteKnowledge: (path: string) => request<{ result: string }>('DELETE', `/api/knowledge/file?path=${encodeURIComponent(path)}`),
+  searchKnowledge: (q: string, type?: KnowledgeType) =>
+    request<KnowledgeSearchHit[]>('GET', `/api/knowledge/search?q=${encodeURIComponent(q)}${type ? `&type=${type}` : ''}`),
+  importKnowledge: (files: Array<{ path: string; content: string }>) =>
+    request<{ imported: KnowledgeEntry[]; failed: Array<{ path: string; error: string }> }>('POST', '/api/knowledge/import', { files }),
+  previewTables: (file: File) => uploadFile<SheetPreview[]>('/api/knowledge/tables', file),
+  importTable: (file: File, options: TableImportOptions) =>
+    uploadFile<{ written: KnowledgeEntry[]; removed: string[]; skipped: Array<{ row: number; reason: string }>; index: string }>(
+      '/api/knowledge/import-table',
+      file,
+      options,
+    ),
+  importDocument: (file: File, options: DocumentImportOptions) =>
+    uploadFile<{ written: KnowledgeEntry[]; removed: string[]; warnings: string[] }>('/api/knowledge/import-document', file, options),
   artifactUrl: (id: string, download = false) => withToken(`/api/artifacts/${encodeURIComponent(id)}/content${download ? '?download=1' : ''}`),
   zipUrl: (taskId: string) => withToken(`/api/tasks/${encodeURIComponent(taskId)}/artifacts.zip`),
   artifactText: async (id: string) => {
@@ -117,6 +147,54 @@ export const api = {
     return res.text();
   },
 };
+
+export interface SheetPreview {
+  name: string;
+  headers: string[];
+  rows: number;
+  sample: string[][];
+  truncated: boolean;
+}
+
+export interface TableImportOptions {
+  sheet: string;
+  headerRow: number;
+  idColumn: string;
+  titleColumn?: string;
+  aliasColumns: string[];
+  statusColumn?: string;
+  folder: string;
+  type?: KnowledgeType;
+  removeStale: boolean;
+}
+
+export interface DocumentImportOptions {
+  folder: string;
+  split: 'none' | 1 | 2;
+  type?: KnowledgeType;
+  title?: string;
+  removeStale: boolean;
+}
+
+/** Sends a file as the raw body (options as a JSON query parameter). */
+async function uploadFile<T>(path: string, file: File, options?: unknown): Promise<T> {
+  const token = getToken();
+  const qs = `name=${encodeURIComponent(file.name)}${options === undefined ? '' : `&options=${encodeURIComponent(JSON.stringify(options))}`}`;
+  const res = await fetch(`${path}?${qs}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: file,
+  });
+  const text = await res.text();
+  let data: unknown = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
+  }
+  if (!res.ok) throw new ApiError(res.status, (data as { error?: string } | null)?.error ?? `${res.status} ${res.statusText}`);
+  return data as T;
+}
 
 export interface UploadHandle {
   promise: Promise<Attachment>;

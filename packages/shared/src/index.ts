@@ -267,6 +267,116 @@ export interface PluginView extends PluginConfig {
 export const SECRET_MASK = '••••••••';
 
 // ---------------------------------------------------------------------------
+// LLM providers (multi-provider model routing)
+// ---------------------------------------------------------------------------
+
+/**
+ * `openai-responses`: OpenAI Responses API (OpenAI, Azure OpenAI v1 and compatible gateways).
+ * `openai-chat`: Chat Completions API - the de-facto standard of gateways and other vendors
+ * (OmniRoute, OpenRouter, LiteLLM, Ollama, vLLM, Gemini and Anthropic OpenAI-compatible endpoints, ...).
+ */
+export type LlmProviderKind = 'openai-responses' | 'openai-chat';
+
+export interface LlmModelConfig {
+  /** Model id as the provider expects it. */
+  id: string;
+  label?: string;
+  /** Reasoning model: sends the reasoning effort. Default: detected from the id for OpenAI models, false otherwise. */
+  reasoning?: boolean;
+  /** Reasoning effort for this model (overrides SOLAR_EFFORT). */
+  effort?: string;
+  /** Largest output (incl. reasoning) the model accepts. */
+  maxOutputTokens?: number;
+  /** USD per 1M tokens, for cost estimates (0 for local models). */
+  price?: { input: number; cachedInput: number; output: number };
+}
+
+export interface LlmProviderConfig {
+  /** Lower-case id used in routes: "<provider>/<model>". */
+  id: string;
+  name: string;
+  kind: LlmProviderKind;
+  enabled: boolean;
+  /** API base URL incl. version path, e.g. https://api.openai.com/v1 or http://localhost:11434/v1. */
+  baseUrl?: string;
+  /** API key or a ${ENV_VAR} reference; empty for keyless local endpoints. */
+  apiKey?: string;
+  /** Extra HTTP headers (values may use ${ENV_VAR}). */
+  headers?: Record<string, string>;
+  /** Chat Completions only: name of the output limit parameter. Default max_completion_tokens on api.openai.com, max_tokens elsewhere. */
+  maxTokensParam?: 'max_tokens' | 'max_completion_tokens';
+  /** The models accept images in tool results (default true). */
+  vision?: boolean;
+  /** Known models with optional overrides. Routes may also name models not listed here. */
+  models: LlmModelConfig[];
+}
+
+export interface LlmProviderView extends LlmProviderConfig {
+  /** `env` = defined by OPENAI_* in .env (read-only in the UI). */
+  source: 'env' | 'user';
+  /** An API key is set (or none is needed). */
+  ready: boolean;
+  /** ${VAR} references without a value. */
+  missingVars: string[];
+}
+
+export interface LlmSettingsView {
+  providers: LlmProviderView[];
+  /** Named routes; "default" is used by the agent. Each is an ordered list of "provider/model" (primary, then fallbacks). */
+  routes: Record<string, string[]>;
+}
+
+export interface LlmTestResult {
+  ok: boolean;
+  models?: string[];
+  error?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Knowledge base (the architect's own Markdown rules and facts)
+// ---------------------------------------------------------------------------
+
+export type KnowledgeType =
+  | 'system'
+  | 'integration'
+  | 'standard'
+  | 'principle'
+  | 'nfr'
+  | 'process'
+  | 'document'
+  | 'decision'
+  | 'glossary'
+  | 'landscape'
+  | 'reference';
+
+export interface KnowledgeEntry {
+  /** Relative path inside the knowledge base, e.g. "systems/AD1GATE.md". */
+  path: string;
+  id: string;
+  type: KnowledgeType;
+  title: string;
+  description: string;
+  aliases: string[];
+  tags: string[];
+  /** Lifecycle from front matter, e.g. active, sunset, retired (empty = not stated). */
+  status: string;
+  source: 'builtin' | 'user';
+  size: number;
+  updatedAt: string;
+}
+
+export interface KnowledgeFile {
+  entry: KnowledgeEntry;
+  content: string;
+}
+
+export interface KnowledgeSearchHit {
+  entry: KnowledgeEntry;
+  score: number;
+  snippets: Array<{ line: number; text: string }>;
+}
+
+// ---------------------------------------------------------------------------
 // Server configuration exposed to the UI
 // ---------------------------------------------------------------------------
 
@@ -276,7 +386,14 @@ export interface PublicConfig {
   provider: string;
   model: string;
   effort: string;
+  /** True when the primary model of the default route has a usable provider (API key, or a keyless local endpoint). */
+  llmConfigured: boolean;
+  /** Kept for older clients: same value as llmConfigured. */
   openaiConfigured: boolean;
+  /** The default model route: primary first, then the fallbacks ("provider/model"). */
+  modelRoute: string[];
+  /** Number of files in the knowledge base. */
+  knowledgeFiles: number;
   authRequired: boolean;
   attachments: {
     maxFileMb: number;

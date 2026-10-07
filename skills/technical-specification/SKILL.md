@@ -8,6 +8,10 @@ description: How to write a complete, reviewable Technical Specification Documen
 `create_technical_specification` renders Markdown (GitHub-ready) and print-ready HTML. Your job is
 the content. Read `nfr-catalog.md` (via `read_skill_file`) when writing non-functional requirements.
 
+**User rules first.** Before writing, read the knowledge files that apply: the TSD structure (`documents/TSD.md`),
+API specification rules (e.g. `standards/api-specification.md`), naming, security/NFR files, and the files of every
+system and integration in scope. They override the defaults below; list the files used in the references.
+
 ## Document control
 - `documentId`: `TSD-<SYSTEM>-<NNN>` (e.g. `TSD-ORD-001`), `version` "1.0", `status` "Draft".
 - `authors`: use the name the user gave; otherwise "Solution Architect". Never invent people.
