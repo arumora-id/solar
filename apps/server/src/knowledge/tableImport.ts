@@ -96,6 +96,8 @@ export async function importTable(
   const statusCol = col(opts.statusColumn);
   const source = `excel:${sourceFile}#${table.name}`;
 
+  // a cut table would import only part of the sheet and (with removeStale) delete the rows that were cut off
+  if (table.truncated) throw new Error(`Sheet "${table.name}" tidak terbaca utuh (terlalu banyak baris atau teks); pecah file sebelum impor`);
   const rows = table.rows.slice(headerIndex + 1);
   if (rows.length > MAX_IMPORT_ROWS) throw new Error(`Sheet berisi ${rows.length} baris; maksimum ${MAX_IMPORT_ROWS} per impor`);
 

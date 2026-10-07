@@ -14,7 +14,7 @@ export interface ExtractedDocument {
 export interface SheetTable {
   name: string;
   rows: string[][];
-  /** More rows existed than tableRows allowed. */
+  /** Not every row was read: more rows than tableRows allowed, or the sheet was skipped for the text limit. */
   truncated: boolean;
 }
 

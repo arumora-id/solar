@@ -161,6 +161,24 @@ function lastRowStart(text: string): number {
   return last;
 }
 
+/** Trims leading/trailing all-empty columns; leading single-cell rows (merged titles, captions) become captions. */
+function shapeTable(rows: string[][]): { captions: string[]; table: string[][] } {
+  let minC = Infinity;
+  let maxC = -1;
+  for (const r of rows) {
+    r.forEach((v, i) => {
+      if (v !== '') [minC, maxC] = [Math.min(minC, i), Math.max(maxC, i)];
+    });
+  }
+  const width = maxC - minC + 1;
+  const table = rows.map((r) => Array.from({ length: width }, (_, i) => r[minC + i] ?? ''));
+  const captions: string[] = [];
+  if (width > 1) {
+    while (table.length > 1 && table[0]!.filter((v) => v !== '').length === 1) captions.push(table.shift()!.find((v) => v !== '')!);
+  }
+  return { captions, table };
+}
+
 export async function extractXlsx(ctx: ParseContext, zip: ZipArchive, pkg: OoxmlPackage): Promise<ParsedDocument> {
   const { limits, deadline, warnings, maxChars } = ctx;
   const wbPath = pkg.mainPart;
@@ -442,11 +460,9 @@ export async function extractXlsx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
       warnings.push(`Sheet "${sh.name}" tidak bisa dibaca (bagiannya tidak ada di file).`);
       continue;
     }
-    if (sh.kind === 'skipped' || budget <= 0) {
-      parts.push('_(tidak dibaca: batas panjang teks tercapai)_');
-      skippedForChars += 1;
-      continue;
-    }
+    // table import reads every row up to the row cap: the character budget only limits the Markdown
+    const all: string[][] | null = ctx.collectTables ? [] : null;
+    const overBudget = sh.kind === 'skipped' || budget <= 0;
     const rows: string[][] = [];
     let cutForChars = false;
     for (const cells of sh.rows) {
@@ -456,37 +472,36 @@ export async function extractXlsx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
         return 'sst' in cell ? (sst[cell.sst] ?? '') : cell.text;
       });
       if (!values.some((x) => x !== '')) continue;
+      all?.push(values);
+      if (overBudget || cutForChars) {
+        if (all) continue;
+        break;
+      }
       const cost = values.reduce((n, v) => n + Math.min(v.length, limits.maxCellChars) + 3, 0);
       if (rows.length && cost > budget) {
         cutForChars = true;
+        if (all) continue;
         break;
       }
       budget -= cost;
       rows.push(values);
+    }
+    // a sheet skipped while reading has no rows: list it as cut, so the import refuses it instead of missing it
+    if (all && (all.length || sh.kind === 'skipped')) {
+      tables.push({ name: sh.name, rows: all.length ? shapeTable(all).table : [], truncated: sh.truncatedRows || sh.kind === 'skipped' });
+    }
+    if (overBudget) {
+      parts.push('_(tidak dibaca: batas panjang teks tercapai)_');
+      skippedForChars += 1;
+      continue;
     }
     if (!rows.length) {
       parts.push('_(sheet kosong)_');
       warnings.push(`Sheet "${sh.name}" kosong.`);
       continue;
     }
-    // trim leading/trailing all-empty columns
-    let minC = Infinity;
-    let maxC = -1;
-    for (const r of rows) {
-      r.forEach((v, i) => {
-        if (v !== '') [minC, maxC] = [Math.min(minC, i), Math.max(maxC, i)];
-      });
-    }
-    const width = maxC - minC + 1;
-    const table = rows.map((r) => Array.from({ length: width }, (_, i) => r[minC + i] ?? ''));
-    // leading single-cell rows (merged titles, captions) become text above the table
-    if (width > 1) {
-      while (table.length > 1 && table[0]!.filter((v) => v !== '').length === 1) {
-        const caption = table.shift()!.find((v) => v !== '')!;
-        parts.push(`**${mdCell(caption, limits.maxCellChars).replace(/\\\|/g, '|')}**`);
-      }
-    }
-    if (ctx.collectTables) tables.push({ name: sh.name, rows: table, truncated: sh.truncatedRows });
+    const { captions, table } = shapeTable(rows);
+    for (const caption of captions) parts.push(`**${mdCell(caption, limits.maxCellChars).replace(/\\\|/g, '|')}**`);
     parts.push(mdTable(table.map((r) => r.map((v) => mdCell(v, limits.maxCellChars)))));
     if (cutForChars) {
       warnings.push(`Sheet "${sh.name}" dipotong: hanya ${fmtInt(rows.length)} baris pertama yang ditampilkan (batas ${fmtInt(maxChars)} karakter).`);
