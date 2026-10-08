@@ -1,10 +1,11 @@
 import gsap from 'gsap';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Artifact } from '@solar/shared';
-import { api } from '../lib/api';
+import type { Artifact, KnowledgeType } from '@solar/shared';
+import { api, ApiError } from '../lib/api';
 import { formatBytes } from '../lib/format';
+import { TYPE_FOLDERS, TYPE_LABEL, TYPES } from '../lib/knowledgeTypes';
 import { renderMarkdown } from '../lib/markdown';
-import { DownloadIcon, EyeIcon, XIcon } from './Icons';
+import { BookIcon, DownloadIcon, EyeIcon, XIcon } from './Icons';
 
 const GROUP_TITLE: Record<string, string> = {
   archimate: 'ArchiMate',
@@ -17,8 +18,11 @@ function family(a: Artifact): string {
   return a.kind.split('-')[0] ?? 'other';
 }
 
+const isMarkdown = (a: Artifact) => a.kind === 'tsd-markdown' || a.mimeType.startsWith('text/markdown') || /\.md$/i.test(a.name);
+
 export function ArtifactList({ taskId, artifacts }: { taskId: string; artifacts: Artifact[] }) {
   const [preview, setPreview] = useState<Artifact | null>(null);
+  const [saving, setSaving] = useState<Artifact | null>(null);
   const groups = useMemo(() => {
     const map = new Map<string, Artifact[]>();
     for (const a of artifacts) map.set(a.bundle, [...(map.get(a.bundle) ?? []), a]);
@@ -57,6 +61,17 @@ export function ArtifactList({ taskId, artifacts }: { taskId: string; artifacts:
                 <a className="btn ghost small icon" href={api.artifactUrl(a.id, true)} aria-label={`Unduh ${a.name}`}>
                   <DownloadIcon />
                 </a>
+                {isMarkdown(a) && (
+                  <button
+                    type="button"
+                    className="btn ghost small icon"
+                    onClick={() => setSaving(a)}
+                    aria-label={`Simpan ${a.name} ke knowledge base`}
+                    title="Simpan ke knowledge base"
+                  >
+                    <BookIcon />
+                  </button>
+                )}
               </div>
             ))}
           </section>
@@ -68,6 +83,148 @@ export function ArtifactList({ taskId, artifacts }: { taskId: string; artifacts:
         </a>
       </div>
       {preview && <ArtifactPreview artifact={preview} siblings={artifacts} onClose={() => setPreview(null)} />}
+      {saving && <SaveToKnowledge artifact={saving} onClose={() => setSaving(null)} />}
+    </div>
+  );
+}
+
+/** Saves a Markdown artifact (e.g. the .md of a TSD) as a knowledge file, so the agent uses it in later tasks. */
+function SaveToKnowledge({ artifact, onClose }: { artifact: Artifact; onClose: () => void }) {
+  const fileName = artifact.name.replace(/[^A-Za-z0-9._ -]+/g, '-');
+  const [type, setType] = useState<KnowledgeType>('document');
+  const [path, setPath] = useState(`${TYPE_FOLDERS.document}/${fileName}`);
+  const [pathEdited, setPathEdited] = useState(false);
+  const [id, setId] = useState(fileName.replace(/\.md$/i, ''));
+  const [title, setTitle] = useState(artifact.title);
+  const [aliases, setAliases] = useState('');
+  const [conflict, setConflict] = useState('');
+  const [overwrite, setOverwrite] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [savedAt, setSavedAt] = useState('');
+
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onCloseRef.current();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const save = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const { entry } = await api.importArtifactToKnowledge({
+        artifactId: artifact.id,
+        type,
+        path: path.trim(),
+        id: id.trim() || undefined,
+        title: title.trim() || undefined,
+        aliases: aliases.split(/[,;\n]/).map((s) => s.trim()).filter(Boolean),
+        overwrite,
+      });
+      setSavedAt(entry.path);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) setConflict(e.message);
+      else setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="backdrop" onClick={(e) => e.target === e.currentTarget && onClose()} role="dialog" aria-modal="true" aria-label="Simpan ke knowledge base">
+      <form
+        className="modal"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save();
+        }}
+      >
+        <h3>Simpan ke knowledge base</h3>
+        {savedAt ? (
+          <>
+            <p>
+              Tersimpan sebagai <code>{savedAt}</code>. Agent membacanya mulai task berikutnya; kelola di Pengaturan → Knowledge.
+            </p>
+            <div className="modal-actions">
+              <button type="button" className="btn primary" onClick={onClose} autoFocus>
+                Tutup
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="hint" style={{ marginTop: 0 }}>
+              {artifact.name} disalin ke knowledge base sebagai file Markdown. Isinya diikuti agent di atas aturan bawaan, jadi simpan hanya
+              dokumen yang sudah Anda periksa.
+            </p>
+            <label className="field">
+              <span>Jenis</span>
+              <select
+                className="select"
+                value={type}
+                onChange={(e) => {
+                  const t = e.target.value as KnowledgeType;
+                  setType(t);
+                  if (!pathEdited) setPath(`${TYPE_FOLDERS[t]}/${fileName}`);
+                }}
+              >
+                {TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {TYPE_LABEL[t]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span>Path</span>
+              <input
+                className="input"
+                value={path}
+                onChange={(e) => {
+                  setPath(e.target.value);
+                  setPathEdited(true);
+                  setConflict('');
+                  setOverwrite(false);
+                }}
+                spellCheck={false}
+              />
+            </label>
+            <label className="field">
+              <span>ID (nama di diagram dan dokumen)</span>
+              <input className="input" value={id} onChange={(e) => setId(e.target.value)} />
+            </label>
+            <label className="field">
+              <span>Judul</span>
+              <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} />
+            </label>
+            <label className="field">
+              <span>Alias (pisahkan dengan koma, opsional)</span>
+              <input className="input" value={aliases} onChange={(e) => setAliases(e.target.value)} placeholder="mis. AD1 Gateway, ADI Gate" />
+            </label>
+            {conflict && (
+              <div className="error-box">
+                {conflict}
+                <label className="toggle" style={{ display: 'flex', marginTop: 8 }}>
+                  <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} />
+                  Ganti file yang sudah ada
+                </label>
+              </div>
+            )}
+            {error && <div className="error-box">{error}</div>}
+            <div className="modal-actions">
+              <button type="button" className="btn" onClick={onClose}>
+                Batal
+              </button>
+              <button type="submit" className="btn primary" disabled={busy || !path.trim() || (Boolean(conflict) && !overwrite)}>
+                {busy ? 'Menyimpan…' : 'Simpan'}
+              </button>
+            </div>
+          </>
+        )}
+      </form>
     </div>
   );
 }

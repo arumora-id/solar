@@ -220,7 +220,7 @@ async function runTool(call: ToolCall, toolMap: Map<string, AgentTool>, ctx: Tas
   }
 
   if (ctx.signal.aborted) throw ctx.signal.reason ?? new Error('Cancelled');
-  const reason = tool.confirmation(parsed.value);
+  const reason = await tool.confirmation(parsed.value);
   if (reason) {
     const decision = await ctx.confirm({
       toolUseId: call.id,

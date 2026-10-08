@@ -24,7 +24,7 @@ export interface AgentTool {
   pluginId?: string;
   pluginName?: string;
   parse(input: unknown): ParseResult;
-  /** Returns the reason when the user must approve this call, otherwise null. */
-  confirmation(input: unknown): string | null;
+  /** Returns the reason when the user must approve this call, otherwise null (may look things up first). */
+  confirmation(input: unknown): string | null | Promise<string | null>;
   execute(input: unknown, ctx: TaskRunContext): Promise<ToolOutput>;
 }

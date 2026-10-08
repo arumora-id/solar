@@ -91,6 +91,7 @@ Dokumen proyek (PDF, Word `.docx`, Excel `.xlsx`/`.xlsm`/`.csv`, PowerPoint `.pp
 | PUT | `/knowledge/file` | `{ path, content }` | Buat / ubah file (file bawaan disimpan sebagai override). |
 | DELETE | `/knowledge/file?path=` | | Hapus file pengguna (override → versi bawaan kembali). |
 | POST | `/knowledge/import` | `{ files: [{ path, content }] }` | Impor banyak file .md. |
+| POST | `/knowledge/import-artifact` | `{ artifactId, type, path?, id?, title?, description?, aliases?, tags?, status?, overwrite? }` | Simpan artefak Markdown sebagai file knowledge (front matter ditambahkan, `source: artifact:<id>/<nama>`). 404 artefak tidak ada, 400 bukan Markdown (menyebut `.md` dari paket yang sama), 409 path sudah dipakai (kirim `overwrite: true`). |
 | POST | `/knowledge/tables?name=` | isi file (raw) | Pratinjau sheet Excel/CSV: header, jumlah baris, contoh. |
 | POST | `/knowledge/import-table?name=&options=` | isi file (raw) | Satu file per baris + `INDEX.md`. `options` (JSON): `sheet`, `idColumn`, `titleColumn?`, `statusColumn?`, `aliasColumns[]`, `folder`, `type?`, `headerRow?`, `removeStale?`. |
 | POST | `/knowledge/import-document?name=&options=` | isi file (raw) | Word/PDF/PowerPoint/Markdown sebagai knowledge. `options`: `folder`, `split` (`"none"`, `1`, `2`), `type?`, `title?`, `removeStale?`. |

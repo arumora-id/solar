@@ -15,6 +15,7 @@ import { DocumentError } from '../documents/index.js';
 import { extractIsolated } from '../documents/isolated.js';
 import { importDocument } from '../knowledge/documentImport.js';
 import { importTable, MAX_IMPORT_ROWS, previewTables } from '../knowledge/tableImport.js';
+import { importArtifactToKnowledge, KnowledgeConflictError, KnowledgeInputError } from '../knowledge/knowledgeWrite.js';
 import type { ArtifactService } from '../tasks/artifactService.js';
 import type { AttachmentService } from '../tasks/attachmentService.js';
 import type { EventBus } from '../tasks/eventBus.js';
@@ -564,6 +565,38 @@ export function createApiRouter(deps: ApiDeps): Router {
       }
     }
     res.status(imported.length ? 201 : 400).json({ imported, failed });
+  });
+
+  /** A Markdown artifact (e.g. the .md of a TSD) saved as a knowledge file; 409 when the path is taken (send overwrite). */
+  r.post('/knowledge/import-artifact', async (req, res) => {
+    const body = parse(
+      z.object({
+        artifactId: z.string().regex(/^art_[A-Za-z0-9]+$/),
+        path: knowledgePath.optional(),
+        type: z.enum(KNOWLEDGE_TYPES as [string, ...string[]]),
+        id: z.string().trim().max(100).optional(),
+        title: z.string().trim().max(200).optional(),
+        description: z.string().trim().max(500).optional(),
+        aliases: z.array(z.string().trim().min(1).max(100)).max(30).optional(),
+        tags: z.array(z.string().trim().min(1).max(60)).max(30).optional(),
+        status: z.string().trim().max(40).optional(),
+        overwrite: z.boolean().default(false),
+      }),
+      req.body,
+    );
+    try {
+      const { entry, replaced } = await importArtifactToKnowledge(knowledge, artifacts, {
+        artifactId: body.artifactId,
+        path: body.path,
+        overwrite: body.overwrite,
+        meta: { ...body, type: body.type as KnowledgeType },
+      });
+      res.status(201).json({ entry, replaced });
+    } catch (err) {
+      if (err instanceof KnowledgeConflictError) throw new HttpError(409, err.message);
+      if (err instanceof KnowledgeInputError) throw new HttpError(err.status, err.message);
+      throw knowledgeError(err);
+    }
   });
 
   /** Spreadsheet (xlsx/csv) catalogs of systems, APIs or integrations: one Markdown file per row. */

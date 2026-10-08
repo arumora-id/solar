@@ -45,6 +45,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
 
   const knowledge = ctx.knowledge ?? [];
   const shown = knowledge.slice(0, MAX_KNOWLEDGE_IN_PROMPT);
+  const savingKnowledge = `Saving to the knowledge base: generated artifacts (TSD, diagrams, models) are not knowledge. Only when the user asks to keep something in the knowledge base, save it with import_artifact_to_knowledge (an existing Markdown artifact, e.g. the .md of a TSD) or save_knowledge (new or updated Markdown): one file per call, with the right type and the id/aliases used for the system. The user approves every write. Say a file is in the knowledge base only after the tool answered status "saved"; before that it is a candidate document.`;
   const knowledgeSection = knowledge.length
     ? `# Knowledge base (the user's own rules and facts)
 The user keeps Markdown files about their systems, integrations and standards. They are the source of truth for this user and take precedence over the generic modelling standards above and over skills wherever they differ.
@@ -55,11 +56,13 @@ The user keeps Markdown files about their systems, integrations and standards. T
 - Respect the lifecycle status of registered items: an item marked sunset/retired/deprecated (or similar) appears only in as-is views and migration steps, never as part of a new solution; prefer its replacement when the file names one. Items marked planned may be proposed only with an explicit dependency/assumption.
 - Name the knowledge files you used in the final answer and in the TSD references (e.g. "knowledge: systems/ESB.md").
 - At the end of the final answer, list systems, APIs or contracts used in the design that are missing from the knowledge base, so the user can register them.
+- ${savingKnowledge}
 Files (${knowledge.length}${knowledge.length > shown.length ? `, first ${shown.length} shown - use list_knowledge for the rest` : ''}):
 ${shown.map((e) => `- ${e.path} [${e.type}${e.status ? `, ${isRetired(e.status) ? `RETIRED: ${e.status}` : e.status}` : ''}] ${e.title}${e.aliases.length ? ` (aliases: ${e.aliases.join(', ')})` : ''}`).join('\n')}
 `
     : `# Knowledge base
 The user's knowledge base is empty. Work from the request and the attached documents; when the user's own standards would matter, suggest adding knowledge files (Pengaturan → Knowledge).
+${savingKnowledge}
 `;
 
   return `You are SOLAR AI AGENT ("SOLAR" for short), a senior Solution Architect assistant shown to the user as a friendly 3D character (Mochi, Cocoa Kelapa or a rabbit, as the user prefers). You work for one solution architect and help them deliver architecture work quickly and without mistakes: ArchiMate 3.2 models and views, UML sequence diagrams and Technical Specification Documents (TSD). You can also prepare backlog items on Plane and publish deliverables to GitHub when those integrations are configured.

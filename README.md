@@ -340,11 +340,16 @@ Cara agent memakainya:
 - Daftar file (path, jenis, judul, alias, status) ada di system prompt; file sistem/integrasi yang namanya atau aliasnya
   muncul di permintaan atau nama dokumen disodorkan otomatis (`<knowledge_matches>`).
 - Tool `list_knowledge`, `search_knowledge`, `read_knowledge` - agent hanya membaca file yang relevan.
+- Tool `save_knowledge` (buat/ubah file) dan `import_artifact_to_knowledge` (simpan artefak Markdown, mis. `.md` dari TSD,
+  sebagai knowledge) - dipakai hanya bila Anda memintanya, dan **setiap penulisan menunggu persetujuan Anda**. File yang
+  sudah ada tidak pernah ditimpa tanpa diminta. Artefak hasil task bukan knowledge sampai disimpan dengan cara ini.
 - Isi knowledge mengalahkan aturan bawaan dan skill. Sistem tanpa file tidak dikarang: dicatat sebagai asumsi/open issue,
   dan di akhir jawaban agent menyebut sistem/API yang belum terdaftar.
 - Item berstatus `sunset`/`retired`/`deprecated` hanya muncul di kondisi as-is dan migrasi, tidak dipakai untuk solusi baru.
 
 Impor:
+- **Artefak Markdown** - tombol buku di samping file `.md` pada daftar artefak (chat atau Monitor) → pilih jenis
+  (mis. *Sistem* → `systems/AD1GATE.md`), ID, judul dan alias → **Simpan**. ID artefak dicatat sebagai `source`.
 - **File .md / folder** - struktur folder dipertahankan.
 - **Excel/CSV registry** (daftar sistem, API, kontrak) - pilih sheet, kolom ID, nama, status dan alias; setiap baris menjadi
   satu file plus `INDEX.md`. Impor ulang memperbarui baris yang berubah dan (opsional) menghapus file baris yang sudah tidak ada.

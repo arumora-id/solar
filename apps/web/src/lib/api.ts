@@ -21,6 +21,16 @@ import type {
 
 const TOKEN_KEY = 'solar.accessToken';
 
+export interface ArtifactKnowledgeImport {
+  artifactId: string;
+  type: KnowledgeType;
+  path?: string;
+  id?: string;
+  title?: string;
+  aliases?: string[];
+  overwrite?: boolean;
+}
+
 export function getToken(): string {
   try {
     return localStorage.getItem(TOKEN_KEY) ?? '';
@@ -124,6 +134,9 @@ export const api = {
   knowledge: () => request<KnowledgeEntry[]>('GET', '/api/knowledge'),
   knowledgeFile: (path: string) => request<KnowledgeFile>('GET', `/api/knowledge/file?path=${encodeURIComponent(path)}`),
   saveKnowledge: (path: string, content: string) => request<KnowledgeEntry>('PUT', '/api/knowledge/file', { path, content }),
+  /** Saves a Markdown artifact as a knowledge file; ApiError 409 when the path is taken (retry with overwrite). */
+  importArtifactToKnowledge: (input: ArtifactKnowledgeImport) =>
+    request<{ entry: KnowledgeEntry; replaced: 'user' | 'builtin' | null }>('POST', '/api/knowledge/import-artifact', input),
   deleteKnowledge: (path: string) => request<{ result: string }>('DELETE', `/api/knowledge/file?path=${encodeURIComponent(path)}`),
   searchKnowledge: (q: string, type?: KnowledgeType) =>
     request<KnowledgeSearchHit[]>('GET', `/api/knowledge/search?q=${encodeURIComponent(q)}${type ? `&type=${type}` : ''}`),

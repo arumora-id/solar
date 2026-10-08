@@ -1,23 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { KnowledgeEntry, KnowledgeType } from '@solar/shared';
 import { api, type SheetPreview } from '../../lib/api';
+import { TYPE_LABEL, TYPES } from '../../lib/knowledgeTypes';
 import { useSolar } from '../../lib/store';
 import { PlusIcon } from '../Icons';
 
-const TYPE_LABEL: Record<KnowledgeType, string> = {
-  landscape: 'Landscape',
-  system: 'Sistem',
-  integration: 'Integrasi',
-  standard: 'Standar',
-  principle: 'Prinsip',
-  nfr: 'NFR / keamanan',
-  process: 'Proses',
-  document: 'Struktur dokumen',
-  decision: 'Keputusan (ADR)',
-  glossary: 'Glosarium',
-  reference: 'Referensi',
-};
-const TYPES = Object.keys(TYPE_LABEL) as KnowledgeType[];
 const RETIRED = /^(sunset|retired?|retiring|decommission(ed)?|deprecated|inactive|obsolete|phase[- ]?out|end[- ]of[- ]life|eol|tidak aktif|non[- ]?aktif|pensiun|dihentikan)$/i;
 
 const isGuide = (path: string) => path.split('/').some((s) => s.startsWith('_')) || /^readme\.md$/i.test(path);

@@ -5,7 +5,9 @@ ArchiMate, aturan sequence diagram (PlantUML), aturan spesifikasi API, prinsip a
 Agent membaca file yang relevan **sebelum** membuat opsi solusi, ArchiMate, sequence diagram, API spec, dan TSD,
 dan isinya **mengalahkan** aturan umum bawaan maupun skill.
 
-Kelola dari aplikasi: **Pengaturan → Knowledge** (buat, edit, impor banyak file sekaligus, hapus).
+Kelola dari aplikasi: **Pengaturan → Knowledge** (buat, edit, impor banyak file sekaligus, hapus). Artefak Markdown
+hasil task (mis. `.md` dari TSD) bisa disimpan ke sini lewat tombol buku di daftar artefak, atau dengan meminta agent
+(setiap penulisan oleh agent menunggu persetujuan Anda).
 File Anda disimpan di `data/knowledge/` (atau folder `KNOWLEDGE_DIR` di `.env`), sehingga folder itu juga bisa
 dijadikan repository Git sendiri.
 

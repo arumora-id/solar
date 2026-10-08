@@ -26,7 +26,7 @@ export function zodTool<S extends z.ZodType>(def: {
   displayName: string;
   description: string;
   schema: S;
-  confirmation?: (input: z.output<S>) => string | null;
+  confirmation?: (input: z.output<S>) => string | null | Promise<string | null>;
   execute: (input: z.output<S>, ctx: TaskRunContext) => Promise<ToolOutput>;
 }): AgentTool {
   return {
