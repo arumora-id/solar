@@ -20,6 +20,7 @@ import type { ArtifactService } from '../tasks/artifactService.js';
 import type { AttachmentService } from '../tasks/attachmentService.js';
 import type { EventBus } from '../tasks/eventBus.js';
 import type { TaskManager } from '../tasks/taskManager.js';
+import { exportTechSpecDocx, TechSpecDocxError } from '../tasks/techSpecDocx.js';
 
 export interface ApiDeps {
   config: AppConfig;
@@ -280,6 +281,22 @@ export function createApiRouter(deps: ApiDeps): Router {
     res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'; img-src data: 'self'; style-src 'unsafe-inline'");
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.end(body);
+  });
+
+  /**
+   * Word (.docx) file of a Technical Specification Document made before the tool wrote one. `:id` is any artifact of the
+   * TSD's bundle. 201 {artifact, created: true, warnings} with the new artifact (saved in the same task and bundle and
+   * announced to open UIs like the agent's own artifacts); 200 {artifact, created: false, warnings: []} when the bundle
+   * already has a Word file; 404 unknown artifact; 400 not part of a TSD bundle, or its model is not a valid specification.
+   */
+  r.post('/artifacts/:id/docx', async (req, res) => {
+    try {
+      const result = await exportTechSpecDocx(artifacts, (taskId, input) => tasks.addArtifact(taskId, input), req.params.id);
+      res.status(result.created ? 201 : 200).json(result);
+    } catch (err) {
+      if (err instanceof TechSpecDocxError) throw new HttpError(err.status, err.message);
+      throw err;
+    }
   });
 
   // ---- attachments (project documents) ----------------------------------------

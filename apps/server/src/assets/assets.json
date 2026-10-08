@@ -1,0 +1,5 @@
+{
+  "resvg.wasm": { "package": "@resvg/resvg-wasm/index_bg.wasm" },
+  "LiberationSans-Regular.ttf": { "file": "assets/fonts/LiberationSans-Regular.ttf" },
+  "LiberationSans-Bold.ttf": { "file": "assets/fonts/LiberationSans-Bold.ttf" }
+}

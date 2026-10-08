@@ -1,9 +1,11 @@
 import type { AttachmentKind } from '@solar/shared';
 import { documentError } from './types.js';
 
+export const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
 const BY_EXTENSION: Record<string, { kind: AttachmentKind; mimeType: string }> = {
   '.pdf': { kind: 'pdf', mimeType: 'application/pdf' },
-  '.docx': { kind: 'docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+  '.docx': { kind: 'docx', mimeType: DOCX_MIME },
   '.xlsx': { kind: 'xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
   '.xlsm': { kind: 'xlsx', mimeType: 'application/vnd.ms-excel.sheet.macroEnabled.12' },
   '.csv': { kind: 'csv', mimeType: 'text/csv' },

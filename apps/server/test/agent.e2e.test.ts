@@ -220,6 +220,7 @@ describe('agent end-to-end (scripted model)', () => {
         'sequence-model',
         'sequence-plantuml',
         'sequence-svg',
+        'tsd-docx',
         'tsd-html',
         'tsd-markdown',
         'tsd-model',
@@ -235,6 +236,33 @@ describe('agent end-to-end (scripted model)', () => {
     const res = await fetch(`${server.url}/api/artifacts/${md.id}/content`);
     expect(res.headers.get('content-security-policy')).toContain('sandbox');
     expect(await res.text()).toContain('TSD-ORD-001');
+
+    // the Word delivery document: same bundle as the other TSD files, served as a .docx download
+    const docx = detail!.artifacts.find((a) => a.kind === 'tsd-docx')!;
+    expect(docx.name).toBe(md.name.replace(/\.md$/, '.docx'));
+    expect(docx.bundle).toBe(md.bundle);
+    expect(docx.title).toBe('Order Platform - Technical Specification (Word)');
+    const word = await fetch(`${server.url}/api/artifacts/${docx.id}/content?download=1`);
+    expect(word.headers.get('content-type')).toBe('application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    expect(word.headers.get('content-disposition')).toMatch(/^attachment; filename=".*\.docx"/);
+    const bytes = Buffer.from(await word.arrayBuffer());
+    expect(bytes.subarray(0, 2).toString()).toBe('PK');
+    expect(bytes.length).toBe(docx.size);
+    // the tool reports the Word file and the UI was told about it like the other artifacts
+    const toolOutput = JSON.parse(outputsOf(JSON.parse(model.calls[4]!.input) as Item[]).get('tu_6')!) as { docx: { artifactId: string; file: string } };
+    expect(toolOutput.docx).toEqual({ artifactId: docx.id, file: docx.name });
+    expect(detail!.events.some((e) => e.type === 'artifact' && e.artifact.id === docx.id)).toBe(true);
+
+    // exporting the Word file again returns the one the tool made (any artifact of the bundle names it)
+    const again = await fetch(`${server.url}/api/artifacts/${md.id}/docx`, { method: 'POST' });
+    expect(again.status).toBe(200);
+    expect(((await again.json()) as { artifact: Artifact; created: boolean })).toMatchObject({ created: false, artifact: { id: docx.id } });
+    expect((await fetch(`${server.url}/api/artifacts/art_nope/docx`, { method: 'POST' })).status).toBe(404);
+    const svg = detail!.artifacts.find((a) => a.kind === 'archimate-svg')!;
+    const notTsd = await fetch(`${server.url}/api/artifacts/${svg.id}/docx`, { method: 'POST' });
+    expect(notTsd.status).toBe(400);
+    expect(((await notTsd.json()) as { error: string }).error).toMatch(/not part of a Technical Specification Document/);
+    expect((await api<TaskDetail>(`/api/tasks/${task.id}`)).artifacts.filter((a) => a.kind === 'tsd-docx')).toHaveLength(1);
 
     const zip = await fetch(`${server.url}/api/tasks/${task.id}/artifacts.zip`);
     expect(zip.headers.get('content-type')).toBe('application/zip');

@@ -3,7 +3,7 @@ import type { Artifact } from '@solar/shared';
 import type { AppConfig } from '../config.js';
 import { buildArchimate, ArchimateModelSchema, ELEMENT_INFO, ELEMENT_TYPES, allowedRelationships } from '../generators/archimate/index.js';
 import { buildSequence, SequenceDiagramSchema } from '../generators/sequence/index.js';
-import { buildTechSpec, TechSpecSchema, type ResolvedDiagram } from '../generators/techspec/index.js';
+import { buildTechSpec, renderTechSpecDocx, TechSpecSchema } from '../generators/techspec/index.js';
 import { formatIssues, type ValidationIssue } from '../generators/validation.js';
 import { GithubClient } from '../integrations/github.js';
 import { PlaneClient } from '../integrations/plane.js';
@@ -11,6 +11,7 @@ import type { SkillStore } from '../skills/skillStore.js';
 import type { ArtifactService } from '../tasks/artifactService.js';
 import type { AttachmentService } from '../tasks/attachmentService.js';
 import type { TaskRunContext } from '../tasks/taskManager.js';
+import { resolveTaskDiagrams, tsdDocxArtifact } from '../tasks/techSpecDocx.js';
 import { newId, slugify } from '../util/ids.js';
 import { createDocumentTools } from './documentTools.js';
 import { json, zodTool } from './zodTool.js';
@@ -273,26 +274,16 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
       name: 'create_technical_specification',
       displayName: 'Menyusun Technical Specification',
       description: [
-        'Create the Technical Specification Document (TSD) as Markdown (GitHub ready, diagrams linked as sibling SVG files and Mermaid sources)',
-        'and as a standalone print-ready HTML with embedded diagrams. Reference diagrams by the SVG artifact ids returned by',
+        'Create the Technical Specification Document (TSD) as Markdown (GitHub ready, diagrams linked as sibling SVG files and Mermaid sources),',
+        'as a standalone print-ready HTML with embedded diagrams, and as a Word document (.docx) for delivery to the client: A4 with cover page,',
+        'document control, revision history, approval sign-off table (when reviewers/approvers are given), table of contents, header/footer',
+        'with page numbers and the diagrams embedded as figures. Reference diagrams by the SVG artifact ids returned by',
         'create_archimate_model / create_sequence_diagram in this task. Ids of requirements, decisions, risks and issues must be unique.',
       ].join(' '),
       schema: TechSpecSchema.extend({ fileName }),
       async execute(input, ctx) {
         const { fileName: base, ...spec } = input;
-        const diagrams = new Map<string, ResolvedDiagram>();
-        const all = await ctx.listArtifacts();
-        for (const a of all) {
-          if (a.kind !== 'archimate-svg' && a.kind !== 'sequence-svg') continue;
-          const svg = await artifacts.readText(a);
-          const mermaidArtifact = all.find((m) => m.bundle === a.bundle && m.kind === 'sequence-mermaid');
-          diagrams.set(a.id, {
-            artifactId: a.id,
-            fileName: a.name,
-            svg,
-            mermaid: mermaidArtifact ? await artifacts.readText(mermaidArtifact) : undefined,
-          });
-        }
+        const diagrams = await resolveTaskDiagrams(artifacts, await ctx.listArtifacts());
         const today = new Date().toISOString().slice(0, 10);
         const result = buildTechSpec(spec, diagrams, today);
         if (!result.ok) return failure('Technical specification rejected', result.errors, result.warnings);
@@ -316,7 +307,7 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
           bundle,
           content: out.html,
         });
-        await ctx.createArtifact({
+        const model = await ctx.createArtifact({
           name: `${stem}.tsd.json`,
           title: `${spec.title} (source)`,
           kind: 'tsd-model',
@@ -324,14 +315,28 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
           bundle,
           content: json(out.spec),
         });
+        const warnings = out.warnings.map((w) => `[${w.path}] ${w.message}`);
+        // the Word file never fails the TSD: the other files are saved and it can be exported again later
+        let docx: { artifactId: string; file: string } | null = null;
+        try {
+          const rendered = await renderTechSpecDocx(out.document);
+          const saved = await ctx.createArtifact(tsdDocxArtifact({ stem, title: spec.title, bundle, document: out.document, buffer: rendered.buffer }));
+          docx = { artifactId: saved.id, file: saved.name };
+          warnings.push(...rendered.warnings.map((w) => `[docx] ${w}`));
+        } catch (err) {
+          warnings.push(
+            `[docx] The Word file could not be created (${err instanceof Error ? err.message : String(err)}). The Markdown, HTML and JSON files are saved; the Word file can be exported again later from ${model.name} (${model.id}).`,
+          );
+        }
         return {
-          summary: `${out.spec.functionalRequirements.length} FR, ${out.spec.nonFunctionalRequirements.length} NFR`,
+          summary: `${out.spec.functionalRequirements.length} FR, ${out.spec.nonFunctionalRequirements.length} NFR${docx ? ', .docx' : ''}`,
           content: json({
             status: 'saved',
             bundle,
             markdown: { artifactId: md.id, file: md.name },
             html: { artifactId: html.id, file: html.name },
-            warnings: out.warnings.map((w) => `[${w.path}] ${w.message}`),
+            docx,
+            warnings,
           }),
         };
       },
@@ -364,7 +369,13 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
       async execute(input) {
         const artifact = await artifacts.get(input.artifact_id);
         if (!artifact) return { isError: true, content: `Artifact ${input.artifact_id} not found`, summary: 'not found' };
-        if (!TEXT_KINDS.has(artifact.kind)) return { isError: true, content: 'Binary artifact', summary: 'binary' };
+        if (!TEXT_KINDS.has(artifact.kind)) {
+          return {
+            isError: true,
+            content: `${artifact.name} is a binary file (${artifact.mimeType}); read the Markdown or JSON file of the same bundle instead.`,
+            summary: 'binary',
+          };
+        }
         const text = await artifacts.readText(artifact);
         const limit = 200_000;
         return {

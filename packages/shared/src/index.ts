@@ -113,6 +113,8 @@ export type ArtifactKind =
   | 'tsd-markdown'
   | 'tsd-html'
   | 'tsd-model'
+  /** The TSD as a Word document (.docx) for delivery to the client. Binary. */
+  | 'tsd-docx'
   | 'other';
 
 export interface Artifact {

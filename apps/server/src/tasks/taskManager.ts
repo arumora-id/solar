@@ -260,6 +260,16 @@ export class TaskManager {
     await this.emit(task.id, { type: 'status', status, message: patch.error });
   }
 
+  /**
+   * Saves an artifact for a task outside an agent run (e.g. the Word file of an older TSD) and announces it with the same
+   * `artifact` event as the artifacts a run creates, so open web UIs add it to the task's artifact list.
+   */
+  async addArtifact(taskId: string, input: Omit<NewArtifact, 'taskId'>): Promise<Artifact> {
+    const artifact = await this.artifacts.create({ ...input, taskId });
+    await this.emit(taskId, { type: 'artifact', artifact });
+    return artifact;
+  }
+
   private async save(task: Task): Promise<void> {
     const active = this.active.get(task.id);
     if (active) active.task = task;
