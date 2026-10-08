@@ -1,5 +1,6 @@
 import gsap from 'gsap';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { Artifact, KnowledgeType } from '@solar/shared';
 import { api, ApiError } from '../lib/api';
 import { formatBytes } from '../lib/format';
@@ -82,11 +83,15 @@ export function ArtifactList({ taskId, artifacts }: { taskId: string; artifacts:
           <DownloadIcon /> Unduh semua (ZIP)
         </a>
       </div>
-      {preview && <ArtifactPreview artifact={preview} siblings={artifacts} onClose={() => setPreview(null)} />}
-      {saving && <SaveToKnowledge artifact={saving} onClose={() => setSaving(null)} />}
+      {/* dialogs go to <body>: inside an animated chat bubble (a transformed ancestor) a fixed backdrop would be clipped to the bubble */}
+      {preview && createPortal(<ArtifactPreview artifact={preview} siblings={artifacts} onClose={() => setPreview(null)} />, document.body)}
+      {saving && createPortal(<SaveToKnowledge artifact={saving} onClose={() => setSaving(null)} />, document.body)}
     </div>
   );
 }
+
+/** Folders/files starting with "_" (e.g. _templates/) and README.md are guidance for people; the agent does not read them. */
+const isGuidancePath = (path: string) => path.split('/').some((seg) => seg.startsWith('_')) || /^readme\.md$/i.test(path);
 
 /** Saves a Markdown artifact (e.g. the .md of a TSD) as a knowledge file, so the agent uses it in later tasks. */
 function SaveToKnowledge({ artifact, onClose }: { artifact: Artifact; onClose: () => void }) {
@@ -147,7 +152,11 @@ function SaveToKnowledge({ artifact, onClose }: { artifact: Artifact; onClose: (
         {savedAt ? (
           <>
             <p>
-              Tersimpan sebagai <code>{savedAt}</code>. Agent membacanya mulai task berikutnya; kelola di Pengaturan → Knowledge.
+              Tersimpan sebagai <code>{savedAt}</code>.{' '}
+              {isGuidancePath(savedAt)
+                ? 'File di folder berawalan "_" atau README.md adalah panduan untuk manusia dan tidak dibaca agent'
+                : 'Agent membacanya mulai task berikutnya'}
+              ; kelola di Pengaturan → Knowledge.
             </p>
             <div className="modal-actions">
               <button type="button" className="btn primary" onClick={onClose} autoFocus>

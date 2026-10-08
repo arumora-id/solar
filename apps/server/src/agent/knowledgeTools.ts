@@ -219,6 +219,7 @@ export function createKnowledgeTools(knowledge: KnowledgeStore, artifacts?: Arti
         `Without a path the file goes to "<type folder>/<id or title>.md" (folders: ${Object.entries(TYPE_FOLDERS)
           .map(([t, f]) => `${t} -> ${f}/`)
           .join(', ')}).`,
+        'Without path, id and title the name comes from the content (its front matter id/title or first heading).',
         'Front matter (id, type, title, aliases, tags, status) is written for you; content is the Markdown body.',
         'To keep a generated document (e.g. the .md of a TSD) use import_artifact_to_knowledge instead of copying its text.',
       ].join(' '),
@@ -228,7 +229,7 @@ export function createKnowledgeTools(knowledge: KnowledgeStore, artifacts?: Arti
         content: z.string().min(1).max(500_000).describe('Markdown body of the file'),
       }),
       confirmation: async (input) => {
-        const path = savePathOf({ path: input.path, meta: metaOf(input) });
+        const path = savePathOf({ path: input.path, meta: metaOf(input), content: input.content });
         const text = composeKnowledgeFile(input.content, metaOf(input));
         return ask(input, await writeApproval(knowledge, path, `${input.type}${input.title ? ` "${input.title}"` : ''}`, input.overwrite, text));
       },

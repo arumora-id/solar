@@ -93,9 +93,10 @@ export function parseFrontMatter(raw: string): ParsedFile {
   }
 }
 
-const str = (v: unknown) => (typeof v === 'string' ? v.trim() : typeof v === 'number' ? String(v) : '');
+/** One line of at most 300 characters: front matter values are listed in the agent's instructions, one file per line. */
+const str = (v: unknown) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, 300) : typeof v === 'number' ? String(v) : '');
 const strList = (v: unknown): string[] =>
-  Array.isArray(v) ? v.map(str).filter(Boolean) : typeof v === 'string' ? v.split(',').map((s) => s.trim()).filter(Boolean) : [];
+  (Array.isArray(v) ? v.map(str) : typeof v === 'string' ? v.split(',').map(str) : []).filter(Boolean).slice(0, 50);
 
 export function describeKnowledge(path: string, raw: string, source: 'builtin' | 'user', size: number, updatedAt: string): KnowledgeEntry {
   const { meta, body } = parseFrontMatter(raw);

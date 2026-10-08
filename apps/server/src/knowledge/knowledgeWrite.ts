@@ -118,8 +118,16 @@ export interface SaveKnowledgeResult {
   replaced: 'user' | 'builtin' | null;
 }
 
-export function savePathOf(input: Pick<SaveKnowledgeInput, 'path' | 'meta' | 'defaultName'>): string {
-  return knowledgePathFor(input.meta.type, input.path, input.meta.id || input.meta.title || input.defaultName || 'knowledge');
+export function savePathOf(input: Pick<SaveKnowledgeInput, 'path' | 'meta' | 'defaultName'> & { content?: string }): string {
+  return knowledgePathFor(input.meta.type, input.path, input.meta.id || input.meta.title || input.defaultName || contentName(input.content) || 'knowledge');
+}
+
+/** The name a file is known by in its own text: the front matter id or title, else the first heading. */
+function contentName(content: string | undefined): string {
+  if (!content) return '';
+  const { meta, body } = parseFrontMatter(content);
+  const name = [meta.id, meta.title].find((v): v is string => typeof v === 'string' && v.trim() !== '');
+  return name?.trim() ?? /^#\s+(.+)$/m.exec(body)?.[1]?.trim() ?? '';
 }
 
 /**
