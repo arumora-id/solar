@@ -41,7 +41,7 @@ function glyphSprite(text: string, color: string): THREE.Sprite {
 }
 
 /**
- * Procedural, asset-free 3D character of SOLAR AI AGENT (Mochi, Cocoa Kelapa or the classic rabbit) animated with
+ * Procedural, asset-free 3D character of SOLAR AI AGENT (Robo, Mochi, Cocoa Kelapa or the classic rabbit) animated with
  * GSAP. Every pose is a GSAP timeline on Object3D properties of the model's rig; three.js only renders.
  */
 export class CharacterScene {
