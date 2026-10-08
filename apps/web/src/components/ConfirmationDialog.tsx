@@ -50,7 +50,7 @@ export function ConfirmationDialog() {
         {task && <p className="hint">Task: {task.title}</p>}
         <div className="field">
           <span>Data yang akan dikirim</span>
-          <pre className="json">{JSON.stringify(current.input, null, 2)}</pre>
+          <pre className="json">{typeof current.input === 'string' ? current.input : JSON.stringify(current.input, null, 2)}</pre>
         </div>
         <label className="field">
           <span>Catatan untuk SOLAR (opsional)</span>

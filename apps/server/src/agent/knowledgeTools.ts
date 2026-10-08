@@ -1,12 +1,15 @@
 import { z } from 'zod';
-import type { KnowledgeEntry } from '@solar/shared';
-import { isAgentKnowledge, KNOWLEDGE_TYPES, normalizeKnowledgePath, type KnowledgeStore } from '../knowledge/knowledgeStore.js';
+import type { Artifact, KnowledgeEntry } from '@solar/shared';
+import { isAgentKnowledge, KNOWLEDGE_TYPES, MAX_KNOWLEDGE_FILE_BYTES, normalizeKnowledgePath, type KnowledgeStore } from '../knowledge/knowledgeStore.js';
 import {
+  composeKnowledgeFile,
   importArtifactToKnowledge,
   existingKnowledge,
   KnowledgeConflictError,
   KnowledgeInputError,
   knowledgeFileName,
+  knowledgeState,
+  KnowledgeStateChangedError,
   markdownArtifact,
   savePathOf,
   saveKnowledgeFile,
@@ -60,18 +63,30 @@ const metaOf = (input: { type: string; id?: string; title?: string; description?
   status: input.status,
 });
 
-/** What the user approves: where the file goes, and whether it replaces one. Null when nothing will be written. */
-async function writeReason(knowledge: KnowledgeStore, path: string, what: string, overwrite: boolean): Promise<string | null> {
-  // guidance paths are refused before anything is written
-  if (!isAgentKnowledge(path)) return null;
+interface Approval {
+  reason: string;
+  /** What was at the path when the user was asked (knowledgeState); the write is refused when it changed since. */
+  state: string | null;
+}
+
+/**
+ * What the user approves: where the file goes, and whether it replaces one. Null when nothing will be written
+ * (the write would be refused, so execute only reports why).
+ */
+async function writeApproval(knowledge: KnowledgeStore, path: string, what: string, overwrite: boolean, text: string): Promise<Approval | null> {
+  // guidance paths and files over the size limit are refused before anything is written
+  if (!isAgentKnowledge(path) || Buffer.byteLength(text, 'utf8') > MAX_KNOWLEDGE_FILE_BYTES) return null;
   const existing = await existingKnowledge(knowledge, path).catch(() => null);
   // without overwrite an existing file is refused before anything is written: nothing to approve
   if (existing && !overwrite) return null;
   const replaces = existing ? ` - MENGGANTI ${existing.source === 'builtin' ? 'file bawaan' : 'file yang sudah ada'} "${existing.title}" (${existing.path})` : '';
-  return `Menyimpan ${what} ke knowledge base: ${path}${replaces}. Isi knowledge base diikuti agent di atas aturan bawaan pada task berikutnya.`;
+  return {
+    reason: `Menyimpan ${what} ke knowledge base: ${path}${replaces}. Isi knowledge base diikuti agent di atas aturan bawaan pada task berikutnya.`,
+    state: knowledgeState(existing),
+  };
 }
 
-/** Output when the user was not asked (the write would be refused) but the refusal no longer applies. */
+/** Output when the knowledge base changed between the approval check and the write. */
 const STATE_CHANGED: ToolOutput = {
   isError: true,
   content: 'The knowledge base changed while this call was checked, so nothing was written. Call the tool again.',
@@ -96,6 +111,7 @@ function saved(result: SaveKnowledgeResult, extra: Record<string, unknown> = {})
 }
 
 function refused(err: unknown): ToolOutput {
+  if (err instanceof KnowledgeStateChangedError) return STATE_CHANGED;
   if (err instanceof KnowledgeConflictError) {
     return {
       isError: true,
@@ -119,14 +135,15 @@ const brief = (e: KnowledgeEntry) => ({
 
 export function createKnowledgeTools(knowledge: KnowledgeStore, artifacts?: ArtifactService): AgentTool[] {
   /**
-   * Inputs the user was asked to approve. A write tool executes either after an approval or, when its confirmation
-   * returned null, only to report why nothing is written: such a call writes nothing, even if the knowledge base
-   * changed in between.
+   * Inputs the user was asked to approve, with what was at the path then. A write tool executes either after an
+   * approval or, when its confirmation returned null, only to report why nothing is written: such a call writes
+   * nothing, even if the knowledge base changed in between. An approved write is refused when the file at the path
+   * changed after the user was asked, so the user never approves one file and gets another replaced.
    */
-  const asked = new WeakSet<object>();
-  const ask = (input: object, reason: string | null) => {
-    if (reason) asked.add(input);
-    return reason;
+  const asked = new WeakMap<object, string | null>();
+  const ask = (input: object, approval: Approval | null) => {
+    if (approval) asked.set(input, approval.state);
+    return approval?.reason ?? null;
   };
   const tools: AgentTool[] = [
     zodTool({
@@ -212,8 +229,11 @@ export function createKnowledgeTools(knowledge: KnowledgeStore, artifacts?: Arti
       }),
       confirmation: async (input) => {
         const path = savePathOf({ path: input.path, meta: metaOf(input) });
-        return ask(input, await writeReason(knowledge, path, `${input.type}${input.title ? ` "${input.title}"` : ''}`, input.overwrite));
+        const text = composeKnowledgeFile(input.content, metaOf(input));
+        return ask(input, await writeApproval(knowledge, path, `${input.type}${input.title ? ` "${input.title}"` : ''}`, input.overwrite, text));
       },
+      // the whole file the user approves, shown as text instead of the shortened tool input
+      confirmationPreview: async (input) => composeKnowledgeFile(input.content, metaOf(input)),
       async execute(input) {
         const dryRun = !asked.has(input);
         try {
@@ -224,6 +244,7 @@ export function createKnowledgeTools(knowledge: KnowledgeStore, artifacts?: Arti
             overwrite: input.overwrite,
             agentReadable: true,
             dryRun,
+            approvedState: asked.get(input),
           });
           return dryRun ? STATE_CHANGED : saved(result);
         } catch (err) {
@@ -234,6 +255,9 @@ export function createKnowledgeTools(knowledge: KnowledgeStore, artifacts?: Arti
   ];
 
   if (artifacts) {
+    /** The knowledge file an import writes: the artifact's text with the front matter (as importArtifactToKnowledge). */
+    const artifactFile = async (artifact: Artifact, input: Parameters<typeof metaOf>[0]) =>
+      composeKnowledgeFile(await artifacts.readText(artifact), { ...metaOf(input), source: `artifact:${artifact.id}/${artifact.name}` });
     tools.push(
       zodTool({
         name: 'import_artifact_to_knowledge',
@@ -259,7 +283,14 @@ export function createKnowledgeTools(knowledge: KnowledgeStore, artifacts?: Arti
           } catch {
             return null;
           }
-          return ask(input, await writeReason(knowledge, normalized, `artefak ${artifact.name}`, input.overwrite));
+          const text = await artifactFile(artifact, input).catch(() => null);
+          if (text === null) return null;
+          return ask(input, await writeApproval(knowledge, normalized, `artefak ${artifact.name}`, input.overwrite, text));
+        },
+        // the artifact and the whole file the user approves (the tool input itself only carries the artifact id)
+        confirmationPreview: async (input) => {
+          const artifact = await markdownArtifact(artifacts, input.artifact_id);
+          return `Artefak ${artifact.name} (${artifact.id}, task ${artifact.taskId}, ${artifact.createdAt}):\n\n${await artifactFile(artifact, input)}`;
         },
         async execute(input) {
           const dryRun = !asked.has(input);
@@ -271,6 +302,7 @@ export function createKnowledgeTools(knowledge: KnowledgeStore, artifacts?: Arti
               overwrite: input.overwrite,
               agentReadable: true,
               dryRun,
+              approvedState: asked.get(input),
             });
             return dryRun ? STATE_CHANGED : saved(result, { source_artifact: { id: result.artifact.id, name: result.artifact.name } });
           } catch (err) {

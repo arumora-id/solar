@@ -95,7 +95,8 @@ function SaveToKnowledge({ artifact, onClose }: { artifact: Artifact; onClose: (
   const [path, setPath] = useState(`${TYPE_FOLDERS.document}/${fileName}`);
   const [pathEdited, setPathEdited] = useState(false);
   const [id, setId] = useState(fileName.replace(/\.md$/i, ''));
-  const [title, setTitle] = useState(artifact.title);
+  // empty: the server keeps the document's own title (the artifact title carries a "(Markdown)" suffix)
+  const [title, setTitle] = useState('');
   const [aliases, setAliases] = useState('');
   const [conflict, setConflict] = useState('');
   const [overwrite, setOverwrite] = useState(false);
@@ -168,7 +169,12 @@ function SaveToKnowledge({ artifact, onClose }: { artifact: Artifact; onClose: (
                 onChange={(e) => {
                   const t = e.target.value as KnowledgeType;
                   setType(t);
-                  if (!pathEdited) setPath(`${TYPE_FOLDERS[t]}/${fileName}`);
+                  if (!pathEdited) {
+                    setPath(`${TYPE_FOLDERS[t]}/${fileName}`);
+                    // the 409 and the consent to replace were for the old path
+                    setConflict('');
+                    setOverwrite(false);
+                  }
                 }}
               >
                 {TYPES.map((t) => (
@@ -198,7 +204,7 @@ function SaveToKnowledge({ artifact, onClose }: { artifact: Artifact; onClose: (
             </label>
             <label className="field">
               <span>Judul</span>
-              <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} />
+              <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Kosongkan untuk memakai judul dokumen" />
             </label>
             <label className="field">
               <span>Alias (pisahkan dengan koma, opsional)</span>

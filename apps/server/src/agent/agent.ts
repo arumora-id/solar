@@ -229,7 +229,7 @@ async function runTool(call: ToolCall, toolMap: Map<string, AgentTool>, ctx: Tas
       pluginId: tool.pluginId ?? null,
       pluginName: tool.pluginName ?? null,
       reason,
-      input: previewInput(parsed.value),
+      input: tool.confirmationPreview ? await tool.confirmationPreview(parsed.value).catch(() => previewInput(parsed.value)) : previewInput(parsed.value),
     });
     if (!decision.approved) {
       return finish(

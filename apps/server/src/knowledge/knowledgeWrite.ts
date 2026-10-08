@@ -1,7 +1,7 @@
 import { stringify as stringifyYaml } from 'yaml';
 import type { Artifact, KnowledgeEntry, KnowledgeType } from '@solar/shared';
 import type { ArtifactService } from '../tasks/artifactService.js';
-import { isAgentKnowledge, normalizeKnowledgePath, parseFrontMatter, type KnowledgeStore } from './knowledgeStore.js';
+import { describeKnowledge, isAgentKnowledge, MAX_KNOWLEDGE_FILE_BYTES, normalizeKnowledgePath, parseFrontMatter, type KnowledgeStore } from './knowledgeStore.js';
 
 /** Folder for each type when no path is given. The front matter `type` decides the type; the folder only sorts. */
 export const TYPE_FOLDERS: Record<KnowledgeType, string> = {
@@ -108,6 +108,8 @@ export interface SaveKnowledgeInput {
   agentReadable?: boolean;
   /** Run every check (and throw the same errors) without writing. */
   dryRun?: boolean;
+  /** What was at the path when the user approved (knowledgeState); the save is refused when that changed since. */
+  approvedState?: string | null;
 }
 
 export interface SaveKnowledgeResult {
@@ -128,7 +130,31 @@ export async function existingKnowledge(store: KnowledgeStore, path: string): Pr
   const exact = await store.read(path);
   if (exact) return exact.entry;
   const lower = path.toLowerCase();
-  return (await store.listAll()).find((e) => e.path.toLowerCase() === lower) ?? null;
+  const listed = (await store.listAll()).find((e) => e.path.toLowerCase() === lower);
+  if (listed) return listed;
+  // a file the store does not list (too large to read, or past the file limit) is still there and must not be replaced silently
+  const onDisk = await store.locate(path);
+  return onDisk ? describeKnowledge(onDisk.path, '', onDisk.source, onDisk.size, onDisk.updatedAt) : null;
+}
+
+/** Identifies what is at a path, so a write can tell whether it changed after the user approved it. */
+export function knowledgeState(existing: KnowledgeEntry | null): string | null {
+  return existing ? `${existing.source}:${existing.path}:${existing.size}:${existing.updatedAt}` : null;
+}
+
+/** The file at the path changed (was created, replaced or removed) after the user was asked to approve the write. */
+export class KnowledgeStateChangedError extends Error {
+  constructor(readonly path: string) {
+    super(`Knowledge "${path}" berubah setelah persetujuan diminta.`);
+  }
+}
+
+/** One check-and-write at a time per store (agent tools and the API), so two saves cannot both see "nothing there". */
+const writeQueues = new WeakMap<KnowledgeStore, Promise<unknown>>();
+function serialized<T>(store: KnowledgeStore, run: () => Promise<T>): Promise<T> {
+  const next = (writeQueues.get(store) ?? Promise.resolve()).then(run);
+  writeQueues.set(store, next.catch(() => undefined));
+  return next;
 }
 
 export async function saveKnowledgeFile(store: KnowledgeStore, input: SaveKnowledgeInput): Promise<SaveKnowledgeResult> {
@@ -136,13 +162,23 @@ export async function saveKnowledgeFile(store: KnowledgeStore, input: SaveKnowle
   if (input.agentReadable && !isAgentKnowledge(path)) {
     throw new KnowledgeInputError(400, `"${path}" adalah panduan untuk manusia (folder/file berawalan "_" atau README.md) dan tidak dibaca agent; pilih path lain.`);
   }
-  const existing = await existingKnowledge(store, path);
-  if (existing && !input.overwrite) throw new KnowledgeConflictError(existing.path, existing);
   const text = composeKnowledgeFile(input.content, input.meta);
-  if (input.dryRun) return { entry: existing ?? ({ path } as KnowledgeEntry), replaced: existing ? existing.source : null };
-  // replacing keeps the existing file's spelling, so a case-insensitive file system does not end up with two names
-  const entry = await store.write(existing?.path ?? path, text);
-  return { entry, replaced: existing ? existing.source : null };
+  const bytes = Buffer.byteLength(text, 'utf8');
+  if (bytes > MAX_KNOWLEDGE_FILE_BYTES) {
+    throw new KnowledgeInputError(
+      400,
+      `File knowledge akan berukuran ${Math.ceil(bytes / 1024)} KB termasuk front matter; batasnya ${MAX_KNOWLEDGE_FILE_BYTES / 1024} KB. Ringkas atau pecah isinya.`,
+    );
+  }
+  return serialized(store, async () => {
+    const existing = await existingKnowledge(store, path);
+    if (existing && !input.overwrite) throw new KnowledgeConflictError(existing.path, existing);
+    if (input.approvedState !== undefined && knowledgeState(existing) !== input.approvedState) throw new KnowledgeStateChangedError(path);
+    if (input.dryRun) return { entry: existing ?? ({ path } as KnowledgeEntry), replaced: existing ? existing.source : null };
+    // replacing keeps the existing file's spelling, so a case-insensitive file system does not end up with two names
+    const entry = await store.write(existing?.path ?? path, text);
+    return { entry, replaced: existing ? existing.source : null };
+  });
 }
 
 export function isMarkdownArtifact(a: Artifact): boolean {

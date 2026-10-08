@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -63,6 +63,19 @@ describe('knowledge files written by the agent', () => {
     expect([entry.id, entry.type, entry.title, entry.aliases]).toEqual(['AD1GATE', 'system', 'AD1GATE API Gateway', ['AD1 Gateway']]);
   });
 
+  it('keeps a leading block between rules that is not front matter as content', () => {
+    for (const content of [
+      '---\nRingkasan sistem pengadaan\n---\n# E-PROC\n',
+      '---\n- REST melalui ESB\n- SFTP harian\n---\nCatatan akhir\n',
+      '---\n# Judul\n---\nIsi\n',
+    ]) {
+      const text = composeKnowledgeFile(content, { type: 'system', title: 'T' });
+      expect(parseFrontMatter(text).meta).toEqual({ type: 'system', title: 'T' });
+      expect(parseFrontMatter(text).body.trim()).toBe(content.trim());
+      expect(composeKnowledgeFile(text, { type: 'system', title: 'T' })).toBe(text);
+    }
+  });
+
   it('derives safe paths from the type and a name', () => {
     expect(knowledgePathFor('system', undefined, 'AD1GATE')).toBe('systems/AD1GATE.md');
     expect(knowledgePathFor('document', undefined, 'TEMPLATE_TSD_Solution_Architecture.md')).toBe('documents/TEMPLATE_TSD_Solution_Architecture.md');
@@ -78,10 +91,12 @@ describe('agent knowledge write tools', () => {
   let tools: Map<string, AgentTool>;
   let md: Artifact;
   let html: Artifact;
+  let userDir: string;
   const ctx = {} as TaskRunContext;
 
   beforeAll(async () => {
     const dir = mkdtempSync(join(tmpdir(), 'solar-kb-write-'));
+    userDir = join(dir, 'user');
     const builtin = join(dir, 'builtin');
     mkdirSync(join(builtin, 'standards'), { recursive: true });
     writeFileSync(join(builtin, 'standards', 'NAMING.md'), '---\ntype: standard\n---\n# Penamaan bawaan\n');
@@ -160,6 +175,68 @@ describe('agent knowledge write tools', () => {
     const out = await tool.execute(parsed.value, ctx);
     expect(out.isError).toBe(true);
     expect(await store.read('systems/TEMP.md')).toBeNull();
+  });
+
+  it('refuses an approved write when the file changed after the user was asked', async () => {
+    const tool = tools.get('save_knowledge')!;
+    const parse = (input: unknown) => {
+      const parsed = tool.parse(input);
+      if (!parsed.ok) throw new Error(parsed.error);
+      return parsed.value;
+    };
+    // both approvals are asked while systems/ERP.md does not exist: neither says it replaces a file
+    const first = parse({ type: 'system', path: 'systems/ERP.md', content: '# ERP kurasi pengguna\n' });
+    const second = parse({ type: 'system', path: 'systems/ERP.md', content: '# ERP dari BRD\n', overwrite: true });
+    expect(await tool.confirmation(first)).not.toContain('MENGGANTI');
+    expect(await tool.confirmation(second)).not.toContain('MENGGANTI');
+    expect((await tool.execute(first, ctx)).isError).toBeFalsy();
+    const stale = await tool.execute(second, ctx);
+    expect(stale.isError).toBe(true);
+    expect(String(stale.content)).toContain('nothing was written');
+    expect((await store.read('systems/ERP.md'))!.content).toContain('ERP kurasi pengguna');
+
+    // two approved creates of the same name in another letter case, executed together: one file, one refusal
+    const upper = parse({ type: 'system', path: 'systems/HR.md', content: '# HR A\n' });
+    const lower = parse({ type: 'system', path: 'systems/hr.md', content: '# HR B\n' });
+    await tool.confirmation(upper);
+    await tool.confirmation(lower);
+    const outs = await Promise.all([tool.execute(upper, ctx), tool.execute(lower, ctx)]);
+    expect(outs.filter((o) => !o.isError)).toHaveLength(1);
+    expect((await store.listAll()).filter((e) => e.path.toLowerCase() === 'systems/hr.md')).toHaveLength(1);
+  });
+
+  it('sees files the store does not list (over the size limit) before replacing them', async () => {
+    mkdirSync(join(userDir, 'documents'), { recursive: true });
+    const big = `# Katalog\n\n${'baris katalog\n'.repeat(50_000)}`;
+    writeFileSync(join(userDir, 'documents', 'KATALOG.md'), big);
+    const keep = await call('save_knowledge', { type: 'document', path: 'documents/KATALOG.md', content: '# Ringkas\n' });
+    expect(keep.reason).toBeNull();
+    expect(keep.out.isError).toBe(true);
+    expect(readFileSync(join(userDir, 'documents', 'KATALOG.md'), 'utf8')).toBe(big);
+    const replace = await call('save_knowledge', { type: 'document', path: 'documents/KATALOG.md', content: '# Ringkas\n', overwrite: true });
+    expect(replace.reason).toContain('MENGGANTI');
+    expect(JSON.parse(String(replace.out.content))).toMatchObject({ status: 'saved', replaced: 'user' });
+  });
+
+  it('shows the whole file in the approval and does not ask for a file over the size limit', async () => {
+    const tool = tools.get('save_knowledge')!;
+    const tail = '## Aturan wajib\nKalimat terakhir yang harus terlihat.';
+    const parsed = tool.parse({ type: 'document', path: 'documents/PANJANG.md', content: `# Panjang\n\n${'x'.repeat(30_000)}\n\n${tail}\n` });
+    if (!parsed.ok) throw new Error(parsed.error);
+    const preview = await tool.confirmationPreview!(parsed.value);
+    expect(typeof preview).toBe('string');
+    expect(String(preview)).toContain(tail);
+    expect(String(preview)).toMatch(/^---\ntype: document\n---/);
+
+    const importPreview = await tools.get('import_artifact_to_knowledge')!.confirmationPreview!({ artifact_id: md.id, type: 'system', overwrite: false });
+    expect(String(importPreview)).toContain(md.id);
+    expect(String(importPreview)).toContain('REST/JSON melalui mTLS');
+
+    const tooBig = await call('save_knowledge', { type: 'document', path: 'documents/BESAR.md', content: 'é'.repeat(300_000) });
+    expect(tooBig.reason).toBeNull();
+    expect(tooBig.out.isError).toBe(true);
+    expect(String(tooBig.out.content)).toContain('512 KB');
+    expect(await store.read('documents/BESAR.md')).toBeNull();
   });
 
   it('refuses paths the agent would never read and invalid paths', async () => {

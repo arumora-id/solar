@@ -26,5 +26,7 @@ export interface AgentTool {
   parse(input: unknown): ParseResult;
   /** Returns the reason when the user must approve this call, otherwise null (may look things up first). */
   confirmation(input: unknown): string | null | Promise<string | null>;
+  /** What the approval shows instead of the (shortened) input, e.g. the whole file the call writes. */
+  confirmationPreview?(input: unknown): Promise<unknown>;
   execute(input: unknown, ctx: TaskRunContext): Promise<ToolOutput>;
 }
