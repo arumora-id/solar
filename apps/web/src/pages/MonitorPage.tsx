@@ -269,7 +269,7 @@ function TaskDetailPanel({ task, now }: { task: Task; now: number }) {
       {(artifacts[task.id]?.length ?? 0) > 0 && (
         <div className="detail-section">
           <h3>Artefak ({artifacts[task.id]!.length})</h3>
-          <ArtifactList taskId={task.id} artifacts={artifacts[task.id]!} />
+          <ArtifactList taskId={task.id} artifacts={artifacts[task.id]!} active={isActive(task.status)} />
         </div>
       )}
       <div className="detail-section" style={{ borderBottom: 0, paddingBottom: 0 }}>

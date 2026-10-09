@@ -287,7 +287,8 @@ export function createApiRouter(deps: ApiDeps): Router {
    * Word (.docx) file of a Technical Specification Document made before the tool wrote one. `:id` is any artifact of the
    * TSD's bundle. 201 {artifact, created: true, warnings} with the new artifact (saved in the same task and bundle and
    * announced to open UIs like the agent's own artifacts); 200 {artifact, created: false, warnings: []} when the bundle
-   * already has a Word file; 404 unknown artifact; 400 not part of a TSD bundle, or its model is not a valid specification.
+   * already has a Word file; 404 unknown artifact; 400 not part of a TSD bundle, or its model is not a valid specification;
+   * 500 when rendering failed or timed out (it runs in a worker thread, see tasks/techSpecDocxIsolated.ts).
    */
   r.post('/artifacts/:id/docx', async (req, res) => {
     try {

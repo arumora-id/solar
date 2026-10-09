@@ -83,7 +83,7 @@ export function AgentBubble({ task }: { task: Task }) {
       {html && <div className="markdown" dangerouslySetInnerHTML={{ __html: html }} />}
       {task.status === 'failed' && task.error && <div className="error-box">{task.error}</div>}
       {task.status === 'cancelled' && <div className="hint">Task dibatalkan.</div>}
-      <ArtifactList taskId={task.id} artifacts={artifacts[task.id] ?? []} />
+      <ArtifactList taskId={task.id} artifacts={artifacts[task.id] ?? []} active={active} />
       {activity.length > 0 && (
         <details className="activity" open={active}>
           <summary>Langkah kerja ({activity.filter((a) => a.state !== 'info').length})</summary>

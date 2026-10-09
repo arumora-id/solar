@@ -3,7 +3,7 @@ import type { Artifact } from '@solar/shared';
 import type { AppConfig } from '../config.js';
 import { buildArchimate, ArchimateModelSchema, ELEMENT_INFO, ELEMENT_TYPES, allowedRelationships } from '../generators/archimate/index.js';
 import { buildSequence, SequenceDiagramSchema } from '../generators/sequence/index.js';
-import { buildTechSpec, renderTechSpecDocx, TechSpecSchema } from '../generators/techspec/index.js';
+import { buildTechSpec, TechSpecSchema } from '../generators/techspec/index.js';
 import { formatIssues, type ValidationIssue } from '../generators/validation.js';
 import { GithubClient } from '../integrations/github.js';
 import { PlaneClient } from '../integrations/plane.js';
@@ -11,7 +11,8 @@ import type { SkillStore } from '../skills/skillStore.js';
 import type { ArtifactService } from '../tasks/artifactService.js';
 import type { AttachmentService } from '../tasks/attachmentService.js';
 import type { TaskRunContext } from '../tasks/taskManager.js';
-import { resolveTaskDiagrams, tsdDocxArtifact } from '../tasks/techSpecDocx.js';
+import { resolveTaskDiagrams, tsdDocxArtifact, withTechSpecBundleLock } from '../tasks/techSpecDocx.js';
+import { renderTechSpecDocxIsolated } from '../tasks/techSpecDocxIsolated.js';
 import { newId, slugify } from '../util/ids.js';
 import { createDocumentTools } from './documentTools.js';
 import { json, zodTool } from './zodTool.js';
@@ -288,10 +289,10 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
         const result = buildTechSpec(spec, diagrams, today);
         if (!result.ok) return failure('Technical specification rejected', result.errors, result.warnings);
         const out = result.output;
-        const stem = base ?? slugify(spec.title, 'technical-specification');
+        const requested = base ?? slugify(spec.title, 'technical-specification');
         const bundle = newId('bundle');
         const md = await ctx.createArtifact({
-          name: `${stem}.md`,
+          name: `${requested}.md`,
           title: `${spec.title} (Markdown)`,
           kind: 'tsd-markdown',
           mimeType: 'text/markdown; charset=utf-8',
@@ -299,6 +300,8 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
           description: `${out.spec.functionalRequirements.length} functional / ${out.spec.nonFunctionalRequirements.length} non-functional requirements`,
           content: out.markdown,
         });
+        // the other files take the name the .md was saved under ("x-2.md" when the task already has an "x.md")
+        const stem = md.name.replace(/\.md$/i, '');
         const html = await ctx.createArtifact({
           name: `${stem}.html`,
           title: `${spec.title} (HTML, print-ready)`,
@@ -307,27 +310,36 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
           bundle,
           content: out.html,
         });
-        const model = await ctx.createArtifact({
-          name: `${stem}.tsd.json`,
-          title: `${spec.title} (source)`,
-          kind: 'tsd-model',
-          mimeType: 'application/json',
-          bundle,
-          content: json(out.spec),
-        });
         const warnings = out.warnings.map((w) => `[${w.path}] ${w.message}`);
-        // the Word file never fails the TSD: the other files are saved and it can be exported again later
-        let docx: { artifactId: string; file: string } | null = null;
-        try {
-          const rendered = await renderTechSpecDocx(out.document);
-          const saved = await ctx.createArtifact(tsdDocxArtifact({ stem, title: spec.title, bundle, document: out.document, buffer: rendered.buffer }));
-          docx = { artifactId: saved.id, file: saved.name };
-          warnings.push(...rendered.warnings.map((w) => `[docx] ${w}`));
-        } catch (err) {
-          warnings.push(
-            `[docx] The Word file could not be created (${err instanceof Error ? err.message : String(err)}). The Markdown, HTML and JSON files are saved; the Word file can be exported again later from ${model.name} (${model.id}).`,
-          );
-        }
+        // The Word file comes before the .tsd.json: the web UI offers "Buat Word" for a bundle with a model and no Word
+        // file, and an export of this bundle waits for the lock, so the bundle never gets a second Word file.
+        const docx = await withTechSpecBundleLock(md.taskId, bundle, async () => {
+          // the Word file never fails the TSD: the other files are saved and it can be exported again later
+          let docx: { artifactId: string; file: string } | null = null;
+          let failure: string | null = null;
+          try {
+            const rendered = await renderTechSpecDocxIsolated(out.document);
+            const saved = await ctx.createArtifact(tsdDocxArtifact({ stem, title: spec.title, bundle, document: out.document, buffer: rendered.buffer }));
+            docx = { artifactId: saved.id, file: saved.name };
+            warnings.push(...rendered.warnings.map((w) => `[docx] ${w}`));
+          } catch (err) {
+            failure = err instanceof Error ? err.message : String(err);
+          }
+          const model = await ctx.createArtifact({
+            name: `${stem}.tsd.json`,
+            title: `${spec.title} (source)`,
+            kind: 'tsd-model',
+            mimeType: 'application/json',
+            bundle,
+            content: json(out.spec),
+          });
+          if (failure !== null) {
+            warnings.push(
+              `[docx] The Word file could not be created (${failure}). The Markdown, HTML and JSON files are saved; the Word file can be exported again later from ${model.name} (${model.id}).`,
+            );
+          }
+          return docx;
+        });
         return {
           summary: `${out.spec.functionalRequirements.length} FR, ${out.spec.nonFunctionalRequirements.length} NFR${docx ? ', .docx' : ''}`,
           content: json({

@@ -38,7 +38,9 @@
           "server.mjs",
           "server.mjs.map",
           "extract-worker.mjs",
-          "extract-worker.mjs.map"
+          "extract-worker.mjs.map",
+          "docx-worker.mjs",
+          "docx-worker.mjs.map"
         ]
       },
       {

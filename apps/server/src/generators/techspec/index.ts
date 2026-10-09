@@ -87,4 +87,5 @@ export function buildTechSpec(input: unknown, diagrams: Map<string, ResolvedDiag
 export { TechSpecSchema } from './model.js';
 export type { ResolvedDiagram } from './model.js';
 export type { BuiltDocument } from './document.js';
-export { renderTechSpecDocx, type DocxRenderResult } from './docx.js';
+// The Word renderer (./docx.js) is not re-exported: the server runs it in a worker thread (tasks/techSpecDocxIsolated.ts),
+// and importing it here would load the docx library and the rasterizer into the server bundles.

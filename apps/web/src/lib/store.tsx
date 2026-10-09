@@ -33,6 +33,7 @@ type Action =
   | { type: 'task'; task: Task }
   | { type: 'detail'; task: Task; events: TaskEvent[]; artifacts: Artifact[]; attachments: Attachment[] }
   | { type: 'attachments'; list: Attachment[] }
+  | { type: 'artifact'; taskId: string; artifact: Artifact }
   | { type: 'event'; event: TaskEvent }
   | { type: 'deltas'; items: Array<{ taskId: string; channel: 'text' | 'thinking'; text: string }> }
   | { type: 'plugins'; plugins: PluginStatus[] }
@@ -96,6 +97,12 @@ function reducer(state: State, action: Action): State {
         artifacts: { ...state.artifacts, [action.task.id]: mergeArtifacts(state.artifacts[action.task.id], action.artifacts) },
         attachments: action.attachments.length ? { ...state.attachments, ...Object.fromEntries(action.attachments.map((a) => [a.id, a])) } : state.attachments,
       };
+    case 'artifact': {
+      // also announced by an 'artifact' event on the stream: whichever arrives second is a no-op
+      const current = state.artifacts[action.taskId] ?? [];
+      if (current.some((a) => a.id === action.artifact.id)) return state;
+      return { ...state, artifacts: { ...state.artifacts, [action.taskId]: [...current, action.artifact] } };
+    }
     case 'attachments':
       return action.list.length ? { ...state, attachments: { ...state.attachments, ...Object.fromEntries(action.list.map((a) => [a.id, a])) } } : state;
     case 'event': {
@@ -137,6 +144,8 @@ function reducer(state: State, action: Action): State {
 interface SolarContextValue extends State {
   submit(prompt: string, attachmentIds?: string[]): Promise<Task>;
   rememberAttachments(list: Attachment[]): void;
+  /** Adds an artifact made outside an agent run (e.g. the Word file of an older TSD) to its task's list. */
+  rememberArtifact(taskId: string, artifact: Artifact): void;
   cancel(taskId: string): Promise<void>;
   loadTask(taskId: string): Promise<void>;
   refreshTasks(): Promise<void>;
@@ -302,6 +311,7 @@ export function SolarProvider({ children }: { children: ReactNode }) {
   );
 
   const rememberAttachments = useCallback((list: Attachment[]) => dispatch({ type: 'attachments', list }), []);
+  const rememberArtifact = useCallback((taskId: string, artifact: Artifact) => dispatch({ type: 'artifact', taskId, artifact }), []);
 
   const cancel = useCallback(
     async (taskId: string) => {
@@ -332,8 +342,20 @@ export function SolarProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<SolarContextValue>(
-    () => ({ ...state, submit, rememberAttachments, cancel, loadTask, refreshTasks, resolveConfirmation, startNewSession, reloadConfig, submitToken }),
-    [state, submit, rememberAttachments, cancel, loadTask, refreshTasks, resolveConfirmation, startNewSession, reloadConfig, submitToken],
+    () => ({
+      ...state,
+      submit,
+      rememberAttachments,
+      rememberArtifact,
+      cancel,
+      loadTask,
+      refreshTasks,
+      resolveConfirmation,
+      startNewSession,
+      reloadConfig,
+      submitToken,
+    }),
+    [state, submit, rememberAttachments, rememberArtifact, cancel, loadTask, refreshTasks, resolveConfirmation, startNewSession, reloadConfig, submitToken],
   );
   return <SolarContext.Provider value={value}>{children}</SolarContext.Provider>;
 }

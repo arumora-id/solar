@@ -43,6 +43,14 @@ curl -s -X POST http://127.0.0.1:8790/api/tasks \
 |---|---|---|
 | GET | `/artifacts/:id` | Metadata artefak. |
 | GET | `/artifacts/:id/content` | Isi file (`?download=1` untuk unduh). Disajikan dengan `Content-Security-Policy: sandbox`. |
+| POST | `/artifacts/:id/docx` | Membuat dokumen **Word (.docx)** sebuah TSD yang dibuat sebelum ada file Word. `:id` = artefak mana pun dari paket TSD (`.md`, `.html`, `.tsd.json`). Dokumen dibangun ulang dari `.tsd.json` paket itu dengan diagram SVG task yang sama, tanggal dokumen = tanggal TSD dibuat, lalu disimpan di task & paket yang sama sebagai `<nama>.docx` (`kind: "tsd-docx"`, judul "<judul> (Word)") dan diumumkan lewat event `artifact` di `/stream` seperti artefak buatan agent. `201` `{ artifact, created: true, warnings }`; `200` `{ artifact, created: false, warnings: [] }` bila paket sudah punya file Word (file itu yang dikembalikan, tidak dibuat ulang); `404` artefak tidak ada; `400` paket tidak punya `.tsd.json` atau isinya bukan spesifikasi yang valid (pesan `error` menyebut kesalahannya); `500` dokumen gagal dirender (pesan `error` menyebut sebabnya, mis. waktu habis atau batas memori). Dokumen dirender di *worker thread* terpisah (`docx-worker.mjs`), jadi server tetap melayani permintaan lain: biasanya 1-3 detik; bila menata halaman melewati 30 detik, dokumen dibuat ulang tanpa nomor halaman daftar isi (Word mengisinya saat dibuka, ada di `warnings`), dan bila itu juga melewati 30 detik hasilnya `500`. Permintaan untuk paket yang sama (juga file Word yang sedang dibuat agent untuk paket itu) diproses satu per satu, jadi klik ganda tidak membuat dua file. |
+
+File Word disajikan dengan `Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document`;
+UI tidak mempratinjaunya di browser, hanya menawarkan unduhan (dan pratinjau versi HTML dari paket yang sama).
+
+```bash
+curl -s -X POST http://127.0.0.1:8790/api/artifacts/art_123/docx   # art_123 = id .md/.html/.tsd.json sebuah TSD
+```
 
 ## Lampiran dokumen
 

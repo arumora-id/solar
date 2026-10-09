@@ -1,8 +1,9 @@
 import type { Artifact } from '@solar/shared';
 import { DOCX_MIME } from '../documents/kind.js';
-import { buildTechSpec, renderTechSpecDocx, type BuiltDocument, type ResolvedDiagram } from '../generators/techspec/index.js';
+import { buildTechSpec, type BuiltDocument, type ResolvedDiagram } from '../generators/techspec/index.js';
 import { KeyedQueue } from '../util/fs.js';
 import type { ArtifactService, NewArtifact } from './artifactService.js';
+import { renderTechSpecDocxIsolated } from './techSpecDocxIsolated.js';
 
 /**
  * The Word (.docx) file of a Technical Specification Document: shared by the create_technical_specification tool and by
@@ -56,8 +57,17 @@ export interface TechSpecDocxExport {
   warnings: string[];
 }
 
-/** One export per bundle at a time, so two clicks never save two Word files. */
+/** One Word file per bundle: the tool's and the exports of a bundle run one at a time, so two never save two files. */
 const queue = new KeyedQueue();
+
+/**
+ * Runs `fn` while no other Word export of the same bundle runs. The create_technical_specification tool saves its .docx
+ * (and then the .tsd.json, which is what lets the web UI offer an export) inside it, so an export that arrives meanwhile
+ * waits and then finds the tool's file.
+ */
+export function withTechSpecBundleLock<T>(taskId: string, bundle: string, fn: () => Promise<T>): Promise<T> {
+  return queue.run(`${taskId}/${bundle}`, fn);
+}
 
 /**
  * Creates the Word file of an existing TSD bundle from its tsd-model artifact (the validated JSON the .md and .html were
@@ -74,7 +84,7 @@ export async function exportTechSpecDocx(
 ): Promise<TechSpecDocxExport> {
   const artifact = await artifacts.get(artifactId);
   if (!artifact) throw new TechSpecDocxError(404, `Artifact ${artifactId} not found`);
-  return queue.run(`${artifact.taskId}/${artifact.bundle}`, async () => {
+  return withTechSpecBundleLock(artifact.taskId, artifact.bundle, async () => {
     const list = await artifacts.list(artifact.taskId);
     const bundle = list.filter((a) => a.bundle === artifact.bundle);
     const existing = bundle.find((a) => a.kind === 'tsd-docx');
@@ -93,7 +103,7 @@ export async function exportTechSpecDocx(
     if (!result.ok) {
       throw new TechSpecDocxError(400, `${model.name} is not a valid specification: ${result.errors.map((e) => `[${e.path}] ${e.message}`).join('; ')}`);
     }
-    const { buffer, warnings } = await renderTechSpecDocx(result.output.document);
+    const { buffer, warnings } = await renderTechSpecDocxIsolated(result.output.document);
     const stem = model.name.replace(/(\.tsd)?\.json$/i, '') || 'technical-specification';
     const saved = await save(
       artifact.taskId,

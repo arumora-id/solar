@@ -1,20 +1,21 @@
 # SOLAR AI AGENT 🍡
 
 **SOLAR AI AGENT** (*SOLution ARchitect*, singkatnya SOLAR) adalah AI agent dengan **karakter 3D beranimasi yang bisa
-dipilih** - **Mochi** (default), **Cocoa Kelapa**, atau **Kelinci** klasik - yang membantu seorang Solution Architect
-men-deliver pekerjaan lebih cepat dan konsisten:
+dipilih** - **Robo** si robot (default), **Mochi**, **Cocoa Kelapa**, atau **Kelinci** klasik - yang membantu seorang
+Solution Architect men-deliver pekerjaan lebih cepat dan konsisten:
 
 - **Diagram ArchiMate 3.2** - divalidasi terhadap tabel relasi resmi ArchiMate, diekspor ke
   *Open Group ArchiMate Exchange Format* (bisa di-import ke Archi, Visual Paradigm, BiZZdesign, Sparx EA) + SVG per view.
 - **Sequence diagram UML** - SVG siap pakai + sumber **Mermaid** (langsung tampil di GitHub) + **PlantUML**.
-- **Technical Specification Document (TSD)** - Markdown (GitHub-ready) dan HTML siap cetak/PDF, lengkap dengan
-  diagram tertanam, requirement, NFR, integrasi, API, data model, risiko.
+- **Technical Specification Document (TSD)** - dokumen **Word (.docx)** siap diserahkan ke klien (sampul, lembar
+  persetujuan, daftar isi, nomor halaman), Markdown (GitHub-ready) dan HTML siap cetak/PDF, lengkap dengan diagram
+  tertanam, requirement, NFR, integrasi, API, data model, risiko.
 
 Perintah diberikan dengan **mengetik atau suara**, berjalan di **browser** maupun sebagai **aplikasi desktop Windows**,
 bisa ditambah **skills** dan **plugin MCP** (GitHub, Plane `plane.mesthi.com` sebagai backlog, Visual Paradigm dengan
 konfirmasi wajib), dan setiap pekerjaan bisa dipantau di **web monitoring task**.
 
-![Halaman agent dengan karakter Mochi dan dokumen terlampir](docs/images/agent-light.png)
+![Halaman agent dengan karakter 3D dan dokumen terlampir](docs/images/agent-light.png)
 
 | Hasil & artefak (tema gelap, karakter Cocoa Kelapa) | Konfirmasi sebelum aksi eksternal | Monitor task |
 |---|---|---|
@@ -54,13 +55,13 @@ konfirmasi wajib), dan setiap pekerjaan bisa dipantau di **web monitoring task**
 
 | Area | Kemampuan |
 |---|---|
-| Karakter 3D | **Bisa dipilih**: **Mochi** (kue mochi merah muda, default), **Cocoa Kelapa** (kelapa cokelat bersedotan & payung kecil), atau **Kelinci** klasik - lewat tombol karakter di pojok panggung atau *Pengaturan → Karakter* (tersimpan di perangkat). Dibangun prosedural (three.js, tanpa aset) dengan animasi **GSAP**: idle, mendengarkan, berpikir, bekerja (membawa tablet), berbicara, bertanya (menunggu persetujuan), senang, sedih. Mata mengikuti kursor; klik karakter untuk mulai bicara. |
+| Karakter 3D | **Bisa dipilih**: **Robo** (robot putih-biru dengan wajah layar bercahaya dan dua antena, default), **Mochi** (kue mochi merah muda), **Cocoa Kelapa** (kelapa cokelat bersedotan & payung kecil), atau **Kelinci** klasik - lewat tombol karakter di pojok panggung atau *Pengaturan → Karakter* (tersimpan di perangkat). Dibangun prosedural (three.js, tanpa aset) dengan animasi **GSAP**: idle, mendengarkan, berpikir, bekerja (membawa tablet), berbicara, bertanya (menunggu persetujuan), senang, sedih. Mata mengikuti kursor; klik karakter untuk mulai bicara. |
 | Dokumen proyek | **Lampirkan** PDF, Word (.docx), Excel (.xlsx/.xlsm/.csv), PowerPoint (.pptx), Markdown atau teks (klip kertas, seret & lepas, atau tempel). SOLAR membaca isinya (judul, tabel, sheet, slide, catatan pembicara) sebelum merancang, lalu menyebut sumbernya. |
 | Input | Ketik (Enter kirim) atau **suara**: Web Speech API di Chrome/Edge, atau **Whisper lokal** (transformers.js, offline setelah model diunduh) - otomatis dipakai di aplikasi desktop. Berhenti otomatis saat hening. |
 | Output suara | Karakter membacakan ringkasan hasil (text-to-speech suara sistem, Bahasa Indonesia/English). |
 | Agent | **Multi-provider**: OpenAI Responses API (default **GPT-6.1 Sol**, `gpt-6.1-sol`) atau API **Chat Completions** yang kompatibel OpenAI - OmniRoute, OpenRouter, LiteLLM, Claude, Gemini, Ollama/vLLM lokal. **Rute model** utama → cadangan dengan fallback otomatis bila provider gagal; diatur di *Pengaturan → Model AI* tanpa restart. Streaming, tool call paralel; satu task = satu proses end-to-end ("sekali proses"). |
 | Knowledge base | Aturan & fakta Anda sebagai file Markdown (sistem, integrasi, standar ArchiMate/PlantUML/API, prinsip, status lifecycle). Agent membacanya sebelum mendesain dan mengutamakannya di atas aturan bawaan. Impor registry **Excel/CSV** (satu file per baris) dan dokumen **Word/PDF/PowerPoint** (dipecah per bab). |
-| Deliverable | ArchiMate (Exchange XML + SVG + JSON), sequence diagram (SVG + Mermaid + PlantUML + JSON), TSD (Markdown + HTML + JSON), unduh semua sebagai ZIP. |
+| Deliverable | ArchiMate (Exchange XML + SVG + JSON), sequence diagram (SVG + Mermaid + PlantUML + JSON), TSD (Word .docx + Markdown + HTML + JSON), unduh semua sebagai ZIP. |
 | Skills | 6 skill bawaan (delivery package, ArchiMate, sequence, TSD, backlog Plane, publish GitHub); tambah/impor/edit/nonaktifkan dari UI. |
 | Plugin MCP | GitHub (remote MCP resmi), Plane `plane.mesthi.com` (MCP resmi Plane), Visual Paradigm (selalu konfirmasi), plugin custom (HTTP/SSE/stdio). |
 | Integrasi bawaan | Publish artefak ke GitHub dalam **satu commit**; buat backlog Plane secara **bulk** (epic → story, label, prioritas, anti-duplikat). |
@@ -183,6 +184,9 @@ macOS, Linux, Android dan iPhone/iPad.
   di-cache. Saat versi baru tersedia, SOLAR menampilkan **Versi baru tersedia → Muat ulang**.
 - Paket **SOLAR-AI-AGENT-server-<versi>.zip** di halaman Releases berisi server yang sudah di-bundle + web app untuk
   dijalankan sendiri dengan Node.js 22 (tanpa `npm install`).
+- Ikon aplikasi (PWA, ikon Apple, ikon *maskable* Android, ikon installer Windows) bergambar Robo dan semuanya dibuat
+  dari satu file, `apps/web/public/favicon.svg`: ubah SVG itu lalu jalankan `node scripts/generate-icons.mjs`
+  (butuh Playwright + Chromium, bukan dependensi proyek).
 
 ## Konfigurasi kredensial (.env)
 
@@ -217,13 +221,15 @@ dan object storage diisi, data baru otomatis disimpan di sana.
 
 1. Buka SOLAR (browser atau desktop). Status **Terhubung** tampil di kanan atas.
 2. Ketik perintah atau klik **karakter / tombol mikrofon** lalu bicara. Tombol cepat di bawah karakter mengisi template perintah.
-   Ganti karakter (Mochi, Cocoa Kelapa, Kelinci) lewat tombol bernama karakter di pojok kiri bawah panggung.
+   Ganti karakter (Robo, Mochi, Cocoa Kelapa, Kelinci) lewat tombol bernama karakter di pojok kiri bawah panggung.
 3. SOLAR mengerjakan **seluruh permintaan dalam satu proses**: membuat rencana, memuat skill yang relevan,
    membuat & memvalidasi diagram, menyusun dokumen, lalu memberi ringkasan + daftar artefak. Asumsi dicatat eksplisit
    (tidak berhenti untuk bertanya kecuali benar-benar menghalangi).
 4. Bila aksi butuh persetujuan (mis. Visual Paradigm), karakter mengangkat tangan dan dialog **Perlu persetujuan Anda**
    muncul berisi data yang akan dikirim. Setujui atau tolak (bisa dengan catatan).
-5. Pratinjau, unduh per file, atau **Unduh semua (ZIP)**. Progres rinci ada di **Monitor**.
+5. Pratinjau, unduh per file, atau **Unduh semua (ZIP)**. Dokumen Word TSD (dokumen untuk klien) diunduh lewat tombol
+   **Unduh Word (.docx)** di judul kelompok TSD; TSD lama yang belum punya file Word mendapat tombol **Buat Word (.docx)**.
+   Progres rinci ada di **Monitor**.
 
 Contoh perintah:
 
@@ -302,6 +308,7 @@ tidak pernah dikirim dihapus otomatis setelah 24 jam.
 | | `<nama>.puml` | PlantUML. |
 | TSD | `<nama>.md` | Markdown GitHub-ready: kontrol dokumen, daftar isi, diagram tertaut sebagai file SVG di folder yang sama, sumber Mermaid. |
 | | `<nama>.html` | HTML mandiri siap cetak (Print → PDF) dengan diagram tertanam; bisa dibuka di Microsoft Word. |
+| | `<nama>.docx` | **Dokumen Word untuk diserahkan ke klien** (A4): halaman sampul, kontrol dokumen, riwayat revisi, lembar persetujuan (tanda tangan reviewer/penyetuju, bila diisi), daftar isi bernomor halaman, header/footer "Halaman X dari Y", tabel, dan diagram sebagai gambar bernomor - vektor (SVG) dengan cadangan PNG untuk aplikasi yang belum mendukung SVG (mis. Word 2013 ke bawah); diagram dan tabel yang lebar mendapat halaman lanskap sendiri agar teksnya tetap terbaca. Nomor halaman daftar isi sudah terisi saat dibuka tetapi berupa perkiraan (pada dokumen panjang bisa meleset satu halaman; *Update Table* di Word memberi nomor pasti). Dokumen dibuat di *worker thread* terpisah dengan batas waktu dan memori, sehingga TSD yang panjang tidak membuat server atau aplikasi desktop macet. Format memakai style bernama Word (Title, Heading 1-3, Caption, TOC, Table Grid, ...) sehingga bisa diganti dengan template perusahaan. TSD yang dibuat sebelum ada file Word: tombol **Buat Word (.docx)** di daftar artefak atau `POST /api/artifacts/<id>/docx` (id artefak mana pun dari paket TSD, lihat [docs/API.md](docs/API.md#artefak)). |
 
 Contoh output generator:
 
@@ -470,7 +477,8 @@ solar/
 │  │                 skills, plugin MCP, storage Neon/S3/lokal,
 │  │                 REST + SSE  (test: vitest)
 │  ├─ web/           React + Vite + TypeScript + GSAP + three.js: karakter 3D, chat, suara, monitor, pengaturan;
-│  │                 PWA: public/manifest.webmanifest, pwa/ (service worker + plugin build)
+│  │                 PWA: public/manifest.webmanifest, pwa/ (service worker + plugin build),
+│  │                 public/favicon.svg (sumber semua ikon aplikasi)
 │  └─ desktop/       Electron: menjalankan server + UI sebagai aplikasi Windows (installer NSIS)
 ├─ packages/shared/  Tipe TypeScript bersama (Task, Event, Artifact, Plugin, Skill, ...)
 ├─ skills/           Skill bawaan (SKILL.md)
@@ -478,7 +486,9 @@ solar/
 ├─ config/           plugins.default.json (preset GitHub, Plane, Visual Paradigm)
 ├─ docs/             ARCHITECTURE.md, API.md, SELF-HOSTING.md, gambar
 ├─ scripts/          generate-archimate-relationships.mjs (regenerasi tabel relasi dari Archi),
-│                    pack-server.mjs (paket server + web app untuk rilis)
+│                    generate-icons.mjs (ikon PNG aplikasi/PWA/installer dari apps/web/public/favicon.svg),
+│                    pack-server.mjs (paket server + web app untuk rilis),
+│                    third-party-licenses.mjs (teks lisensi paket yang ikut di-bundle, untuk rilis)
 └─ .env.example      Template konfigurasi
 ```
 
@@ -501,10 +511,11 @@ ARCHIMATE_XSD_DIR=/path/ke/xsd npm test
 SOLAR_TEST_DATABASE_URL="postgresql://user:pass@host/db_test?sslmode=require" npm test
 ```
 
-Yang sudah diuji otomatis: validator & renderer ArchiMate/sequence/TSD, store skill & plugin (termasuk penyamaran
-rahasia), round-trip object storage S3-compatible, skenario agent end-to-end (model tiruan) dengan konfirmasi,
-pembuatan 11 artefak, ZIP, header keamanan, dan riwayat percakapan append-only, serta pembacaan lampiran dari dokumen
-nyata (`apps/server/test/fixtures/documents`: Word, PowerPoint, Excel, PDF, file terenkripsi & format lama) termasuk
+Yang sudah diuji otomatis: validator & renderer ArchiMate/sequence/TSD (termasuk dokumen Word TSD yang dibaca ulang,
+rasterisasi diagram ke PNG dan `POST /api/artifacts/:id/docx`), store skill & plugin (termasuk penyamaran rahasia),
+round-trip object storage S3-compatible, skenario agent end-to-end (model tiruan) dengan konfirmasi, pembuatan
+12 artefak (termasuk `.docx`), ZIP, header keamanan, dan riwayat percakapan append-only, serta pembacaan lampiran dari
+dokumen nyata (`apps/server/test/fixtures/documents`: Word, PowerPoint, Excel, PDF, file terenkripsi & format lama) termasuk
 zip bomb, PDF hasil scan, file rusak, ekstensi yang salah, API unggah dan tool dokumen agent.
 
 ### Rilis

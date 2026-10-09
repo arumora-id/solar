@@ -935,10 +935,15 @@ button.att-open:hover .att-name {
 /* ---- artifacts ------------------------------------------------------------ */
 .artifacts {
   display: grid;
+  /* long file names are cut with an ellipsis instead of widening the list past a phone screen */
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   margin-top: 10px;
 }
 .artifact-group {
+  min-width: 0;
+  /* rows adapt to the group's own width (a chat bubble on a phone is narrower than the screen) */
+  container-type: inline-size;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface);
@@ -948,6 +953,22 @@ button.att-open:hover .att-name {
   margin: 0 0 6px;
   font-size: 12.5px;
   color: var(--ink-2);
+}
+.artifact-group-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-bottom: 6px;
+}
+.artifact-group-head h4 {
+  flex: 1 1 180px;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.artifact-note {
+  margin-bottom: 6px;
 }
 .artifact-row {
   display: flex;
@@ -962,15 +983,81 @@ button.att-open:hover .att-name {
 .artifact-row .name {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-size: 13px;
+  line-height: 1.3;
+  /*
+   * a long name wraps (at its hyphens, else anywhere) instead of being cut: an ellipsis hid the extension that tells
+   * the files of a bundle apart, or left a gap before it, and its tooltip cannot be opened on a touch screen
+   */
+  overflow-wrap: anywhere;
 }
 .artifact-row .kind {
   font-size: 11px;
   color: var(--ink-3);
   font-family: var(--mono);
+}
+.artifact-row .row-icon {
+  flex: none;
+  color: var(--accent);
+}
+/* keeps the size and buttons of every row of a group in the same columns when one row has an extra button */
+.artifact-row .btn-slot {
+  flex: none;
+  width: 36px;
+}
+/*
+ * narrow group (a chat bubble on a phone, the Monitor's side column): the file name gets the room; the size and the
+ * row's Word icon (the group header has the Word button) are left out
+ */
+@container (max-width: 420px) {
+  .artifact-row {
+    gap: 4px;
+  }
+  .artifact-row .kind,
+  .artifact-row .row-icon {
+    display: none;
+  }
+  .artifact-row .btn.icon,
+  .artifact-row .btn-slot {
+    width: 32px;
+  }
+}
+.btn[aria-busy='true'] {
+  opacity: 0.85;
+  cursor: progress;
+}
+.artifact-note-detail {
+  margin-top: 4px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.artifact-note-detail summary {
+  cursor: pointer;
+}
+.artifact-note-detail ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+.file-panel {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 22px 14px;
+  text-align: center;
+  border: 1px dashed var(--line-strong);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+.file-panel p {
+  margin: 0;
+  max-width: 46ch;
+}
+.file-panel-icon {
+  color: var(--accent);
+}
+.file-panel-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
 }
 .thumbs {
   display: grid;
@@ -1013,6 +1100,10 @@ button.att-open:hover .att-name {
   border-radius: 18px;
   box-shadow: var(--shadow);
   padding: 18px;
+}
+/* a dialog takes the focus itself when it opens (no control of its own to start on); it shows no focus ring for that */
+.modal:focus {
+  outline: none;
 }
 .modal.wide {
   width: min(1200px, 100%);

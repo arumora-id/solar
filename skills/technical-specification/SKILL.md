@@ -5,8 +5,14 @@ description: How to write a complete, reviewable Technical Specification Documen
 
 # Technical Specification Document (TSD)
 
-`create_technical_specification` renders Markdown (GitHub-ready) and print-ready HTML. Your job is
-the content. Read `nfr-catalog.md` (via `read_skill_file`) when writing non-functional requirements.
+`create_technical_specification` renders Markdown (GitHub-ready), print-ready HTML and a **Word document (.docx)**, the
+delivery document for the client: cover page, document control, revision history, approval sign-off table (filled from
+`reviewers` and `approvers`), table of contents, page numbers and the diagrams as numbered figures. Your job is the
+content. Read `nfr-catalog.md` (via `read_skill_file`) when writing non-functional requirements.
+
+The tool result names the Word file in `docx` (`artifactId`, `file`): list it first in the final answer as the document to
+send to the client. If `docx` is `null` (a `[docx]` warning says why), the Markdown, HTML and JSON are still saved; say
+so, and that the Word file can be created later with **Buat Word (.docx)** in the artifact list.
 
 **User rules first.** Before writing, read the knowledge files that apply: the TSD structure (`documents/TSD.md`),
 API specification rules (e.g. `standards/api-specification.md`), naming, security/NFR files, and the files of every
@@ -15,6 +21,9 @@ system and integration in scope. They override the defaults below; list the file
 ## Document control
 - `documentId`: `TSD-<SYSTEM>-<NNN>` (e.g. `TSD-ORD-001`), `version` "1.0", `status` "Draft".
 - `authors`: use the name the user gave; otherwise "Solution Architect". Never invent people.
+- `reviewers` / `approvers`: only names or roles the user or an attached document gives (e.g. "Budi Santoso, Lead
+  Architect"); each entry gets a signature row in the Word document's approval table. Leave them empty otherwise (the
+  document then has no approval table).
 - `language`: "id" (default) or "en" if the user writes/asks in English.
 
 ## Section intent

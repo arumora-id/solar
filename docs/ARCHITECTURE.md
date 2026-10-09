@@ -6,9 +6,9 @@ Dokumen ini menjelaskan cara kerja internal SOLAR untuk pengembang dan reviewer.
 
 | Komponen | Lokasi | Tanggung jawab |
 |---|---|---|
-| Web UI | `apps/web` | React 19 + Vite + TypeScript. Karakter 3D yang bisa dipilih (`src/character/`: Mochi, Cocoa Kelapa, Kelinci; three.js, animasi GSAP), chat + komposer suara, monitor, pengaturan. Berkomunikasi lewat REST dan Server-Sent Events. |
+| Web UI | `apps/web` | React 19 + Vite + TypeScript. Karakter 3D yang bisa dipilih (`src/character/`: Robo (default), Mochi, Cocoa Kelapa, Kelinci; three.js, animasi GSAP), chat + komposer suara, monitor, pengaturan. Berkomunikasi lewat REST dan Server-Sent Events. PWA: `public/manifest.webmanifest`, service worker `pwa/`, ikon PNG (`public/icons/`, juga ikon installer `apps/desktop/build/icon.png`) yang dibuat dari `public/favicon.svg` oleh `scripts/generate-icons.mjs`. |
 | Server | `apps/server` | Express 5. `TaskManager` (antrean, status, progres, konfirmasi), agent loop OpenAI, generator + validator, `SkillStore`, `PluginStore` + `McpManager`, penyimpanan. |
-| Desktop | `apps/desktop` | Electron 44. Memuat bundle server (`server.mjs`) di main process, membuka jendela ke UI lokal, mengatur izin mikrofon, mode mini, `.env` di `%APPDATA%\SOLAR`. |
+| Desktop | `apps/desktop` | Electron 44. Memuat bundle server (`server.mjs`) di main process (pembacaan lampiran dan render Word berjalan di *worker thread* `extract-worker.mjs` / `docx-worker.mjs` yang ikut di resources), membuka jendela ke UI lokal, mengatur izin mikrofon, mode mini, `.env` di `%APPDATA%\SOLAR`. |
 | Shared | `packages/shared` | Kontrak tipe antara server dan UI (`Task`, `TaskEvent`, `Artifact`, `PluginView`, `StreamMessage`, ...). |
 
 ## 2. Alur sebuah task ("sekali proses")
@@ -81,7 +81,7 @@ sequenceDiagram
 |---|---|---|
 | `generators/archimate` | Skema zod; tabel relasi ArchiMate 3.2 (`relationships.generated.ts`, dibuat dari `relationships.xml` proyek Archi via `scripts/generate-archimate-relationships.mjs`); id unik; referensi; junction (jenis relasi sama, ada masuk & keluar); view (elemen & relasi valid, kedua ujung relasi ada di view); peringatan elemen yatim/duplikat. | Exchange XML 3.1 (diuji dengan XSD resmi), SVG per view (layout per layer + urutan barycenter + routing kurva yang menghindari elemen), JSON. |
 | `generators/sequence` | Participant unik & bukan kata kunci; pesan ke participant terdaftar; keseimbangan aktivasi; nesting fragment & cabang `else`; cabang tidak kosong. | Mermaid (escape entitas satu-langkah), PlantUML, SVG (layout kolom berbasis lebar label, aktivasi bertingkat, fragment bersarang), JSON. |
-| `generators/techspec` | Skema zod; id FR/NFR/AD/INT/RSK/OI unik lintas bagian; referensi diagram harus SVG artefak task. | Markdown GitHub (anchor kompatibel, tabel aman), HTML siap cetak (diagram inline, Markdown disanitasi), JSON. |
+| `generators/techspec` | Skema zod; id FR/NFR/AD/INT/RSK/OI unik lintas bagian; referensi diagram harus SVG artefak task. | `document.ts` menyusun `BuiltDocument` netral-format (heading bernomor, tabel, daftar, gambar bernomor, kode); `render.ts` → Markdown GitHub (anchor kompatibel, tabel aman) dan HTML siap cetak (diagram inline, Markdown disanitasi); `docx.ts` → **Word .docx** (lihat 3c); JSON. Label `id`/`en` di `i18n.ts`. |
 
 Jika validasi gagal, tool mengembalikan `is_error` berisi daftar error bernomor dan **tidak menyimpan apa pun**, sehingga
 model memperbaiki input lalu memanggil ulang.
@@ -148,6 +148,76 @@ model memperbaiki input lalu memanggil ulang.
    dinetralkan; system prompt dan deskripsi tool melarang mengikuti instruksi di dalam dokumen. Aksi eksternal tetap tunduk
    pada aturan konfirmasi plugin.
 
+## 3c. Dokumen Word (.docx) TSD
+
+- `create_technical_specification` menyimpan `.md` dan `.html`, lalu `<nama>.docx` (`kind: tsd-docx`, judul
+  "<judul> (Word)"), lalu `.tsd.json`, semuanya di paket yang sama dan dengan nama dasar `.md` yang tersimpan (bila task
+  sudah punya `x.md`, keempat file menjadi `x-2.*`). File Word disimpan **sebelum** `.tsd.json` dan keduanya di dalam
+  antrean per paket (`withTechSpecBundleLock`), karena UI menawarkan **Buat Word** untuk paket yang punya `.tsd.json` tanpa
+  .docx: ekspor yang datang selama tool merender menunggu lalu mendapat file milik tool, sehingga paket tidak pernah punya
+  dua file Word. Bila Word gagal dibuat, TSD tetap tersimpan dengan peringatan `[docx]` dan hasil tool `docx: null`; file
+  Word bisa dibuat belakangan.
+- `generators/techspec/docx.ts` (`renderTechSpecDocx`, pustaka `docx`) merender `BuiltDocument` yang sama dengan
+  Markdown/HTML: sampul, kontrol dokumen (tanggal panjang seperti di sampul, satu nama per baris), riwayat revisi, lembar
+  persetujuan (reviewer/penyetuju), daftar isi berupa field `TOC` sungguhan, bagian bernomor, header/footer "Halaman X dari
+  Y", A4, bahasa proofing `id-ID`/`en-US` (kode tidak diperiksa ejaannya). Semua memakai style bernama Word (Title,
+  Heading N, Caption, TOC, Table Grid, ...) agar bisa diganti template klien; heading Markdown di dalam teks menjadi
+  Heading 3 ke bawah (`###` Heading 3, `####` Heading 4) dan tidak masuk daftar isi. Bookmark heading `_Tsd_<anchor>`
+  (aman untuk Word) menjadi target tautan `#anchor` dari Markdown; tautan eksternal di-encode sebagai URI yang valid.
+- **Nomor halaman daftar isi** dihitung saat dibuat dengan `docx/layout` (tata letak halaman mirip Word) dan ditulis ke
+  file, jadi daftar isi lengkap saat dibuka tanpa dialog "update fields". Nomor itu **perkiraan**: pada dokumen panjang
+  sebuah heading bisa meleset satu halaman (di tempat tabel/blok pas-pasan di dasar halaman) sampai pengguna menekan
+  *Update Table*; nomor di footer selalu tepat (field PAGE/NUMPAGES). Bila tata letak gagal, atau dokumen terlalu mahal
+  untuk ditata (`layoutAffordable`: token tak terputus > 400 karakter atau > 400.000 karakter teks), file ditulis dengan
+  `updateFields` sehingga Word mengisi nomornya saat dibuka.
+- **Tata letak isi.** Lebar kolom tabel diukur dengan lebar karakter Calibri; bila sempit, ruang diambil dari kolom
+  prosa lebih dulu sehingga id, kode dan kata pendek tidak terpotong di tengah. Tabel dokumen yang kata-katanya tetap tidak
+  muat di A4 tegak (mis. identifier panjang) mendapat halaman **lanskap** bersama heading tepat sebelumnya. Label yang
+  memperkenalkan kode/daftar/tabel ("Contoh Response:") selalu satu halaman dengan isinya (*keep with next*).
+- Diagram ditanam sebagai **SVG + cadangan PNG**. `generators/svgRaster.ts` merasterisasi SVG dengan
+  `@resvg/resvg-wasm` (2× ukuran tampil, maks. 4000 px per sisi dan 8 MP; wasm dimuat sekali walau dipanggil
+  bersamaan) memakai font Liberation Sans yang ikut dibawa, sehingga teks diagram tetap tergambar tanpa font sistem.
+  Warna `rgba()` diubah menjadi hex + opacity untuk renderer SVG Office; bila rasterisasi gagal, gambar pengganti abu-abu
+  + peringatan. Diagram lebar yang tampil ≥ 1,2× lebih besar di halaman lanskap mendapat **section lanskap** sendiri
+  (bersama heading tepat sebelumnya dan catatan sumber Mermaid-nya; header/footer selebar halaman). Bila teks diagram
+  tetap tercetak < 5 pt, hasil render memberi peringatan agar view dipecah.
+- **Worker thread.** Render Word (tata letak halaman beberapa detik untuk TSD panjang, rasterisasi diagram) tidak pernah
+  berjalan di thread server - di aplikasi desktop itu main process Electron. `tasks/techSpecDocxIsolated.ts`
+  (`renderTechSpecDocxIsolated`, dipakai tool dan route) menjalankan setiap render di *worker thread* baru dari
+  `dist/docx-worker.mjs` (entry `src/tasks/techSpecDocxWorker.ts`): maks. 2 render paralel, heap maks. 1 GB, hasil
+  dipindahkan (transfer) ke thread server tanpa disalin. Batas waktu 30 detik dengan tata letak halaman; bila lewat, render
+  diulang tanpa tata letak (30 detik lagi) dengan peringatan bahwa Word mengisi nomor daftar isi saat dibuka; bila itu
+  juga lewat, render gagal dengan pesan yang jelas (tool: peringatan `[docx]`; route: `500`). Biaya: ±0,3-0,5 detik per
+  ekspor untuk memulai worker; render TSD contoh ±1-2 detik, sementara server tetap menjawab permintaan lain. Dari source
+  (`npm run dev`, vitest) file worker tidak ada di sebelah kode, jadi render berjalan in-process; tes
+  `techspec.docx.worker.test.ts` mem-bundle worker dengan plugin build yang sama dan menguji jalur aslinya (PNG, event
+  loop, kedua timeout).
+- `tasks/techSpecDocx.ts` dipakai bersama oleh tool dan `POST /api/artifacts/:id/docx` (TSD lama tanpa .docx): model
+  dibaca dari `.tsd.json` paket, divalidasi ulang, diagram dicari di antara artefak SVG task, tanggal dokumen = tanggal
+  TSD dibuat. Satu antrean per paket (klik ganda tidak membuat dua file); paket yang sudah punya .docx mengembalikan file
+  itu (`200`). File baru disimpan lewat `TaskManager.addArtifact`, yang memancarkan event `artifact` yang sama dengan
+  artefak buatan agent, sehingga UI yang terbuka langsung menampilkannya.
+- Web UI: file Word tidak dipratinjau sebagai teks; dialognya menawarkan unduhan dan pratinjau versi HTML paket yang
+  sama. Kelompok TSD menampilkan tombol **Unduh Word (.docx)**, atau **Buat Word (.docx)** untuk TSD lama - tidak selama
+  task masih berjalan. Tombol tetap fokus selama proses (`aria-disabled`, klik/Enter tambahan tidak mengirim permintaan
+  kedua), fokus pindah ke **Unduh Word** setelah berhasil, error tampil di `role="alert"` dalam Bahasa Indonesia (pesan
+  server di bawah "Rincian").
+
+**Aset biner dan bundle.** Aplikasi desktop dan paket self-host hanya membawa file bundle (`dist/index.js` atau
+`dist/server.mjs`, `dist/extract-worker.mjs`, `dist/docx-worker.mjs`, tanpa `node_modules`), jadi aset ikut di-embed:
+`src/assets/assets.json` mendaftar wasm resvg (path paket npm) dan dua font (`apps/server/assets/fonts`, path file). Dari
+source (tsx, vitest) `loadAsset()` membacanya dari disk. Saat `build.mjs` mem-bundle, plugin esbuild `solar-embed-assets`
+(`build-plugins.mjs`) mengganti `src/assets/embedded.ts`: di `docx-worker.mjs` (±7 MB) dengan modul berisi base64
+setiap file (di-decode saat pertama dipakai; base64-nya dibuang dari source map), di bundle lain dengan modul kosong yang
+membuat `loadAsset()` gagal dengan pesan jelas alih-alih mencari file di disk. Plugin `solar-word-renderer-in-worker-only`
+membuang fallback in-process dari `index.js`/`server.mjs`, sehingga pustaka `docx`, resvg dan font sama sekali tidak ada
+di bundle server; tanpa `docx-worker.mjs` di sebelahnya, render gagal dengan pesan "the Word renderer (docx-worker.mjs) is
+missing next to the server bundle" dan server tetap berjalan. `build.mjs` gagal bila bundle server memuat renderer Word,
+dan memeriksa `docx-worker.mjs` dengan menjalankannya sendirian dari folder sementara (diagram harus tergambar dari aset
+yang di-embed, tanpa peringatan). `apps/desktop/package.json` (`extraResources`) dan `scripts/pack-server.mjs` ikut
+membawa `docx-worker.mjs`. Lisensi: `docx` (MIT, beserta paket yang sudah ada di dalam build-nya), resvg-wasm (MPL-2.0,
+beserta crate Rust di dalam wasm-nya), Liberation Sans (SIL OFL 1.1) - lihat `THIRD_PARTY_NOTICES.md`.
+
 ## 4. Konfirmasi (human-in-the-loop)
 
 - Setiap tool punya fungsi `confirmation(input)`; plugin MCP mengikuti kebijakan `never | writes | always`
@@ -182,16 +252,19 @@ UI menggabungkan delta per frame animasi (requestAnimationFrame) agar tetap ring
 `src/character/` memisahkan **mesin animasi** dari **model karakter**:
 
 - `rig.ts` - kontrak `Rig` yang wajib disediakan setiap model: grup `body` (squash & stretch), `head` (mengikuti kursor,
-  memuat wajah), `earL/earR` (telinga kelinci, daun sakura Mochi, payung & sedotan Cocoa Kelapa), `armL/armR` (berporos di
+  memuat wajah), `earL/earR` (antena Robo, telinga kelinci, daun sakura Mochi, payung & sedotan Cocoa Kelapa), `armL/armR` (berporos di
   bahu), mata, mulut, pipi, tablet, titik jangkar lencana "?"/"!" dan kotak bingkai kamera, plus nilai pose istirahat
   (tinggi kepala, sudut telinga/lengan, kelenturan telinga, amplitudo napas). `Kit` berisi pembuat bagian bersama
   (mata, kacamata, pipi, mulut, tablet, dekorasi di permukaan elipsoid).
-- `models/mochi.ts`, `models/cocoa.ts`, `models/rabbit.ts` - geometri prosedural three.js (tanpa aset eksternal) dengan
-  material toon. Pada Mochi dan Cocoa Kelapa tubuh bulatnya adalah `head`, sehingga wajah tetap menempel saat menoleh.
+- `models/robot.ts`, `models/mochi.ts`, `models/cocoa.ts`, `models/rabbit.ts` - geometri prosedural three.js (tanpa aset
+  eksternal) dengan material toon. **Robo** (default) adalah robot putih-biru berkepala layar: mata, mulut dan pipi
+  bercahaya di layar wajah gelap, inti matahari bercahaya di dada; dua antenanya yang berujung lampu kuning adalah
+  `earL/earR` rig, jadi menegak, bergoyang dan terkulai seperti telinga karakter lain. Pada Mochi dan Cocoa Kelapa
+  tubuh bulatnya adalah `head`, sehingga wajah tetap menempel saat menoleh.
 - `CharacterScene.ts` - lampu, bayangan, cincin mendengarkan, titik berpikir, lencana, interaksi (hover/klik), framing
   kamera dari `rig.frame`, dan satu set timeline GSAP untuk semua karakter (nilai pose relatif terhadap pose istirahat
   rig). three.js hanya merender.
-- `characters.ts` - daftar karakter (Mochi default), preferensi `solar.character` di `localStorage` dan event
+- `characters.ts` - daftar karakter (`DEFAULT_CHARACTER = 'robot'`, Robo), preferensi `solar.character` di `localStorage` dan event
   `solar:character`; `CharacterStage` membuat ulang scene saat karakter diganti dan langsung memakai state saat itu.
   Pemilih ada di panggung (`CharacterSwitcher`) dan di *Pengaturan → Karakter* (`CharacterCards`).
 

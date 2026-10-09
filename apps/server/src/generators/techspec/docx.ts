@@ -14,6 +14,7 @@ import {
   LevelFormat,
   LineRuleType,
   Packer,
+  PageOrientation,
   PageNumber,
   Paragraph,
   ShadingType,
@@ -68,10 +69,25 @@ export interface DocxRenderOptions {
 /** A4 with 2.5 cm margins, in twips. */
 const PAGE = { width: 11906, height: 16838, margin: 1418, header: 709, footer: 709 };
 const TEXT_WIDTH = PAGE.width - 2 * PAGE.margin;
+/** The text width of a landscape page (wide diagrams get one of their own). */
+const LANDSCAPE_TEXT_WIDTH = PAGE.height - 2 * PAGE.margin;
 const TWIPS_PER_PX = 15;
-/** Largest image on the page in CSS pixels (96 dpi): the text width, and a height that leaves room for the caption. */
-const MAX_IMAGE_WIDTH = Math.floor(TEXT_WIDTH / TWIPS_PER_PX);
-const MAX_IMAGE_HEIGHT = 820;
+/**
+ * Largest image in CSS pixels (96 dpi) on a portrait and on a landscape page: the text width, and a height that leaves
+ * room on the page for the heading kept with it (portrait), the caption and a note below it.
+ */
+const MAX_IMAGE = {
+  portrait: { width: Math.floor(TEXT_WIDTH / TWIPS_PER_PX), height: 840 },
+  landscape: { width: Math.floor(LANDSCAPE_TEXT_WIDTH / TWIPS_PER_PX), height: 560 },
+};
+/** Room a heading moved onto a diagram's landscape page takes, in CSS pixels. */
+const HEADING_PX = 70;
+/** Room the closing "made with SOLAR" note takes when it ends up below the last diagram, in CSS pixels. */
+const CLOSING_NOTE_PX = 70;
+/** A diagram gets a landscape page of its own when that shows it (and its text) at least this much larger. */
+const LANDSCAPE_GAIN = 1.2;
+/** Below this size (in points, as printed) diagram text is hard to read and the result says so. */
+const MIN_PRINTED_TEXT_PT = 5;
 /** The PNG fallback is drawn at twice the size it is shown at (about 190 dpi on paper). */
 const RASTER_SCALE = 2;
 
@@ -127,6 +143,16 @@ interface FigureImage {
   png: Buffer;
   width: number;
   height: number;
+  /** Shown on a landscape page of its own (with its caption), because it is much wider than tall. */
+  landscape: boolean;
+}
+
+/** Where a figure sits among the blocks, which decides how much of a page it can take. */
+interface FigureContext {
+  /** Headings right before it, which move onto its landscape page with it. */
+  headingsBefore: number;
+  /** Pixels of what follows it on the same page (the note pointing to its Mermaid source, the closing note). */
+  trailingPx: number;
 }
 
 /** Office's SVG renderer is safest with fill/stroke + *-opacity than with rgba() colours. */
@@ -138,14 +164,42 @@ function svgForWord(svg: string): string {
   );
 }
 
-async function prepareFigure(block: Extract<Block, { kind: 'figure' }>, warnings: string[]): Promise<FigureImage> {
+/** The usual text size of an SVG in CSS pixels (the median of its font-size declarations), or null when it declares none. */
+export function svgTextSize(svg: string, width: number): number | null {
+  const sizes = [...svg.matchAll(/font-size\s*(?:=\s*["']|:)\s*([0-9]*\.?[0-9]+)\s*(px)?\s*["';]/gi)].map((m) => Number(m[1])).filter((n) => n > 0);
+  if (!sizes.length) return null;
+  sizes.sort((a, b) => a - b);
+  // font sizes are in user units: scale them when the viewBox is not the drawn size
+  const box = /<svg\b[^>]*\sviewBox\s*=\s*["']\s*[-\d.]+[\s,]+[-\d.]+[\s,]+([\d.]+)/i.exec(svg)?.[1];
+  const unit = box && Number(box) > 0 ? width / Number(box) : 1;
+  return sizes[Math.floor((sizes.length - 1) / 2)]! * unit;
+}
+
+function fit(size: { width: number; height: number }, box: { width: number; height: number }): number {
+  return Math.min(1, box.width / size.width, box.height / size.height);
+}
+
+async function prepareFigure(block: Extract<Block, { kind: 'figure' }>, context: FigureContext, warnings: string[]): Promise<FigureImage> {
   const svg = svgForWord(block.diagram.svg.replace(/^\uFEFF/, ''));
   const natural = svgSize(svg);
   if (!natural) warnings.push(`Diagram ${block.diagram.fileName}: the SVG has no width/height, it is shown at 800x600`);
   const size = natural ?? { width: 800, height: 600 };
-  const scale = Math.min(1, MAX_IMAGE_WIDTH / size.width, MAX_IMAGE_HEIGHT / size.height);
+  // a wide diagram is shown larger on a landscape page of its own (with the headings right before it)
+  const portrait = fit(size, { width: MAX_IMAGE.portrait.width, height: MAX_IMAGE.portrait.height - context.trailingPx });
+  const landscapeHeight = MAX_IMAGE.landscape.height - context.headingsBefore * HEADING_PX - context.trailingPx;
+  const landscapeScale = landscapeHeight >= 200 ? fit(size, { width: MAX_IMAGE.landscape.width, height: landscapeHeight }) : 0;
+  const landscape = landscapeScale >= portrait * LANDSCAPE_GAIN;
+  const scale = landscape ? landscapeScale : portrait;
   const width = Math.max(1, Math.round(size.width * scale));
   const height = Math.max(1, Math.round(size.height * scale));
+  const textPx = svgTextSize(svg, size.width);
+  // CSS pixels at 96 dpi -> points at 72 dpi
+  const printed = textPx === null ? null : textPx * scale * 0.75;
+  if (printed !== null && printed < MIN_PRINTED_TEXT_PT) {
+    warnings.push(
+      `Diagram ${block.diagram.fileName}: shrunk to ${Math.round(scale * 100)}% to fit the page, so its text prints at about ${printed.toFixed(1)} pt; split it into smaller views (fewer elements or steps each) for a readable printout`,
+    );
+  }
   let png: Buffer;
   try {
     png = (await rasterizeSvg(svg, width * RASTER_SCALE)).png;
@@ -155,7 +209,21 @@ async function prepareFigure(block: Extract<Block, { kind: 'figure' }>, warnings
     );
     png = placeholderPng(Math.min(width, 480), Math.min(height, 480));
   }
-  return { svg: Buffer.from(svg, 'utf8'), png, width, height };
+  return { svg: Buffer.from(svg, 'utf8'), png, width, height, landscape };
+}
+
+/** How each figure sits among the blocks (see FigureContext). */
+function figureContexts(blocks: Block[]): Map<Block, FigureContext> {
+  const out = new Map<Block, FigureContext>();
+  blocks.forEach((b, i) => {
+    if (b.kind !== 'figure') return;
+    let headingsBefore = 0;
+    for (let j = i - 1; j >= 0 && blocks[j]!.kind === 'heading'; j--) headingsBefore++;
+    const note = blocks[i + 1]?.kind === 'mermaid';
+    const last = i + (note ? 1 : 0) === blocks.length - 1;
+    out.set(b, { headingsBefore, trailingPx: (note ? 30 : 0) + (last ? CLOSING_NOTE_PX : 0) });
+  });
+  return out;
 }
 
 // ---- small helpers ---------------------------------------------------------------------------
@@ -169,6 +237,29 @@ function decodeEntities(text: string): string {
     }
     return named[body.toLowerCase()] ?? m;
   });
+}
+
+/**
+ * A Markdown link destination as the URI Word stores it (an OPC relationship target must be a valid URI): HTML entities
+ * decoded as CommonMark does ("&amp;" is "&"), then spaces, quotes, "|" and other characters RFC 3986 does not allow
+ * percent-encoded. null for anything but http(s) and mailto links, which stay plain text.
+ */
+export function externalHref(destination: string): string | null {
+  const decoded = decodeEntities(destination.trim());
+  if (!/^(https?:|mailto:)/i.test(decoded)) return null;
+  let href: string;
+  try {
+    href = new URL(decoded).href;
+  } catch {
+    try {
+      href = encodeURI(decoded);
+    } catch {
+      return null;
+    }
+  }
+  return href
+    .replace(/%(?![0-9A-Fa-f]{2})/g, '%25')
+    .replace(/[^A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]/gu, (c) => encodeURIComponent(c));
 }
 
 /** Word bookmark names: letters, digits and "_", at most 40 characters; a leading "_" hides them from the Bookmark dialog. */
@@ -192,37 +283,139 @@ function longDate(iso: string, lang: 'id' | 'en'): string {
   }
 }
 
+/** Advance widths (1/1000 em) of the printable ASCII characters in Calibri (and Carlito, made to the same widths). */
+const CALIBRI_WIDTHS = {
+  regular:
+    '226,326,401,498,507,715,682,221,303,303,498,498,250,306,252,386,507,507,507,507,507,507,507,507,507,507,268,268,498,498,498,463,894,579,544,533,615,488,459,631,623,252,319,520,420,855,646,662,517,673,543,459,487,642,567,890,519,487,468,307,386,307,498,498,291,479,525,423,525,498,305,471,525,229,239,455,229,799,525,527,525,525,349,391,335,525,452,715,433,453,395,314,460,314,498',
+  bold: '226,326,438,498,507,729,705,233,312,312,498,498,258,306,267,430,507,507,507,507,507,507,507,507,507,507,276,276,498,498,498,463,898,606,561,529,630,488,459,637,631,267,331,547,423,874,659,676,532,686,563,473,495,653,591,906,551,520,478,325,430,325,498,498,300,494,537,418,537,503,316,474,537,246,255,480,246,813,537,538,537,537,355,399,347,537,473,745,459,474,397,344,475,344,498',
+};
+const WIDTHS = { regular: CALIBRI_WIDTHS.regular.split(',').map(Number), bold: CALIBRI_WIDTHS.bold.split(',').map(Number) };
+
+/** Width of a text on one line in twips, in Calibri at `size` points. */
+export function textTwips(text: string, size: number, bold = false): number {
+  const table = bold ? WIDTHS.bold : WIDTHS.regular;
+  let em = 0;
+  for (const ch of text) {
+    const c = ch.codePointAt(0)!;
+    // other Latin letters about as wide as the average letter, CJK and emoji a full em
+    em += c >= 32 && c <= 126 ? table[c - 32]! : c >= 0x2e80 ? 1000 : 560;
+  }
+  return (em / 1000) * size * 20;
+}
+
+/** Where a line may break: at spaces, and after "/" ("Request/Response"). Hyphens are kept: "INT-01" is one token. */
+const breakTokens = (text: string) => text.split(/\s+|(?<=\/)/).filter(Boolean);
+const clip = (word: string, chars: number) => [...word].slice(0, chars).join('');
+
 /**
- * Column widths (twips) from the content: every column gets room for its longest word (header words are bold), the rest
- * of the width goes to the columns with more text, so id columns stay narrow and prose columns get the room.
- * `charWidth` is the average width of a character of the table text in twips.
+ * Each column's four widths (twips), each at least the one before: room for its header words and short tokens (ids such
+ * as "INT-01", "500m", ordinary words: never broken); for its long tokens up to 18 characters; up to 40 characters; and
+ * for its typical text. Measured with Calibri's character widths at the table's font `size` (header words bold);
+ * `padding` is the cell's left + right margin.
  */
-export function columnWidths(columns: string[][], total = TEXT_WIDTH, charWidth = 100): number[] {
-  const PADDING = 2 * 90 + 40;
-  const words = (text: string) => text.split(/[\s/]+/).map((w) => w.length);
-  const needs = columns.map((cells) => {
+function columnLevels(columns: string[][], size: number, padding: number): Array<readonly [number, number, number, number]> {
+  // a little more than the margins: rounding, cell borders
+  const pad = padding + 30;
+  const measure = (text: string, bold = false) => textTwips(text, size, bold);
+  return columns.map((cells) => {
     const [header = '', ...body] = cells.map((c) => c.replace(/\s+/g, ' ').trim());
-    const longestWord = Math.min(18, Math.max(1, ...words(header).map((n) => n * 1.1), ...body.flatMap(words)));
-    const lengths = body.map((c) => c.length).sort((x, y) => x - y);
-    const typical = lengths.length ? lengths[Math.min(lengths.length - 1, Math.ceil((lengths.length - 1) * 0.8))]! : header.length;
-    const min = Math.ceil(longestWord * charWidth + PADDING);
-    return { min, preferred: Math.max(min, Math.min(typical, 60) * charWidth + PADDING) };
+    const words = body.flatMap(breakTokens);
+    const headerWord = Math.max(0, ...breakTokens(header).map((w) => measure(w, true)));
+    const shortWord = Math.max(0, ...words.filter((w) => [...w].length <= 12).map((w) => measure(w)));
+    const capped = Math.max(0, ...words.map((w) => measure(clip(w, 18))));
+    const longest = Math.max(0, ...words.map((w) => measure(clip(w, 40))));
+    const lengths = body.map((c) => measure(c)).sort((x, y) => x - y);
+    const typical = lengths.length ? lengths[Math.min(lengths.length - 1, Math.ceil((lengths.length - 1) * 0.8))]! : measure(header, true);
+    const l0 = Math.max(headerWord, shortWord, measure('MM')) + pad;
+    const l1 = Math.max(l0, capped + pad);
+    const l2 = Math.max(l1, longest + pad);
+    const l3 = Math.max(l2, Math.min(typical, measure('n'.repeat(60))) + pad);
+    return [l0, l1, l2, l3] as const;
   });
-  const minSum = needs.reduce((a, n) => a + n.min, 0);
-  const prefSum = needs.reduce((a, n) => a + n.preferred, 0);
+}
+
+/**
+ * Column widths (twips) from the content (see columnLevels). The table gets the largest of the four widths that fits
+ * `total`, plus a share of what is left toward the next, so when space is short it is taken from the columns with long
+ * words and much text, not from the id and code columns. Only when even the first does not fit are all columns scaled
+ * down.
+ */
+export function columnWidths(columns: string[][], total = TEXT_WIDTH, size = 9.5, padding = 2 * 90): number[] {
+  const levels = columnLevels(columns, size, padding);
+  const sum = (k: number) => levels.reduce((a, l) => a + l[k]!, 0);
   let widths: number[];
-  if (prefSum <= total) widths = needs.map((n) => (n.preferred / prefSum) * total);
-  else if (minSum >= total) widths = needs.map((n) => (n.min / minSum) * total);
+  if (sum(3) <= total) widths = levels.map((l) => (l[3] / sum(3)) * total);
+  else if (sum(0) >= total) widths = levels.map((l) => (l[0] / sum(0)) * total);
   else {
-    const extra = prefSum - minSum || 1;
-    widths = needs.map((n) => n.min + ((n.preferred - n.min) / extra) * (total - minSum));
+    let k = 0;
+    while (k < 2 && sum(k + 1) <= total) k++;
+    const span = sum(k + 1) - sum(k) || 1;
+    widths = levels.map((l) => l[k]! + ((l[k + 1]! - l[k]!) / span) * (total - sum(k)));
   }
   const rounded = widths.map((w) => Math.floor(w));
   rounded[rounded.indexOf(Math.max(...rounded))]! += total - rounded.reduce((a, w) => a + w, 0);
   return rounded;
 }
 
+/** Whether every word of the columns (up to 40 characters; longer ones always break) fits its column in `total` twips. */
+export function wordsFit(columns: string[][], total: number, size: number, padding: number): boolean {
+  return columnLevels(columns, size, padding).reduce((a, l) => a + l[2], 0) <= total;
+}
+
+/** How a table is set: on a portrait or landscape page, at what text width, font size and cell margin. */
+export interface TableLayout {
+  landscape: boolean;
+  width: number;
+  /** The smaller table font (Table Text Small) and narrower cell margins. */
+  small: boolean;
+  size: number;
+  margin: number;
+}
+
+const tableLayoutOf = (landscape: boolean, small: boolean): TableLayout => ({
+  landscape,
+  width: landscape ? LANDSCAPE_TEXT_WIDTH : TEXT_WIDTH,
+  small,
+  size: small ? 8.5 : 9.5,
+  margin: small ? 45 : 90,
+});
+
+/**
+ * The layout of a table of the document. Tables of 7 or more columns (e.g. the integration catalogue) use a smaller
+ * font and narrower cell margins so they fit portrait A4. When even so a column is narrower than one of its words (an
+ * identifier such as "MerchantNotificationGateway" would break mid-word), and `landscapeAllowed`, the table gets a
+ * landscape page instead, where it is set at the normal size if its words fit at that size.
+ */
+export function tableLayout(columns: string[][], landscapeAllowed = true): TableLayout {
+  const portrait = tableLayoutOf(false, columns.length >= 7);
+  const candidates = landscapeAllowed ? [portrait, tableLayoutOf(true, false), tableLayoutOf(true, true)] : [portrait];
+  const fitting = candidates.find((l) => wordsFit(columns, l.width, l.size, 2 * l.margin));
+  return fitting ?? candidates[candidates.length - 1]!;
+}
+
 const MARKED = { gfm: true, breaks: false };
+
+/** The text inline Markdown shows (as the runs Writer.inline makes of it), to measure table cells with. */
+function displayedText(markdown: string): string {
+  const plain = (tokens: Token[] | undefined): string =>
+    (tokens ?? [])
+      .map((t) => {
+        if (t.type === 'br') return ' ';
+        if (t.type === 'image') return t.text ? `[${t.text}]` : '';
+        if ('tokens' in t && Array.isArray(t.tokens) && t.tokens.length) return plain(t.tokens as Token[]);
+        return 'text' in t && typeof t.text === 'string' ? decodeEntities(t.text) : '';
+      })
+      .join('');
+  return markdown
+    .split(/\r?\n/)
+    .map((line) => plain(Lexer.lexInline(line, MARKED)))
+    .join(' ');
+}
+
+/** A table's text column by column (header first), as shown, to size the columns with. */
+function tableColumns(headers: string[], rows: string[][]): string[][] {
+  return headers.map((h, i) => [displayedText(h), ...rows.map((r) => displayedText(r[i] ?? ''))]);
+}
 
 type Align = 'left' | 'center' | 'right' | null;
 const ALIGN = { left: AlignmentType.LEFT, center: AlignmentType.CENTER, right: AlignmentType.RIGHT } as const;
@@ -315,8 +508,9 @@ class Writer {
         case 'link': {
           const tok = token as Tokens.Link;
           const href = tok.href.trim();
-          if (/^(https?:|mailto:)/i.test(href)) {
-            out.push(new ExternalHyperlink({ link: href, children: this.inline(tok.tokens, { ...fmt, link: true }) }));
+          const external = externalHref(href);
+          if (external) {
+            out.push(new ExternalHyperlink({ link: external, children: this.inline(tok.tokens, { ...fmt, link: true }) }));
           } else if (href.startsWith('#') && this.bookmarks.has(safeDecode(href.slice(1)))) {
             out.push(new InternalHyperlink({ anchor: this.bookmarks.get(safeDecode(href.slice(1)))!, children: this.inline(tok.tokens, { ...fmt, link: true }) }));
           } else {
@@ -355,24 +549,38 @@ class Writer {
 
   // ---- block Markdown ----
 
-  markdown(text: string): FileChild[] {
-    return this.blocks(Lexer.lex(text, MARKED), { depth: 0 });
+  /**
+   * Block Markdown. `keepWithNext` keeps its last paragraph on the page of what follows: a label such as "Example
+   * Response:" or "Acceptance Criteria:" is never left alone at the bottom of a page, away from its code block or list.
+   */
+  markdown(text: string, keepWithNext = false): FileChild[] {
+    const tokens = Lexer.lex(text, MARKED);
+    let last = tokens.length - 1;
+    while (last >= 0 && tokens[last]!.type === 'space') last--;
+    return this.blocks(tokens, { depth: 0 }, keepWithNext ? tokens[last] : undefined);
   }
 
-  private blocks(tokens: Token[], ctx: { depth: number; quote?: boolean }): FileChild[] {
+  private blocks(tokens: Token[], ctx: { depth: number; quote?: boolean }, keepWithNext?: Token): FileChild[] {
     const out: FileChild[] = [];
     for (const token of tokens) {
       switch (token.type) {
         case 'paragraph':
         case 'text': {
           const tok = token as Tokens.Paragraph | Tokens.Text;
-          out.push(new Paragraph({ style: ctx.quote ? 'Quote' : undefined, children: tok.tokens ? this.inline(tok.tokens) : this.inlineText(tok.text) }));
+          out.push(
+            new Paragraph({
+              style: ctx.quote ? 'Quote' : undefined,
+              keepNext: token === keepWithNext || undefined,
+              children: tok.tokens ? this.inline(tok.tokens) : this.inlineText(tok.text),
+            }),
+          );
           break;
         }
         case 'heading': {
-          // headings inside Markdown sit below the document's own three levels and stay out of the table of contents
+          // headings inside Markdown sit below the document's own levels (Heading 1 sections, Heading 2 sub-sections) and
+          // stay out of the table of contents: #, ## and ### are Heading 3, #### Heading 4, and so on
           const tok = token as Tokens.Heading;
-          out.push(new Paragraph({ heading: HEADINGS[Math.min(3 + tok.depth, 6) - 1], children: this.inline(tok.tokens) }));
+          out.push(new Paragraph({ heading: HEADINGS[Math.min(Math.max(tok.depth, 3), 6) - 1], children: this.inline(tok.tokens) }));
           break;
         }
         case 'code':
@@ -487,19 +695,20 @@ class Writer {
 
   // ---- tables ----
 
+  /** A table; `layout` defaults to the portrait one (tables inside Markdown text always stay on the portrait page). */
   table(
     headers: Array<{ text: string; children: ParagraphChild[] }>,
     rows: Array<Array<{ text: string; children: ParagraphChild[] }>>,
     align: Align[] = [],
+    layout?: TableLayout,
   ): Table {
     const cols = headers.length;
-    // wide tables (e.g. the integration catalogue) use a smaller table font so the columns fit portrait A4
-    const small = cols >= 7;
-    const widths = columnWidths(
-      headers.map((h, i) => [h.text, ...rows.map((r) => markdownToPlain(r[i]?.text ?? ''))]),
-      TEXT_WIDTH,
-      small ? 88 : 100,
+    const columns = tableColumns(
+      headers.map((h) => h.text),
+      rows.map((r) => r.map((c) => c.text)),
     );
+    const { width, small, size, margin } = layout ?? tableLayout(columns, false);
+    const widths = columnWidths(columns, width, size, 2 * margin);
     const cell = (children: ParagraphChild[], col: number, opts: { header?: boolean; fill?: string }) =>
       new TableCell({
         width: { size: widths[col]!, type: WidthType.DXA },
@@ -515,11 +724,11 @@ class Writer {
       });
     return new Table({
       style: 'TableGrid',
-      width: { size: TEXT_WIDTH, type: WidthType.DXA },
+      width: { size: width, type: WidthType.DXA },
       columnWidths: widths,
       layout: TableLayoutType.FIXED,
       borders: gridBorders(),
-      margins: { top: 40, bottom: 40, left: 90, right: 90 },
+      margins: { top: 40, bottom: 40, left: margin, right: margin },
       rows: [
         new TableRow({ tableHeader: true, cantSplit: true, children: headers.map((h, i) => cell(h.children, i, { header: true, fill: C.headerFill })) }),
         ...rows.map(
@@ -533,10 +742,12 @@ class Writer {
     });
   }
 
-  textTable(headers: string[], rows: string[][]): Table {
+  textTable(headers: string[], rows: string[][], layout?: TableLayout): Table {
     return this.table(
       headers.map((h) => ({ text: h, children: [new TextRun(h)] })),
       rows.map((r) => r.map((c) => ({ text: c, children: this.inlineText(c) }))),
+      [],
+      layout,
     );
   }
 
@@ -575,8 +786,15 @@ class Writer {
   }
 
   documentControl(): FileChild[] {
-    const { info } = this.doc;
+    const { info, lang } = this.doc;
     const out: FileChild[] = [];
+    // as on the cover: the date written out, and one name per line (a name such as "Lead Security, Bank X" is one person)
+    const values = new Map<string, string>([
+      [this.L('date'), longDate(info.date, lang)],
+      [this.L('authors'), info.authors.join('\n')],
+      [this.L('reviewers'), info.reviewers.join('\n')],
+      [this.L('approvers'), info.approvers.join('\n')],
+    ]);
     out.push(new Paragraph({ style: 'FrontHeading', pageBreakBefore: true, children: [new TextRun(this.L('documentControl'))] }));
     const widths = [2700, TEXT_WIDTH - 2700];
     out.push(
@@ -597,7 +815,10 @@ class Writer {
                   shading: solid(C.labelFill),
                   children: [new Paragraph({ style: 'TableText', children: [new TextRun({ text: label, bold: true, color: C.primary })] })],
                 }),
-                new TableCell({ width: { size: widths[1]!, type: WidthType.DXA }, children: [new Paragraph({ style: 'TableText', children: this.inlineText(value) })] }),
+                new TableCell({
+                  width: { size: widths[1]!, type: WidthType.DXA },
+                  children: [new Paragraph({ style: 'TableText', children: this.inlineText(values.get(label) || value) })],
+                }),
               ],
             }),
         ),
@@ -658,29 +879,63 @@ class Writer {
 
   // ---- body ----
 
-  body(): FileChild[] {
-    const out: FileChild[] = [];
+  /**
+   * Blocks that go on a landscape page: wide figures, tables whose words do not fit portrait A4 (tableLayout), the
+   * headings right before them and the notes right after the figures.
+   */
+  private landscapeBlocks(tables: Map<Block, TableLayout>): Set<Block> {
+    const blocks = this.doc.blocks;
+    const out = new Set<Block>();
+    blocks.forEach((b, i) => {
+      const wide = b.kind === 'figure' ? this.figures.get(b)?.landscape : b.kind === 'table' ? tables.get(b)?.landscape : false;
+      if (!wide) return;
+      out.add(b);
+      for (let j = i - 1; j >= 0 && blocks[j]!.kind === 'heading'; j--) out.add(blocks[j]!);
+      if (b.kind === 'figure' && blocks[i + 1]?.kind === 'mermaid') out.add(blocks[i + 1]!);
+    });
+    return out;
+  }
+
+  /**
+   * The numbered sections, as runs of portrait and landscape pages: each becomes a Word section (a section break starts
+   * a new page), so a wide diagram is printed larger, and a wide table without broken words, on a landscape page. The
+   * first run is always portrait (the front matter goes before it), even when it has no blocks.
+   */
+  body(): Array<{ landscape: boolean; children: FileChild[] }> {
+    const tables = new Map<Block, TableLayout>();
+    for (const b of this.doc.blocks) if (b.kind === 'table') tables.set(b, tableLayout(tableColumns(b.headers, b.rows)));
+    const landscape = this.landscapeBlocks(tables);
+    let out: FileChild[] = [];
+    const parts: Array<{ landscape: boolean; children: FileChild[] }> = [{ landscape: false, children: out }];
     let first = true;
-    for (const b of this.doc.blocks) {
+    this.doc.blocks.forEach((b, i) => {
+      const wide = landscape.has(b);
+      if (parts[parts.length - 1]!.landscape !== wide) {
+        out = [];
+        parts.push({ landscape: wide, children: out });
+      }
+      const next = this.doc.blocks[i + 1];
       switch (b.kind) {
         case 'heading':
           out.push(
             new Paragraph({
               heading: HEADINGS[b.level - 2],
-              pageBreakBefore: first || undefined,
+              // the first section starts on a new page (after the table of contents); a landscape page is a new page anyway
+              pageBreakBefore: (first && !wide) || undefined,
               children: [new Bookmark({ id: this.headingBookmarks.get(b)!, children: [new TextRun(b.text)] })],
             }),
           );
           first = false;
           break;
         case 'markdown':
-          out.push(...this.markdown(b.text));
+          // a label ("Contoh Response:") stays with the code block, list or table it introduces
+          out.push(...this.markdown(b.text, next?.kind === 'code' || next?.kind === 'list' || next?.kind === 'table'));
           break;
         case 'list':
           out.push(...this.simpleList(b.items, Boolean(b.ordered)));
           break;
         case 'table':
-          out.push(this.textTable(b.headers, b.rows), new Paragraph({ style: 'AfterTable' }));
+          out.push(this.textTable(b.headers, b.rows, tables.get(b)), new Paragraph({ style: 'AfterTable' }));
           break;
         case 'figure': {
           const image = this.figures.get(b)!;
@@ -716,27 +971,27 @@ class Writer {
           out.push(new Paragraph({ style: 'Note', children: [new TextRun(`${b.summary}: ${this.L('mermaidElsewhere')}.`)] }));
           break;
       }
-    }
+    });
     out.push(new Paragraph({ style: 'Note', alignment: AlignmentType.CENTER, border: { top: line(C.border, 4, 8) }, spacing: { before: 480 }, children: [new TextRun(this.L('generatedBy'))] }));
-    return out;
+    return parts;
   }
 
   // ---- header & footer ----
 
-  header(): Header {
+  header(width = TEXT_WIDTH): Header {
     const title = this.doc.title.length > 90 ? `${this.doc.title.slice(0, 87)}...` : this.doc.title;
     return new Header({
       children: [
         new Paragraph({
           style: 'Header',
-          tabStops: [{ type: TabStopType.RIGHT, position: TEXT_WIDTH }],
+          tabStops: [{ type: TabStopType.RIGHT, position: width }],
           children: [new TextRun(title), new TextRun({ children: [new Tab(), this.doc.info.documentId ?? ''] })],
         }),
       ],
     });
   }
 
-  footer(): Footer {
+  footer(width = TEXT_WIDTH): Footer {
     const parts = this.L('pageOf')
       .split(/(\{page\}|\{pages\})/)
       .filter(Boolean)
@@ -745,7 +1000,7 @@ class Writer {
       children: [
         new Paragraph({
           style: 'Footer',
-          tabStops: [{ type: TabStopType.RIGHT, position: TEXT_WIDTH }],
+          tabStops: [{ type: TabStopType.RIGHT, position: width }],
           children: [
             new TextRun(`${this.L('version')} ${this.doc.info.version} \u00b7 ${this.doc.info.status}`),
             new TextRun({ children: [new Tab(), ...parts] }),
@@ -886,7 +1141,8 @@ function styles(lang: 'id' | 'en') {
         name: 'Code Block',
         basedOn: 'Normal',
         next: 'Normal',
-        run: { font: MONO, size: 17, color: '24292F' },
+        // code is not prose: no spelling or grammar marks on keys and commands
+        run: { font: MONO, size: 17, color: '24292F', noProof: true },
         paragraph: {
           spacing: { before: 60, after: 200, line: 240, lineRule: LineRuleType.AUTO },
           indent: { left: 113, right: 113 },
@@ -904,7 +1160,7 @@ function styles(lang: 'id' | 'en') {
       { id: 'Note', name: 'Note', basedOn: 'Normal', next: 'Normal', run: { size: 18, italics: true, color: C.muted }, paragraph: { spacing: { after: 160 } } },
     ],
     characterStyles: [
-      { id: 'InlineCode', name: 'Inline Code', basedOn: 'DefaultParagraphFont', run: { font: MONO, size: 19, color: '24292F', shading: solid(C.inlineCodeFill) } },
+      { id: 'InlineCode', name: 'Inline Code', basedOn: 'DefaultParagraphFont', run: { font: MONO, size: 19, color: '24292F', shading: solid(C.inlineCodeFill), noProof: true } },
     ],
   };
 }
@@ -912,25 +1168,74 @@ function styles(lang: 'id' | 'en') {
 // ---- entry point -----------------------------------------------------------------------------
 
 /**
+ * Text the page layout (docx/layout) would take too long on: it measures an unbroken run of characters (a long token,
+ * URL or base64 line) about one character at a time, so a few thousand of them take seconds, and very long documents
+ * take seconds too. Such a document is written with the page numbers left to Word instead.
+ */
+export const LAYOUT_LIMITS = { longestRun: 400, characters: 400_000 };
+
+function blockTexts(doc: BuiltDocument): string[] {
+  const texts = [doc.title, ...doc.meta.flat(), ...doc.revisions.flat()];
+  for (const b of doc.blocks) {
+    if (b.kind === 'heading' || b.kind === 'markdown' || b.kind === 'code' || b.kind === 'mermaid') texts.push(b.text);
+    else if (b.kind === 'list') texts.push(...b.items);
+    else if (b.kind === 'table') texts.push(...b.headers, ...b.rows.flat());
+    else texts.push(b.caption);
+  }
+  return texts;
+}
+
+/** Whether laying the pages out is affordable (see LAYOUT_LIMITS). */
+export function layoutAffordable(doc: BuiltDocument): boolean {
+  let characters = 0;
+  for (const text of blockTexts(doc)) {
+    characters += text.length;
+    if (characters > LAYOUT_LIMITS.characters) return false;
+    for (const run of text.matchAll(/\S+/g)) if (run[0].length > LAYOUT_LIMITS.longestRun) return false;
+  }
+  return true;
+}
+
+/**
  * Renders the Word delivery document. Diagrams are embedded as SVG (vector, Word 2016+/365) with a PNG fallback drawn
- * by resvg (older Word, LibreOffice, Google Docs, WPS).
+ * by resvg (older Word, LibreOffice, Google Docs, WPS); a wide diagram gets a landscape page of its own.
  *
- * Table of contents: a real TOC field with one hyperlinked entry per numbered section, written with the page numbers
- * (and the page count of the footer) worked out by laying the pages out as Word does, so it is complete when the file
- * opens and Word does not ask to update fields. When that layout cannot place every section (e.g. text in a font it
- * cannot measure), the file is written again with `updateFields` on, so Word refreshes the page numbers when it opens.
+ * Table of contents: a real TOC field with one hyperlinked entry per numbered section. Its page numbers (and the page
+ * count of the footer) are estimated by laying the pages out as Word does (docx/layout) and written into the file, so it
+ * is complete when the file opens and Word does not ask to update fields. They are an estimate: on long documents a
+ * heading can land one page off where a block only just fits at the bottom of a page; Word's "Update Table" (and the
+ * footer's own PAGE/NUMPAGES fields) give the exact numbers. When that layout cannot place every section, or the
+ * document is too long for it (layoutAffordable), the file is written with `updateFields` on instead, so Word fills
+ * the page numbers in when it opens the file.
+ *
+ * This is synchronous, CPU-heavy work (about 2 s for 80 requirements): the server runs it in a worker thread
+ * (renderTechSpecDocxIsolated).
  */
 export async function renderTechSpecDocx(input: BuiltDocument, options: DocxRenderOptions = {}): Promise<DocxRenderResult> {
   const doc = cleanDeep(input);
   const warnings: string[] = [];
   const figures = new Map<Block, FigureImage>();
-  for (const b of doc.blocks) if (b.kind === 'figure') figures.set(b, await prepareFigure(b, warnings));
+  const contexts = figureContexts(doc.blocks);
+  for (const b of doc.blocks) if (b.kind === 'figure') figures.set(b, await prepareFigure(b, contexts.get(b)!, warnings));
 
   const L = (key: StringKey) => t(doc.lang, key);
   const summary = markdownToPlain(doc.info.summary);
+  const margin = { top: PAGE.margin, bottom: PAGE.margin, left: PAGE.margin, right: PAGE.margin, header: PAGE.header, footer: PAGE.footer };
   const build = (features: { pageNumbers?: PageNumberEstimator; updateFields: boolean }) => {
     const w = new Writer(doc, figures);
-    const children = [...w.cover(), ...w.documentControl(), ...w.tableOfContents(), ...w.body()];
+    const front = [...w.cover(), ...w.documentControl(), ...w.tableOfContents()];
+    const sections = w.body().map((part, i) => {
+      const width = part.landscape ? LANDSCAPE_TEXT_WIDTH : TEXT_WIDTH;
+      const orientation = part.landscape ? PageOrientation.LANDSCAPE : PageOrientation.PORTRAIT;
+      return {
+        // the first section starts with the cover page, which has neither header nor footer (a header part still needs
+        // one, empty, paragraph); the page numbers run on through the sections
+        properties: { titlePage: i === 0, page: { size: { width: PAGE.width, height: PAGE.height, orientation }, margin } },
+        headers: i === 0 ? { default: w.header(width), first: new Header({ children: [new Paragraph({})] }) } : { default: w.header(width) },
+        footers: i === 0 ? { default: w.footer(width), first: new Footer({ children: [new Paragraph({})] }) } : { default: w.footer(width) },
+        children: i === 0 ? [...front, ...part.children] : part.children,
+      };
+    });
     return {
       writer: w,
       document: new Document({
@@ -950,26 +1255,12 @@ export async function renderTechSpecDocx(input: BuiltDocument, options: DocxRend
         pageNumbers: features.pageNumbers,
         styles: styles(doc.lang),
         numbering: w.numberingConfig(),
-        sections: [
-          {
-            properties: {
-              titlePage: true,
-              page: {
-                size: { width: PAGE.width, height: PAGE.height },
-                margin: { top: PAGE.margin, bottom: PAGE.margin, left: PAGE.margin, right: PAGE.margin, header: PAGE.header, footer: PAGE.footer },
-              },
-            },
-            // the cover page has neither header nor footer (a header part still needs one, empty, paragraph)
-            headers: { default: w.header(), first: new Header({ children: [new Paragraph({})] }) },
-            footers: { default: w.footer(), first: new Footer({ children: [new Paragraph({})] }) },
-            children,
-          },
-        ],
+        sections,
       }),
     };
   };
 
-  if (options.pageNumbers !== false) {
+  if (options.pageNumbers !== false && layoutAffordable(doc)) {
     let complete = true;
     let wanted: string[] = [];
     const estimator: PageNumberEstimator = (body, context) => {

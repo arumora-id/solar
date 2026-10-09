@@ -15,7 +15,7 @@ Markdown TSD links to its sibling SVG diagrams correctly.
 Publish the whole package of the task so links resolve:
 - `*.archimate.xml` (import into Archi / Visual Paradigm), view `*.svg`
 - `*.sequence.svg`, `*.mmd` (Mermaid - renders on GitHub), `*.puml`
-- TSD `*.md` (renders on GitHub) and `*.html` (print-ready)
+- TSD `*.md` (renders on GitHub), `*.html` (print-ready) and `*.docx` (Word delivery document)
 - `*.json` sources are optional (useful for regenerating with SOLAR).
 
 ## Branch and commit

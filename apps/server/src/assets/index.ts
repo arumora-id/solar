@@ -3,13 +3,14 @@ import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import manifest from './assets.json';
-import { EMBEDDED_ASSETS } from './embedded.js';
+import { BUNDLED, EMBEDDED_ASSETS } from './embedded.js';
 
 /**
  * Binary files the server needs at runtime (the SVG rasterizer's WebAssembly, the fonts it draws diagram text with).
  *
  * `assets.json` lists them once: a `package` entry is a file of an npm dependency, a `file` entry is relative to
- * apps/server. The esbuild bundles carry the files inside them (see `build.mjs`); from source they are read from disk.
+ * apps/server. The Word worker bundle carries the files inside it (see `build-plugins.mjs`); from source they are read
+ * from disk. A bundle never reads them from disk: one that does not carry them says so.
  */
 export type AssetName = keyof typeof manifest;
 
@@ -31,15 +32,15 @@ export function loadAsset(name: AssetName): Promise<Uint8Array> {
   let pending = cache.get(name);
   if (!pending) {
     const embedded = EMBEDDED_ASSETS[name];
-    pending = embedded !== undefined ? Promise.resolve(new Uint8Array(Buffer.from(embedded, 'base64'))) : readFile(sourcePath(name)).then((b) => new Uint8Array(b));
+    pending =
+      embedded !== undefined
+        ? Promise.resolve(new Uint8Array(Buffer.from(embedded, 'base64')))
+        : BUNDLED
+          ? Promise.reject(new Error(`${name} is not embedded in this build (only the Word worker bundle carries it)`))
+          : readFile(sourcePath(name)).then((b) => new Uint8Array(b));
     // a failed read is not cached, so a later call can try again
     pending.catch(() => cache.delete(name));
     cache.set(name, pending);
   }
   return pending;
-}
-
-/** Whether the assets come from the bundle (true) or from disk (false). */
-export function assetsEmbedded(): boolean {
-  return Object.keys(EMBEDDED_ASSETS).length > 0;
 }

@@ -1,4 +1,5 @@
 import type {
+  Artifact,
   Attachment,
   Confirmation,
   KnowledgeEntry,
@@ -29,6 +30,14 @@ export interface ArtifactKnowledgeImport {
   title?: string;
   aliases?: string[];
   overwrite?: boolean;
+}
+
+/** Answer of POST /api/artifacts/:id/docx (Word file of a Technical Specification Document). */
+export interface WordExport {
+  artifact: Artifact;
+  /** false when the TSD already had a Word file, which is returned as it is */
+  created: boolean;
+  warnings: string[];
 }
 
 export function getToken(): string {
@@ -152,6 +161,8 @@ export const api = {
   importDocument: (file: File, options: DocumentImportOptions) =>
     uploadFile<{ written: KnowledgeEntry[]; removed: string[]; warnings: string[] }>('/api/knowledge/import-document', file, options),
   artifactUrl: (id: string, download = false) => withToken(`/api/artifacts/${encodeURIComponent(id)}/content${download ? '?download=1' : ''}`),
+  /** Creates the Word (.docx) file of a TSD made without one; `artifactId` is any artifact of the TSD (e.g. its .tsd.json). */
+  exportWord: (artifactId: string) => request<WordExport>('POST', `/api/artifacts/${encodeURIComponent(artifactId)}/docx`),
   zipUrl: (taskId: string) => withToken(`/api/tasks/${encodeURIComponent(taskId)}/artifacts.zip`),
   artifactText: async (id: string) => {
     const token = getToken();

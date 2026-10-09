@@ -27,7 +27,7 @@ const addDir = (dir, skip = /\.map$/) => {
   walk(dir);
 };
 
-for (const required of ['apps/server/dist/index.js', 'apps/server/dist/extract-worker.mjs', 'apps/web/dist/index.html', 'apps/web/dist/sw.js']) {
+for (const required of ['apps/server/dist/index.js', 'apps/server/dist/extract-worker.mjs', 'apps/server/dist/docx-worker.mjs', 'apps/web/dist/index.html', 'apps/web/dist/sw.js']) {
   if (!existsSync(join(root, required))) {
     console.error(`${required} is missing - run "npm run build" first.`);
     process.exit(1);
@@ -52,6 +52,7 @@ files[`${top}/package.json`] = new TextEncoder().encode(
 );
 add('apps/server/dist/index.js');
 add('apps/server/dist/extract-worker.mjs');
+add('apps/server/dist/docx-worker.mjs');
 addDir('apps/web/dist');
 addDir('skills', /^$/);
 addDir('knowledge', /^$/);
