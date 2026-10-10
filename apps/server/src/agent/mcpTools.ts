@@ -1,4 +1,4 @@
-import { DEFAULT_LANG, t } from '../i18n.js';
+import { DEFAULT_LANG, t, taskLang } from '../i18n.js';
 import type { McpManager } from '../plugins/mcpManager.js';
 import { isWriteTool } from '../plugins/mcpManager.js';
 import type { AgentTool } from './types.js';
@@ -50,7 +50,8 @@ export function createMcpTools(mcp: McpManager): AgentTool[] {
         const result = await mcp.callTool(plugin.id, tool.name, input as Record<string, unknown>, ctx.signal);
         const firstText = result.blocks.find((b) => b.type === 'text');
         const preview = firstText && firstText.type === 'text' ? firstText.text.replace(/\s+/g, ' ').slice(0, 140) : 'ok';
-        return { content: result.blocks, isError: result.isError, summary: result.isError ? `error: ${preview}` : preview };
+        // the plugin's own text, labelled as an error in the task's language
+        return { content: result.blocks, isError: result.isError, summary: result.isError ? t(taskLang(ctx), 'tool.failed', { message: preview }) : preview };
       },
     } satisfies AgentTool;
   });

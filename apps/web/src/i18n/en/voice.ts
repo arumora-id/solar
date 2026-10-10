@@ -12,7 +12,7 @@ export const voice: Dict['voice'] = {
 
     language: 'Speech language',
     languageAuto: (name: string) => `Automatic (${name})`,
-    languageAutoHint: 'Automatic follows the interface language.',
+    languageAutoHint: '“Automatic” follows the interface language.',
     languages: {
       'id-ID': 'Indonesian',
       'en-US': 'English (US)',

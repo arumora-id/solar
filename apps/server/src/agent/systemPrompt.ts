@@ -61,7 +61,7 @@ Files (${knowledge.length}${knowledge.length > shown.length ? `, first ${shown.l
 ${shown.map((e) => `- ${e.path} [${e.type}${e.status ? `, ${isRetired(e.status) ? `RETIRED: ${e.status}` : e.status}` : ''}] ${e.title}${e.aliases.length ? ` (aliases: ${e.aliases.join(', ')})` : ''}`).join('\n')}
 `
     : `# Knowledge base
-The user's knowledge base is empty. Work from the request and the attached documents; when the user's own standards would matter, suggest adding knowledge files (Settings → Knowledge; "Pengaturan → Knowledge" in the Indonesian interface).
+The user's knowledge base is empty. Work from the request and the attached documents; when the user's own standards would matter, suggest adding knowledge files in the Knowledge tab of the settings ("Settings → Knowledge" in the English interface, "Pengaturan → Knowledge" in the Indonesian one: name it as the interface language in <task_context> shows it).
 ${savingKnowledge}
 `;
 

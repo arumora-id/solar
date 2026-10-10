@@ -259,9 +259,12 @@ describe('agent end-to-end (scripted model)', () => {
     expect(((await again.json()) as { artifact: Artifact; created: boolean })).toMatchObject({ created: false, artifact: { id: docx.id } });
     expect((await fetch(`${server.url}/api/artifacts/art_nope/docx`, { method: 'POST' })).status).toBe(404);
     const svg = detail!.artifacts.find((a) => a.kind === 'archimate-svg')!;
-    const notTsd = await fetch(`${server.url}/api/artifacts/${svg.id}/docx`, { method: 'POST' });
+    // API errors are in the language of the request (X-Solar-Language; Indonesian without one)
+    const notTsd = await fetch(`${server.url}/api/artifacts/${svg.id}/docx`, { method: 'POST', headers: { 'X-Solar-Language': 'en' } });
     expect(notTsd.status).toBe(400);
     expect(((await notTsd.json()) as { error: string }).error).toMatch(/not part of a Technical Specification Document/);
+    const notTsdId = await fetch(`${server.url}/api/artifacts/${svg.id}/docx`, { method: 'POST' });
+    expect(((await notTsdId.json()) as { error: string }).error).toMatch(/bukan bagian dari Technical Specification Document/);
     expect((await api<TaskDetail>(`/api/tasks/${task.id}`)).artifacts.filter((a) => a.kind === 'tsd-docx')).toHaveLength(1);
 
     const zip = await fetch(`${server.url}/api/tasks/${task.id}/artifacts.zip`);

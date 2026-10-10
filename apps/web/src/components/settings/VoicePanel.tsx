@@ -32,7 +32,9 @@ export function VoicePanel() {
         {words.activeEngine} <strong>{words.engines[engine ?? 'none']}</strong>
         {isElectron() ? ` · ${words.desktopNote}` : ''}
       </p>
-      <div className="grid-2">
+      {/* start: the hint under the language makes that column taller, the engine field keeps its own height (hints in a
+          field: regular weight and color, not those of the field label) */}
+      <div className="grid-2" style={{ alignItems: 'start' }}>
         <label className="field">
           <span>{words.language}</span>
           <select className="select" value={prefs.lang} onChange={(e) => update({ lang: e.target.value as VoicePrefs['lang'] })}>
@@ -43,7 +45,9 @@ export function VoicePanel() {
               </option>
             ))}
           </select>
-          <span className="hint">{words.languageAutoHint}</span>
+          <span className="hint" style={{ fontWeight: 400, color: 'var(--ink-3)' }}>
+            {words.languageAutoHint}
+          </span>
         </label>
         <label className="field">
           <span>{words.engine}</span>
@@ -67,7 +71,9 @@ export function VoicePanel() {
             </option>
           ))}
         </select>
-        <span className="hint">{words.whisperHint}</span>
+        <span className="hint" style={{ fontWeight: 400, color: 'var(--ink-3)' }}>
+          {words.whisperHint}
+        </span>
       </label>
       <label className="toggle" style={{ display: 'flex', marginBottom: 8 }}>
         <input type="checkbox" checked={prefs.autoSend} onChange={(e) => update({ autoSend: e.target.checked })} />

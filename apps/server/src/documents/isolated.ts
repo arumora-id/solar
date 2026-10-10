@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Worker } from 'node:worker_threads';
+import { DEFAULT_LANG, t } from '../i18n.js';
 import { createLogger } from '../logger.js';
 import { DEFAULT_TIMEOUT_MS, extractDocument } from './index.js';
 import { DocumentError, type ExtractedDocument, type ExtractOptions } from './types.js';
@@ -68,6 +69,8 @@ export async function extractIsolated(buffer: Buffer, fileName: string, options:
   const url = workerUrl();
   if (!url) return extractDocument(buffer, fileName, options);
 
+  // the messages of the errors below, as the parser's own, are in the language of the upload
+  const lang = options.lang ?? DEFAULT_LANG;
   await acquire();
   try {
     return await new Promise<ExtractedDocument>((resolve, reject) => {
@@ -81,8 +84,7 @@ export async function extractIsolated(buffer: Buffer, fileName: string, options:
         void worker.terminate();
         settle();
       };
-      const tooMuchMemory = () =>
-        new DocumentError(`"${fileName}" terlalu besar atau rumit untuk dibaca (batas memori). Pecah dokumen menjadi beberapa file.`, 413, 'TOO_LARGE');
+      const tooMuchMemory = () => new DocumentError(t(lang, 'doc.worker.memory', { file: fileName }), 413, 'TOO_LARGE');
       const watchdog = setInterval(() => {
         if (typeof worker.getHeapStatistics !== 'function') return;
         worker.getHeapStatistics().then(
@@ -97,7 +99,7 @@ export async function extractIsolated(buffer: Buffer, fileName: string, options:
       const timer = setTimeout(
         () =>
           finish(() =>
-            reject(new DocumentError(`Membaca "${fileName}" melebihi batas waktu ${Math.round(limitMs / 1000)} detik. Pecah dokumen menjadi beberapa file.`, 422, 'TIMEOUT')),
+            reject(new DocumentError(t(lang, 'doc.worker.timeout', { file: fileName, seconds: Math.round(limitMs / 1000) }), 422, 'TIMEOUT')),
           ),
         limitMs,
       );
@@ -113,11 +115,11 @@ export async function extractIsolated(buffer: Buffer, fileName: string, options:
           reject(
             err.code === 'ERR_WORKER_OUT_OF_MEMORY'
               ? tooMuchMemory()
-              : new DocumentError(`"${fileName}" tidak bisa dibaca: ${err.message.slice(0, 300)}`),
+              : new DocumentError(t(lang, 'doc.worker.failed', { file: fileName, error: err.message.slice(0, 300) })),
           ),
         ),
       );
-      worker.once('exit', (code) => finish(() => reject(new DocumentError(`Pembaca dokumen berhenti tak terduga (kode ${code}).`))));
+      worker.once('exit', (code) => finish(() => reject(new DocumentError(t(lang, 'doc.worker.stopped', { code })))));
       // copy into a buffer of our own and hand it over to the worker without another copy
       const bytes = new Uint8Array(buffer);
       worker.postMessage({ bytes, fileName, options }, [bytes.buffer]);

@@ -164,6 +164,14 @@ export function requestLanguage(headers: Record<string, string | string[] | unde
   return langOfTag(first(headers[HEADER])) ?? fromQuery ?? langOfAcceptLanguage(first(headers['accept-language'])) ?? DEFAULT_LANG;
 }
 
+/**
+ * The language of an HTTP request: what the API's language middleware stored (`req.lang`), else read from the request
+ * itself (code that also runs before that middleware, e.g. the error handler).
+ */
+export function langOf(req: { readonly lang?: unknown; readonly headers?: Record<string, string | string[] | undefined>; readonly query?: unknown }): Lang {
+  return isLang(req.lang) ? req.lang : requestLanguage(req.headers ?? {}, req.query);
+}
+
 /** The language of a task (older tasks have none and are Indonesian); tolerates the partial contexts of tests. */
 export function taskLang(ctx: { readonly task?: { readonly language?: Lang } | null } | null | undefined): Lang {
   const lang = ctx?.task?.language;

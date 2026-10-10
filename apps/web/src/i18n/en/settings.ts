@@ -73,8 +73,8 @@ export const settings: Dict['settings'] = {
       remove: 'Remove from route',
       entryPlaceholder: 'provider/model, e.g. omniroute/claude-sonnet',
       save: 'Save route',
-      resetToEnv: 'Back to the .env model',
-      appliesHint: 'Applies to the next task, no restart needed.',
+      resetToEnv: 'Reset to the .env model',
+      appliesHint: 'Takes effect from the next task, no restart needed.',
     },
 
     providers: 'Providers',
@@ -89,7 +89,7 @@ export const settings: Dict['settings'] = {
       ollama: 'No API key needed. Add the models you have already pulled.',
     },
     fields: {
-      id: 'Id (used in routes, e.g. omniroute) - empty = derived from the name',
+      id: 'ID (used in routes, e.g. omniroute) - empty = derived from the name',
       kind: 'API type',
       baseUrl: 'Base URL (including /v1)',
       apiKey: 'API key (or a reference to a .env variable, e.g. ${OMNIROUTE_API_KEY}; empty for local models)',
@@ -223,7 +223,7 @@ Summary.
     newPlugin: 'New plugin',
     editPlugin: (id: string) => `Edit plugin: ${id}`,
     fields: {
-      id: 'Id (lowercase letters, digits, -)',
+      id: 'ID (lowercase letters, digits, -)',
       idPlaceholder: 'derived from the name',
       transport: 'Transport',
       transportHttp: 'Streamable HTTP (remote)',

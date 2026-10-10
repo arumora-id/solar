@@ -7,7 +7,7 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { PluginConfig, PluginStatus } from '@solar/shared';
 import type { ToolResultBlock } from '../agent/types.js';
 import { APP_SLUG, APP_VERSION } from '../config.js';
-import { both, DEFAULT_LANG, localize, type Lang, type LocalizedText } from '../i18n.js';
+import { both, DEFAULT_LANG, localize, LocalizedError, type Lang, type Localized, type LocalizedText } from '../i18n.js';
 import { createLogger } from '../logger.js';
 import type { EventBus } from '../tasks/eventBus.js';
 import { nowIso } from '../util/ids.js';
@@ -87,12 +87,13 @@ export function stdioEnvironment(extra: Record<string, string>, source: NodeJS.P
   return { ...env, ...extra };
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+/** Rejects after `ms` with `timeout` (in both languages: it is shown in the plugin status). */
+function withTimeout<T>(promise: Promise<T>, ms: number, timeout: (seconds: number) => Localized): Promise<T> {
   let timer: NodeJS.Timeout;
   return Promise.race([
     promise.finally(() => clearTimeout(timer)),
     new Promise<T>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`${what} timed out after ${Math.round(ms / 1000)}s`)), ms);
+      timer = setTimeout(() => reject(new LocalizedError(timeout(Math.round(ms / 1000)), 'en')), ms);
     }),
   ]);
 }
@@ -217,7 +218,7 @@ export class McpManager {
       } catch {
         const message = both('mcp.invalidUrl', { url: resolved.url ?? '' });
         this.setStatus(id, { state: 'error', error: message, tools: [], connectedAt: null });
-        throw new Error(message[DEFAULT_LANG]);
+        throw new LocalizedError(message);
       }
     }
     if (config.transport === 'stdio') {
@@ -248,12 +249,14 @@ export class McpManager {
     try {
       const timeoutMs = config.transport === 'stdio' ? 180_000 : 45_000;
       // first start of an `npx` server downloads the package: allow the same time for the MCP handshake
-      await withTimeout(client.connect(transport, { timeout: timeoutMs }), timeoutMs, `Connecting to ${config.name}`);
+      await withTimeout(client.connect(transport, { timeout: timeoutMs }), timeoutMs, (seconds) => both('mcp.connectTimeout', { plugin: config.name, seconds }));
       if (superseded()) throw new Superseded();
       const tools: McpToolDescriptor[] = [];
       let cursor: string | undefined;
       do {
-        const page = await withTimeout(client.listTools(cursor ? { cursor } : undefined), 45_000, 'Listing tools');
+        const page = await withTimeout(client.listTools(cursor ? { cursor } : undefined), 45_000, (seconds) =>
+          both('mcp.listToolsTimeout', { plugin: config.name, seconds }),
+        );
         for (const t of page.tools) {
           tools.push({
             name: t.name,
@@ -290,7 +293,8 @@ export class McpManager {
       if (err instanceof Superseded || superseded()) return;
       const message = err instanceof Error ? err.message : String(err);
       log.warn(`Could not connect to ${config.name}: ${message}`);
-      this.setStatus(id, { state: 'error', error: message, tools: [], connectedAt: null });
+      // SOLAR's own errors in both languages, a server's or library's as they are
+      this.setStatus(id, { state: 'error', error: err instanceof LocalizedError ? err.text : message, tools: [], connectedAt: null });
       throw err;
     }
   }
@@ -330,7 +334,8 @@ export class McpManager {
       await this.connect(pluginId);
       c = this.connections.get(pluginId);
     }
-    if (!c?.client) throw new Error(`Plugin "${pluginId}" is not connected`);
+    // English for the model (the tool error it reads), the task's language in the timeline (see the agent loop)
+    if (!c?.client) throw new LocalizedError(both('mcp.notConnected', { plugin: this.store.get(pluginId)?.name ?? pluginId }), 'en');
     const result = await c.client.callTool({ name: toolName, arguments: args }, undefined, {
       signal,
       timeout: 300_000,

@@ -16,7 +16,7 @@ export const voice = {
     language: 'Bahasa suara',
     /** `name`: the language the interface is in now (common.languageName). Short: it is the text of a select. */
     languageAuto: (name: string) => `Otomatis (${name})`,
-    languageAutoHint: 'Otomatis mengikuti bahasa tampilan.',
+    languageAutoHint: '“Otomatis” mengikuti bahasa tampilan.',
     /** Speech languages (BCP 47 tags, as stored in the voice preferences). */
     languages: {
       'id-ID': 'Bahasa Indonesia',

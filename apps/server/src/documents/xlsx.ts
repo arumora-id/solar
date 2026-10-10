@@ -2,6 +2,7 @@
  * Excel (.xlsx/.xlsm) → Markdown with a streaming reader: worksheets are inflated and scanned incrementally, so only
  * the rows that are shown (row/column caps) are parsed, and shared strings are read only up to the highest index used.
  */
+import { t } from '../i18n.js';
 import { decodeOoxmlText, decodeXml, fmtInt, MB, mdCell, mdTable, parseAttrs, yieldToLoop } from './limits.js';
 import { documentError, type ParseContext, type ParsedDocument, type SheetTable } from './types.js';
 import { dirOf, parseRels, relsPathOf, resolvePart, type OoxmlPackage, type Relationship, type ZipArchive } from './zip.js';
@@ -185,10 +186,11 @@ function shapeTable(rows: string[][]): { captions: string[]; table: string[][] }
 }
 
 export async function extractXlsx(ctx: ParseContext, zip: ZipArchive, pkg: OoxmlPackage): Promise<ParsedDocument> {
-  const { limits, deadline, warnings, maxChars } = ctx;
+  const { limits, deadline, warnings, maxChars, lang } = ctx;
+  const num = (n: number) => fmtInt(n, lang);
   const wbPath = pkg.mainPart;
   const wbXml = zip.text(wbPath, 16 * MB);
-  if (!wbXml) throw documentError('CORRUPT', 'File bukan workbook Excel yang valid (xl/workbook.xml tidak ada).');
+  if (!wbXml) throw documentError('CORRUPT', t(lang, 'doc.xlsx.noWorkbook'));
   const date1904 = new RegExp(`<${P}workbookPr\\b[^<>]*\\bdate1904="(1|true)"`).test(wbXml);
   const rels = parseRels(zip.text(relsPathOf(wbPath), 4 * MB));
   const relById = new Map(rels.map((r) => [r.id, r]));
@@ -208,8 +210,8 @@ export async function extractXlsx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
       noCache: [],
     });
   }
-  if (!sheets.length) throw documentError('CORRUPT', 'File bukan workbook Excel yang valid (tidak berisi worksheet).');
-  if (zip.names().some((n) => /vbaProject\.bin$/i.test(n))) warnings.push('Workbook berisi makro VBA; makro diabaikan (tidak pernah dijalankan).');
+  if (!sheets.length) throw documentError('CORRUPT', t(lang, 'doc.xlsx.noSheets'));
+  if (zip.names().some((n) => /vbaProject\.bin$/i.test(n))) warnings.push(t(lang, 'doc.xlsx.macros'));
 
   // styles: cellXfs index -> number format
   const stylesRel = rels.find((r) => /\/styles$/.test(r.type));
@@ -231,7 +233,7 @@ export async function extractXlsx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
   }
 
   const sheetLimit = Math.min(sheets.length, limits.maxSheets);
-  if (sheets.length > limits.maxSheets) warnings.push(`Workbook dipotong: hanya ${limits.maxSheets} dari ${sheets.length} sheet pertama yang dibaca.`);
+  if (sheets.length > limits.maxSheets) warnings.push(t(lang, 'doc.xlsx.sheetLimit', { max: num(limits.maxSheets), total: num(sheets.length) }));
   let maxSst = -1;
   /** Rough size of the text read so far; later sheets are skipped once it passes maxChars. */
   let textChars = 0;
@@ -279,7 +281,7 @@ export async function extractXlsx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
           return idx;
         })();
         buf = last > 0 ? rest.slice(last) : rest;
-        if (buf.length > 16 * MB) throw documentError('TOO_LARGE', 'File terlalu besar: satu teks di shared strings melebihi 16 MB XML.');
+        if (buf.length > 16 * MB) throw documentError('TOO_LARGE', t(lang, 'doc.xlsx.sharedStringTooLarge'));
         return true;
       },
       limits.maxTotalInflatedBytes,
@@ -434,7 +436,7 @@ export async function extractXlsx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
       }
       if (endOfData) return false;
       if (buf.length > 16 * MB) {
-        throw documentError('TOO_LARGE', `File terlalu besar: satu baris di sheet "${sh.name}" melebihi 16 MB XML.`);
+        throw documentError('TOO_LARGE', t(lang, 'doc.xlsx.rowTooLarge', { sheet: sh.name }));
       }
       return true;
     };
@@ -445,7 +447,7 @@ export async function extractXlsx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
 
   if (maxSst >= 0 && !sstFirst) {
     if (zip.has(sstPath)) readSst(maxSst);
-    else warnings.push('Workbook merujuk shared strings, tetapi xl/sharedStrings.xml tidak ada; sebagian sel tampil kosong.');
+    else warnings.push(t(lang, 'doc.xlsx.noSharedStrings'));
   }
 
   // render within the character budget, so a few very long cells cannot build a huge text
@@ -457,16 +459,16 @@ export async function extractXlsx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
     const sh = sheets[si]!;
     parts.push(`## Sheet: ${sh.name}${sh.state !== 'visible' ? ' (hidden)' : ''}`);
     if (si >= sheetLimit) {
-      parts.push('_(tidak dibaca: batas jumlah sheet tercapai)_');
+      parts.push(t(lang, 'doc.xlsx.sheetLimitNote'));
       continue;
     }
     if (sh.kind === 'chart') {
-      parts.push('_(sheet grafik — tidak ada data sel)_');
+      parts.push(t(lang, 'doc.xlsx.chartSheetNote'));
       continue;
     }
     if (sh.kind === 'missing') {
-      parts.push('_(bagian sheet tidak ada)_');
-      warnings.push(`Sheet "${sh.name}" tidak bisa dibaca (bagiannya tidak ada di file).`);
+      parts.push(t(lang, 'doc.xlsx.sheetMissingNote'));
+      warnings.push(t(lang, 'doc.xlsx.sheetMissing', { sheet: sh.name }));
       continue;
     }
     // table import reads every row up to the row cap: the character budget only limits the Markdown (the tables have
@@ -508,39 +510,39 @@ export async function extractXlsx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
       tables.push({ name: sh.name, rows: all.length ? shapeTable(all).table : [], truncated: sh.truncatedRows || sh.kind === 'skipped' || tableCut });
     }
     if (overBudget) {
-      parts.push('_(tidak dibaca: batas panjang teks tercapai)_');
+      parts.push(t(lang, 'doc.xlsx.textLimitNote'));
       skippedForChars += 1;
       continue;
     }
     if (!rows.length) {
-      parts.push('_(sheet kosong)_');
-      warnings.push(`Sheet "${sh.name}" kosong.`);
+      parts.push(t(lang, 'doc.xlsx.emptyNote'));
+      warnings.push(t(lang, 'doc.xlsx.empty', { sheet: sh.name }));
       continue;
     }
     const { captions, table } = shapeTable(rows);
     for (const caption of captions) parts.push(`**${mdCell(caption, limits.maxCellChars).replace(/\\\|/g, '|')}**`);
     parts.push(mdTable(table.map((r) => r.map((v) => mdCell(v, limits.maxCellChars)))));
     if (cutForChars) {
-      warnings.push(`Sheet "${sh.name}" dipotong: hanya ${fmtInt(rows.length)} baris pertama yang ditampilkan (batas ${fmtInt(maxChars)} karakter).`);
-      parts.push(`_(dipotong: ${fmtInt(rows.length)} baris pertama ditampilkan, batas panjang teks tercapai)_`);
+      warnings.push(t(lang, 'doc.xlsx.cutForChars', { sheet: sh.name, rows: num(rows.length), max: num(maxChars) }));
+      parts.push(t(lang, 'doc.xlsx.cutForCharsNote', { rows: num(rows.length) }));
     } else if (sh.truncatedRows) {
       let totalRows: number | null = null;
       const dm = sh.dimension ? /:?[A-Z]+(\d+)$/i.exec(sh.dimension) : null;
       if (dm) totalRows = parseInt(dm[1]!, 10);
-      let of = totalRows ? ` dari ${fmtInt(totalRows)}` : '';
-      if (!totalRows && sh.scannedLastRow) of = sh.countComplete ? ` dari ${fmtInt(sh.scannedLastRow)}` : ` dari setidaknya ${fmtInt(sh.scannedLastRow)}`;
-      const shown = fmtInt(limits.maxRowsPerSheet);
-      warnings.push(`Sheet "${sh.name}" dipotong: hanya ${shown} baris pertama${of} yang ditampilkan.`);
-      parts.push(`_(dipotong: ${shown} baris pertama${of} ditampilkan)_`);
+      let of = totalRows ? t(lang, 'doc.xlsx.of', { n: num(totalRows) }) : '';
+      if (!totalRows && sh.scannedLastRow) {
+        of = t(lang, sh.countComplete ? 'doc.xlsx.of' : 'doc.xlsx.ofAtLeast', { n: num(sh.scannedLastRow) });
+      }
+      const shown = num(limits.maxRowsPerSheet);
+      warnings.push(t(lang, 'doc.xlsx.cutRows', { sheet: sh.name, shown, of }));
+      parts.push(t(lang, 'doc.xlsx.cutRowsNote', { shown, of }));
     }
-    if (sh.truncatedCols) warnings.push(`Sheet "${sh.name}" dipotong: hanya ${limits.maxColsPerSheet} kolom pertama yang ditampilkan.`);
+    if (sh.truncatedCols) warnings.push(t(lang, 'doc.xlsx.cutColumns', { sheet: sh.name, max: num(limits.maxColsPerSheet) }));
     if (sh.noCache.length) {
-      warnings.push(
-        `Sheet "${sh.name}": ${sh.noCache.length} sel rumus belum punya nilai tersimpan (ditampilkan sebagai rumus): ${sh.noCache.slice(0, 5).join(', ')}.`,
-      );
+      warnings.push(t(lang, 'doc.xlsx.formulas', { sheet: sh.name, n: sh.noCache.length, cells: sh.noCache.slice(0, 5).join(', ') }));
     }
   }
-  if (cutCells) warnings.push(`${fmtInt(cutCells)} sel berisi lebih dari ${fmtInt(limits.maxCellChars)} karakter dan dipotong.`);
-  if (skippedForChars) warnings.push(`${skippedForChars} sheet terakhir tidak dibaca karena teks workbook sudah mencapai batas ${fmtInt(maxChars)} karakter.`);
+  if (cutCells) warnings.push(t(lang, 'doc.xlsx.cellsCut', { n: num(cutCells), cells: cutCells, max: num(limits.maxCellChars) }));
+  if (skippedForChars) warnings.push(t(lang, 'doc.xlsx.sheetsSkipped', { n: skippedForChars, max: num(maxChars) }));
   return { kind: 'xlsx', markdown: parts.join('\n\n'), parts: sheets.length, ...(ctx.collectTables ? { tables } : {}) };
 }

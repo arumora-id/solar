@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { KnowledgeEntry, KnowledgeType } from '@solar/shared';
 import { api, type SheetPreview } from '../../lib/api';
-import { useT, type Dict } from '../../lib/i18n';
+import { localeOf, useLang, useT, type Dict } from '../../lib/i18n';
 import { TYPES } from '../../lib/knowledgeTypes';
 import { useSolar } from '../../lib/store';
 import { PlusIcon } from '../Icons';
 import { messageText, type Message } from './richText';
-
 
 /** Status values (of the user's data, in English or Indonesian) meaning a system is no longer in use. */
 const RETIRED = /^(sunset|retired?|retiring|decommission(ed)?|deprecated|inactive|obsolete|phase[- ]?out|end[- ]of[- ]life|eol|tidak aktif|non[- ]?aktif|pensiun|dihentikan)$/i;
@@ -56,6 +55,7 @@ type GroupKey = KnowledgeType | 'guides';
 
 export function KnowledgePanel() {
   const t = useT();
+  const lang = useLang();
   const words = t.settings.knowledge;
   const [entries, setEntries] = useState<KnowledgeEntry[]>([]);
   const [filter, setFilter] = useState('');
@@ -119,8 +119,8 @@ export function KnowledgePanel() {
       out.set(key, [...(out.get(key) ?? []), e]);
     }
     const label = (key: GroupKey) => (key === 'guides' ? '' : t.artifacts.knowledgeType[key]);
-    return [...out.entries()].sort(([a], [b]) => (a === 'guides' ? 1 : b === 'guides' ? -1 : label(a).localeCompare(label(b))));
-  }, [shown, t]);
+    return [...out.entries()].sort(([a], [b]) => (a === 'guides' ? 1 : b === 'guides' ? -1 : label(a).localeCompare(label(b), localeOf(lang))));
+  }, [shown, t, lang]);
 
   const open = async (e: KnowledgeEntry) => {
     try {

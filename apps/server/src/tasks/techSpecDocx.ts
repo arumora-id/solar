@@ -93,8 +93,13 @@ export async function exportTechSpecDocx(
   artifacts: ArtifactService,
   save: (taskId: string, input: Omit<NewArtifact, 'taskId'>) => Promise<Artifact>,
   artifactId: string,
-  /** Language of the warnings and of the new artifact's description (the request's). */
+  /** Language of the errors and warnings (the request's). */
   lang: Lang = DEFAULT_LANG,
+  /**
+   * Language of the new artifact's description, which every viewer of the task sees: the task's language (looked up from
+   * the task id); without it, `lang`.
+   */
+  taskLanguage?: (taskId: string) => Promise<Lang>,
 ): Promise<TechSpecDocxExport> {
   const artifact = await artifacts.get(artifactId);
   if (!artifact) throw new TechSpecDocxError(404, both('docx.artifactNotFound', { id: artifactId }));
@@ -120,9 +125,10 @@ export async function exportTechSpecDocx(
     }
     const { buffer, warnings } = await renderTechSpecDocxIsolated(result.output.document, { warningLanguage: lang });
     const stem = model.name.replace(/(\.tsd)?\.json$/i, '') || 'technical-specification';
+    const descriptionLang = taskLanguage ? await taskLanguage(artifact.taskId) : lang;
     const saved = await save(
       artifact.taskId,
-      tsdDocxArtifact({ stem, title: result.output.spec.title, bundle: artifact.bundle, document: result.output.document, buffer, lang }),
+      tsdDocxArtifact({ stem, title: result.output.spec.title, bundle: artifact.bundle, document: result.output.document, buffer, lang: descriptionLang }),
     );
     return { artifact: saved, created: true, warnings };
   });

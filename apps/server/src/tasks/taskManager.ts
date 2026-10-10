@@ -80,7 +80,7 @@ export class TaskManager {
     private readonly repo: Repository,
     private readonly artifacts: ArtifactService,
     private readonly bus: EventBus,
-    /** `model` may be a function: the model route can change at runtime (Pengaturan → Model AI). */
+    /** `model` may be a function: the model route can change at runtime (Settings → AI models). */
     private readonly options: { concurrency: number; model: string | (() => string); confirmationTimeoutMs: number },
   ) {}
 

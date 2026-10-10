@@ -75,4 +75,13 @@ export const LLM_MESSAGES = {
     en: 'Invalid URL: "{url}" (it must start with http:// or https://)',
   },
   'mcp.disconnected': { id: 'Koneksi terputus', en: 'Connection lost' },
+  'mcp.connectTimeout': {
+    id: 'Tidak ada jawaban dari {plugin} dalam {seconds} detik saat menghubungkan',
+    en: 'Connecting to {plugin} timed out after {seconds} s',
+  },
+  'mcp.listToolsTimeout': {
+    id: 'Daftar tool dari {plugin} tidak datang dalam {seconds} detik',
+    en: 'Listing the tools of {plugin} timed out after {seconds} s',
+  },
+  'mcp.notConnected': { id: 'Plugin "{plugin}" tidak terhubung', en: 'Plugin "{plugin}" is not connected' },
 } as const satisfies Catalog;

@@ -3,11 +3,14 @@ import { mkdir } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import express, { type NextFunction, type Request, type Response } from 'express';
+import { z } from 'zod';
 import { createAgentRunner, type ResponsesStreamer } from './agent/agent.js';
 import { createBuiltinTools } from './agent/builtinTools.js';
 import { createKnowledgeTools } from './agent/knowledgeTools.js';
 import type { AgentTool } from './agent/types.js';
 import { APP_NAME, APP_VERSION, loadConfig, type AppConfig } from './config.js';
+import { errorMessage, langOf, t } from './i18n.js';
+import { formatZodIssues } from './i18n/zodIssues.js';
 import { KnowledgeStore } from './knowledge/knowledgeStore.js';
 import type { ChatCompletionsApi } from './llm/chatClient.js';
 import { LlmProviderStore } from './llm/providerStore.js';
@@ -122,10 +125,18 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     });
   }
 
-  app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
+  // errors as {error}, in the language of the request (route errors already are; a store's error carries both languages)
+  app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
     if (res.headersSent) return next(err);
-    const status = err instanceof HttpError ? err.status : (err as { status?: number }).status ?? 500;
-    const message = err instanceof Error ? err.message : String(err);
+    const lang = langOf(req);
+    const type = (err as { type?: string } | null)?.type;
+    let status = err instanceof HttpError ? err.status : ((err as { status?: number } | null)?.status ?? 500);
+    let message = errorMessage(err, lang);
+    if (err instanceof z.ZodError) {
+      status = 400;
+      message = formatZodIssues(err.issues, lang);
+    } else if (type === 'entity.parse.failed') message = t(lang, 'api.invalidJson');
+    else if (type === 'entity.too.large') message = t(lang, 'api.bodyTooLarge');
     if (status >= 500) log.error('Request failed', err);
     res.status(status).json({ error: message });
   });
@@ -153,7 +164,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   gcTimer.unref();
   log.info(`${APP_NAME} ${APP_VERSION} listening on ${url}`);
   log.info(`Storage: ${repo.kind} database, ${objects.kind} artifacts (data dir: ${config.dataDir})`);
-  log.info(`Model route: ${llm.route().join(' -> ')}${models.primaryReady() ? '' : ' - WARNING: the primary model has no API key (OPENAI_API_KEY or Pengaturan → Model AI)'}`);
+  log.info(`Model route: ${llm.route().join(' -> ')}${models.primaryReady() ? '' : ' - WARNING: the primary model has no API key (OPENAI_API_KEY in .env, or Settings → AI models)'}`);
   log.info(`Knowledge base: ${(await knowledge.list()).length} file(s) in ${config.userKnowledgeDir}`);
 
   return {

@@ -23,8 +23,11 @@ import { richTechSpec, sampleArchimate, sampleSequence } from './fixtures.js';
 let server: RunningServer;
 const ids = { md: '', html: '', model: '', badModel: '', svg: '', taskId: 'task_seeded01' };
 
-async function post(id: string): Promise<{ status: number; body: { artifact?: Artifact; created?: boolean; warnings?: string[]; error?: string } }> {
-  const res = await fetch(`${server.url}/api/artifacts/${id}/docx`, { method: 'POST' });
+async function post(
+  id: string,
+  language?: 'id' | 'en',
+): Promise<{ status: number; body: { artifact?: Artifact; created?: boolean; warnings?: string[]; error?: string } }> {
+  const res = await fetch(`${server.url}/api/artifacts/${id}/docx`, { method: 'POST', headers: language ? { 'X-Solar-Language': language } : {} });
   return { status: res.status, body: (await res.json()) as never };
 }
 
@@ -168,11 +171,14 @@ describe('POST /api/artifacts/:id/docx', () => {
 
   it('answers 404 for an unknown artifact and 400 outside a TSD bundle or for an invalid model', async () => {
     expect((await post('art_doesnotexist')).status).toBe(404);
-    const svg = await post(ids.svg);
+    // the errors are in the language of the request (X-Solar-Language), Indonesian without one
+    const svg = await post(ids.svg, 'en');
     expect(svg.status).toBe(400);
     expect(svg.body.error).toMatch(/order-layered\.svg is not part of a Technical Specification Document/);
-    const bad = await post(ids.badModel);
+    expect((await post(ids.svg)).body.error).toMatch(/order-layered\.svg bukan bagian dari Technical Specification Document/);
+    const bad = await post(ids.badModel, 'en');
     expect(bad.status).toBe(400);
     expect(bad.body.error).toMatch(/broken\.tsd\.json is not a valid specification/);
+    expect((await post(ids.badModel, 'id')).body.error).toMatch(/broken\.tsd\.json bukan spesifikasi yang valid/);
   });
 });

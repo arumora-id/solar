@@ -1,5 +1,5 @@
 import type { AppConfig } from '../config.js';
-import { LANGUAGE_NAME, localize, t, taskLang, type Lang } from '../i18n.js';
+import { errorMessage, LANGUAGE_NAME, localize, t, taskLang, type Lang } from '../i18n.js';
 import type { KnowledgeStore } from '../knowledge/knowledgeStore.js';
 import type { ModelRouter } from '../llm/router.js';
 import { LlmError, type ConversationItem, type ModelClient, type ToolCall, type TurnResult } from '../llm/types.js';
@@ -258,6 +258,7 @@ async function runTool(call: ToolCall, toolMap: Map<string, AgentTool>, ctx: Tas
     if (ctx.signal.aborted) throw ctx.signal.reason ?? err;
     const message = err instanceof Error ? err.message : String(err);
     log.warn(`Tool ${call.name} failed: ${message}`);
-    return finish(`Tool error: ${message}`, false, t(lang, 'tool.failed', { message: message.slice(0, 140) }));
+    // the model reads the error's own message; the timeline shows it in the task's language when the error has both
+    return finish(`Tool error: ${message}`, false, t(lang, 'tool.failed', { message: errorMessage(err, lang).slice(0, 140) }));
   }
 }
