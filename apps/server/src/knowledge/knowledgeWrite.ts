@@ -1,5 +1,6 @@
 import { stringify as stringifyYaml } from 'yaml';
 import type { Artifact, KnowledgeEntry, KnowledgeType } from '@solar/shared';
+import { both, LocalizedError, type Localized } from '../i18n.js';
 import type { ArtifactService } from '../tasks/artifactService.js';
 import { describeKnowledge, isAgentKnowledge, MAX_KNOWLEDGE_FILE_BYTES, normalizeKnowledgePath, parseFrontMatter, type KnowledgeStore } from './knowledgeStore.js';
 
@@ -72,25 +73,26 @@ export function knowledgePathFor(type: KnowledgeType, path: string | undefined, 
   return normalizeKnowledgePath(path?.trim() ? path : `${TYPE_FOLDERS[type]}/${knowledgeFileName(fallbackName)}`);
 }
 
-/** A file already exists at the path and `overwrite` was not set. */
-export class KnowledgeConflictError extends Error {
+/**
+ * A file already exists at the path and `overwrite` was not set. Like the other errors below it carries its message in
+ * both languages: `message` is Indonesian (what the agent tools return, as before), the API answers with `in(lang)`.
+ */
+export class KnowledgeConflictError extends LocalizedError {
   constructor(
     readonly path: string,
     readonly existing: KnowledgeEntry,
   ) {
-    super(
-      `Knowledge "${path}" sudah ada (${existing.source === 'builtin' ? 'file bawaan' : 'file pengguna'}: ${existing.title}). Baca dulu isinya, lalu simpan ulang dengan overwrite bila memang ingin menggantinya.`,
-    );
+    super(both(existing.source === 'builtin' ? 'knowledge.conflict.builtin' : 'knowledge.conflict.user', { path, title: existing.title }));
   }
 }
 
 /** An input the import cannot use (unknown artifact, not Markdown); `status` is the HTTP status to answer with. */
-export class KnowledgeInputError extends Error {
+export class KnowledgeInputError extends LocalizedError {
   constructor(
     readonly status: 400 | 404,
-    message: string,
+    text: Localized,
   ) {
-    super(message);
+    super(text);
   }
 }
 
@@ -151,9 +153,9 @@ export function knowledgeState(existing: KnowledgeEntry | null): string | null {
 }
 
 /** The file at the path changed (was created, replaced or removed) after the user was asked to approve the write. */
-export class KnowledgeStateChangedError extends Error {
+export class KnowledgeStateChangedError extends LocalizedError {
   constructor(readonly path: string) {
-    super(`Knowledge "${path}" berubah setelah persetujuan diminta.`);
+    super(both('knowledge.stateChanged', { path }));
   }
 }
 
@@ -168,15 +170,12 @@ function serialized<T>(store: KnowledgeStore, run: () => Promise<T>): Promise<T>
 export async function saveKnowledgeFile(store: KnowledgeStore, input: SaveKnowledgeInput): Promise<SaveKnowledgeResult> {
   const path = savePathOf(input);
   if (input.agentReadable && !isAgentKnowledge(path)) {
-    throw new KnowledgeInputError(400, `"${path}" adalah panduan untuk manusia (folder/file berawalan "_" atau README.md) dan tidak dibaca agent; pilih path lain.`);
+    throw new KnowledgeInputError(400, both('knowledge.guidancePath', { path }));
   }
   const text = composeKnowledgeFile(input.content, input.meta);
   const bytes = Buffer.byteLength(text, 'utf8');
   if (bytes > MAX_KNOWLEDGE_FILE_BYTES) {
-    throw new KnowledgeInputError(
-      400,
-      `File knowledge akan berukuran ${Math.ceil(bytes / 1024)} KB termasuk front matter; batasnya ${MAX_KNOWLEDGE_FILE_BYTES / 1024} KB. Ringkas atau pecah isinya.`,
-    );
+    throw new KnowledgeInputError(400, both('knowledge.fileTooLarge', { kb: Math.ceil(bytes / 1024), max: MAX_KNOWLEDGE_FILE_BYTES / 1024 }));
   }
   return serialized(store, async () => {
     const existing = await existingKnowledge(store, path);
@@ -196,13 +195,12 @@ export function isMarkdownArtifact(a: Artifact): boolean {
 /** The Markdown artifact to import, or an error naming the .md file of the same deliverable. */
 export async function markdownArtifact(artifacts: ArtifactService, artifactId: string): Promise<Artifact> {
   const artifact = await artifacts.get(artifactId);
-  if (!artifact) throw new KnowledgeInputError(404, `Artefak ${artifactId} tidak ditemukan.`);
+  if (!artifact) throw new KnowledgeInputError(404, both('knowledge.artifactNotFound', { id: artifactId }));
   if (isMarkdownArtifact(artifact)) return artifact;
   const sibling = (await artifacts.list(artifact.taskId)).find((a) => a.bundle === artifact.bundle && isMarkdownArtifact(a));
-  throw new KnowledgeInputError(
-    400,
-    `${artifact.name} bukan file Markdown; knowledge base hanya berisi Markdown.${sibling ? ` Pakai ${sibling.name} (${sibling.id}) dari paket yang sama.` : ''}`,
-  );
+  const notMarkdown = both('knowledge.notMarkdown', { name: artifact.name });
+  const hint = sibling ? both('knowledge.useSibling', { name: sibling.name, id: sibling.id }) : { id: '', en: '' };
+  throw new KnowledgeInputError(400, { id: notMarkdown.id + hint.id, en: notMarkdown.en + hint.en });
 }
 
 export interface ImportArtifactInput extends Omit<SaveKnowledgeInput, 'content' | 'defaultName'> {

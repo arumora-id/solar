@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { app, BrowserWindow, dialog, Menu, session, shell, type MenuItemConstructorOptions } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell, type MenuItemConstructorOptions } from 'electron';
 import envTemplate from '../../../.env.example';
+import { isLang, langFromLocale, readStoredLang, STRINGS, storeLang, type Lang } from './i18n';
 
 interface RunningServer {
   url: string;
@@ -30,10 +31,14 @@ const paths = {
 // Packaged: settings and data live in %APPDATA%\SOLAR. Development: the repository's .env and data/.
 const envFile = packaged ? join(paths.userData, '.env') : join(repoRoot, '.env');
 const dataDir = packaged ? join(paths.userData, 'data') : join(repoRoot, 'data');
+/** Interface language chosen in the SOLAR UI (menu and dialogs follow it). */
+const languageFile = join(paths.userData, 'language.json');
 
 let server: RunningServer | null = null;
 let win: BrowserWindow | null = null;
 let mini = false;
+/** Set once the app is ready (app.getLocale() needs it). */
+let lang: Lang = 'id';
 
 function prepareEnvironment(): boolean {
   mkdirSync(dataDir, { recursive: true });
@@ -82,47 +87,66 @@ function setMini(on: boolean): void {
 }
 
 function buildMenu(url: string): void {
+  const m = STRINGS[lang].menu;
   const template: MenuItemConstructorOptions[] = [
     {
-      label: 'File',
+      label: m.file,
       submenu: [
-        { label: 'Buka file .env (kredensial)', click: () => void shell.openPath(envFile) },
-        { label: 'Buka folder data & artefak', click: () => void shell.openPath(dataDir) },
+        { label: m.openEnv, click: () => void shell.openPath(envFile) },
+        { label: m.openData, click: () => void shell.openPath(dataDir) },
         { type: 'separator' },
-        { role: 'quit', label: 'Keluar' },
+        { role: 'quit', label: m.quit },
       ],
     },
     {
-      label: 'Tampilan',
+      label: m.view,
       submenu: [
-        { role: 'reload', label: 'Muat ulang' },
-        { role: 'toggleDevTools', label: 'Developer tools' },
+        { role: 'reload', label: m.reload },
+        { role: 'toggleDevTools', label: m.devTools },
         { type: 'separator' },
-        { role: 'resetZoom', label: 'Ukuran normal' },
-        { role: 'zoomIn', label: 'Perbesar' },
-        { role: 'zoomOut', label: 'Perkecil' },
+        { role: 'resetZoom', label: m.resetZoom },
+        { role: 'zoomIn', label: m.zoomIn },
+        { role: 'zoomOut', label: m.zoomOut },
         { type: 'separator' },
-        { role: 'togglefullscreen', label: 'Layar penuh' },
+        { role: 'togglefullscreen', label: m.fullscreen },
       ],
     },
     {
-      label: 'Jendela',
+      label: m.window,
       submenu: [
-        { label: 'Mode mini (selalu di atas)', type: 'checkbox', checked: mini, click: (item) => setMini(item.checked) },
-        { role: 'minimize', label: 'Minimalkan' },
+        { label: m.mini, type: 'checkbox', checked: mini, click: (item) => setMini(item.checked) },
+        { role: 'minimize', label: m.minimize },
       ],
     },
     {
-      label: 'Bantuan',
+      label: m.help,
       submenu: [
-        { label: 'Buka SOLAR AI AGENT di browser', click: () => void shell.openExternal(url) },
-        { label: 'Buka Monitor Task di browser', click: () => void shell.openExternal(`${url}/monitor`) },
+        { label: m.openInBrowser, click: () => void shell.openExternal(url) },
+        { label: m.openMonitorInBrowser, click: () => void shell.openExternal(`${url}/monitor`) },
         { type: 'separator' },
         { label: `SOLAR AI AGENT ${app.getVersion()}`, enabled: false },
       ],
     },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+/** The SOLAR UI reports its language (preload: solarDesktop.setLanguage): remember it and rebuild the menu. */
+function listenForLanguage(url: string): void {
+  const origin = new URL(url).origin;
+  ipcMain.on('solar:set-language', (event, value: unknown) => {
+    let from = '';
+    try {
+      from = new URL(event.senderFrame?.url ?? '').origin;
+    } catch {
+      return;
+    }
+    // only the SOLAR UI itself, never a page it navigated to
+    if (from !== origin || !isLang(value) || value === lang) return;
+    lang = value;
+    storeLang(languageFile, value);
+    buildMenu(url);
+  });
 }
 
 function createWindow(url: string): void {
@@ -183,26 +207,26 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
+    lang = readStoredLang(languageFile) ?? langFromLocale(app.getLocale());
     const firstRun = prepareEnvironment();
     try {
       server = await bootServer();
     } catch (err) {
-      dialog.showErrorBox('SOLAR AI AGENT gagal dijalankan', err instanceof Error ? err.stack ?? err.message : String(err));
+      dialog.showErrorBox(STRINGS[lang].startFailed, err instanceof Error ? err.stack ?? err.message : String(err));
       app.quit();
       return;
     }
     buildMenu(server.url);
+    listenForLanguage(server.url);
     createWindow(server.url);
     if (firstRun) {
+      const s = STRINGS[lang].firstRun;
       const res = await dialog.showMessageBox({
         type: 'info',
-        title: 'Selamat datang di SOLAR AI AGENT',
-        message: 'Isi kredensial di file .env terlebih dahulu',
-        detail:
-          `File konfigurasi dibuat di:\n${envFile}\n\n` +
-          'Isi minimal OPENAI_API_KEY. Opsional: DATABASE_URL (Neon), S3_* (object storage), GITHUB_TOKEN, PLANE_* dan VP_MCP_*. ' +
-          'Simpan file lalu jalankan ulang SOLAR AI AGENT.',
-        buttons: ['Buka file .env', 'Nanti'],
+        title: s.title,
+        message: s.message,
+        detail: s.detail(envFile),
+        buttons: [s.openEnv, s.later],
         defaultId: 0,
       });
       if (res.response === 0) void shell.openPath(envFile);

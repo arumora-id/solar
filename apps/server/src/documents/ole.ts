@@ -2,6 +2,7 @@
  * OLE2 / Compound File Binary sniffing. Office wraps password-protected .docx/.xlsx/.pptx in such a container, and
  * it is also the format of legacy Word/Excel/PowerPoint 97-2003 files; the stream names tell them apart.
  */
+import { DEFAULT_LANG, t, type Lang } from '../i18n.js';
 import { documentError, type DocumentError } from './types.js';
 
 const OLE_MAGIC = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
@@ -91,32 +92,22 @@ function streamNames(b: Uint8Array): Set<string> {
   return names;
 }
 
-const OFFICE_LABEL: Record<string, string> = {
-  docx: 'dokumen Word',
-  xlsx: 'workbook Excel',
-  xlsm: 'workbook Excel',
-  pptx: 'presentasi PowerPoint',
-};
+const OFFICE_LABEL = {
+  docx: 'doc.label.docx',
+  xlsx: 'doc.label.xlsx',
+  xlsm: 'doc.label.xlsx',
+  pptx: 'doc.label.pptx',
+} as const;
 
-/** The error to report for an OLE2 file: encrypted Office document, legacy 97-2003 format or something else. */
-export function oleError(bytes: Uint8Array, ext: string): DocumentError {
+/** The error to report (in `lang`) for an OLE2 file: encrypted Office document, legacy 97-2003 format or something else. */
+export function oleError(bytes: Uint8Array, ext: string, lang: Lang = DEFAULT_LANG): DocumentError {
   const names = streamNames(bytes);
   if (names.has('EncryptionInfo') || names.has('EncryptedPackage')) {
-    return documentError(
-      'ENCRYPTED',
-      `${capitalize(OFFICE_LABEL[ext] ?? 'dokumen Office')} ini dilindungi kata sandi (terenkripsi). Hapus kata sandinya di Office (File → Info → Protect → Encrypt with Password), simpan, lalu lampirkan lagi.`,
-    );
+    const label = t(lang, OFFICE_LABEL[ext as keyof typeof OFFICE_LABEL] ?? 'doc.label.office');
+    return documentError('ENCRYPTED', t(lang, 'doc.ole.encrypted', { label }));
   }
-  if (names.has('WordDocument')) {
-    return documentError('LEGACY_FORMAT', 'Format Word 97-2003 (.doc) belum didukung. Buka di Word lalu simpan sebagai .docx (atau ekspor ke PDF), kemudian lampirkan lagi.');
-  }
-  if (names.has('Workbook') || names.has('Book')) {
-    return documentError('LEGACY_FORMAT', 'Format Excel 97-2003 (.xls) belum didukung. Simpan sebagai .xlsx (atau .csv), kemudian lampirkan lagi.');
-  }
-  if (names.has('PowerPoint Document')) {
-    return documentError('LEGACY_FORMAT', 'Format PowerPoint 97-2003 (.ppt) belum didukung. Simpan sebagai .pptx (atau ekspor ke PDF), kemudian lampirkan lagi.');
-  }
-  return documentError('UNSUPPORTED', 'File ini berformat OLE2 (Office lama atau format lain) dan belum didukung. Simpan sebagai .docx, .xlsx, .pptx atau PDF.');
+  if (names.has('WordDocument')) return documentError('LEGACY_FORMAT', t(lang, 'doc.ole.doc'));
+  if (names.has('Workbook') || names.has('Book')) return documentError('LEGACY_FORMAT', t(lang, 'doc.ole.xls'));
+  if (names.has('PowerPoint Document')) return documentError('LEGACY_FORMAT', t(lang, 'doc.ole.ppt'));
+  return documentError('UNSUPPORTED', t(lang, 'doc.ole.other'));
 }
-
-const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);

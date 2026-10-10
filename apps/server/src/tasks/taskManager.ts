@@ -10,6 +10,7 @@ import type {
   TaskUsage,
 } from '@solar/shared';
 import { EMPTY_USAGE, TERMINAL_TASK_STATUSES } from '@solar/shared';
+import { DEFAULT_LANG, t, taskLang, type Lang } from '../i18n.js';
 import { createLogger } from '../logger.js';
 import type { Repository } from '../storage/repository.js';
 import { newId, nowIso } from '../util/ids.js';
@@ -21,6 +22,7 @@ const log = createLogger('tasks');
 export interface ConfirmationRequest {
   toolUseId: string;
   tool: string;
+  /** In the task's language (see AgentTool.displayName). */
   displayName: string;
   pluginId: string | null;
   pluginName: string | null;
@@ -94,7 +96,7 @@ export class TaskManager {
         const updated: Task = {
           ...task,
           status: 'failed',
-          error: 'Task terhenti karena server SOLAR AI AGENT di-restart. Silakan kirim ulang permintaannya.',
+          error: t(taskLang({ task }), 'task.interrupted'),
           finishedAt: nowIso(),
         };
         await this.repo.upsertTask(updated);
@@ -102,13 +104,15 @@ export class TaskManager {
       }
     }
     for (const c of await this.repo.listConfirmations({ status: 'pending' })) {
-      await this.repo.upsertConfirmation({ ...c, status: 'expired', resolvedAt: nowIso(), note: 'Server di-restart' });
+      const task = await this.repo.getTask(c.taskId);
+      await this.repo.upsertConfirmation({ ...c, status: 'expired', resolvedAt: nowIso(), note: t(taskLang({ task }), 'confirmation.note.serverRestarted') });
     }
   }
 
-  async create(prompt: string, sessionId: string, attachmentIds: string[] = []): Promise<Task> {
+  /** `language`: the interface language of the client; the task's own texts and the agent's fallback language. */
+  async create(prompt: string, sessionId: string, attachmentIds: string[] = [], language: Lang = DEFAULT_LANG): Promise<Task> {
     const firstLine = prompt.trim().split(/\r?\n/)[0] ?? '';
-    const title = firstLine.length > 90 ? `${firstLine.slice(0, 87)}...` : firstLine || 'Untitled task';
+    const title = firstLine.length > 90 ? `${firstLine.slice(0, 87)}...` : firstLine || t(language, 'task.untitled');
     const task: Task = {
       id: newId('task'),
       sessionId,
@@ -116,7 +120,7 @@ export class TaskManager {
       prompt,
       status: 'queued',
       progress: 0,
-      currentStep: 'Menunggu antrean',
+      currentStep: t(language, 'task.step.queued'),
       model: typeof this.options.model === 'function' ? this.options.model() : this.options.model,
       createdAt: nowIso(),
       startedAt: null,
@@ -125,11 +129,12 @@ export class TaskManager {
       error: null,
       usage: { ...EMPTY_USAGE },
       attachmentIds: [...new Set(attachmentIds)],
+      language,
     };
     await this.repo.upsertTask(task);
     this.seq.set(task.id, 0);
     this.bus.publish({ kind: 'task', task });
-    await this.emit(task.id, { type: 'status', status: 'queued', message: 'Task dibuat' });
+    await this.emit(task.id, { type: 'status', status: 'queued', message: t(language, 'task.status.created') });
     this.queue.push(task.id);
     this.pump();
     return task;
@@ -156,14 +161,15 @@ export class TaskManager {
     if (queuedIndex >= 0) {
       this.queue.splice(queuedIndex, 1);
       const task = await this.repo.getTask(id);
-      if (task) await this.finish(task, 'cancelled', { error: 'Dibatalkan oleh pengguna' });
+      if (task) await this.finish(task, 'cancelled', { error: t(taskLang({ task }), 'task.cancelledByUser') });
       return true;
     }
     const active = this.active.get(id);
     if (!active) return false;
-    active.controller.abort(new Error('Dibatalkan oleh pengguna'));
+    const lang = taskLang(active);
+    active.controller.abort(new Error(t(lang, 'task.cancelledByUser')));
     for (const p of this.pending.values()) {
-      if (p.confirmation.taskId === id) p.resolve({ approved: false, note: 'Task dibatalkan' });
+      if (p.confirmation.taskId === id) p.resolve({ approved: false, note: t(lang, 'confirmation.note.taskCancelled') });
     }
     return true;
   }
@@ -200,8 +206,9 @@ export class TaskManager {
     if (!this.runner) throw new Error('Task runner not configured');
 
     const controller = new AbortController();
+    const lang = taskLang({ task: stored });
     const active: ActiveTask = {
-      task: { ...stored, status: 'running', startedAt: nowIso(), currentStep: 'Memulai' },
+      task: { ...stored, status: 'running', startedAt: nowIso(), currentStep: t(lang, 'task.step.starting') },
       controller,
       pendingConfirmations: 0,
     };
@@ -210,16 +217,16 @@ export class TaskManager {
     try {
       // everything that touches storage stays inside the try: a database outage fails this task, not the process
       await this.save(active.task);
-      await this.emit(id, { type: 'status', status: 'running', message: 'Agent mulai bekerja' });
+      await this.emit(id, { type: 'status', status: 'running', message: t(lang, 'task.status.started') });
       const ctx = this.buildContext(active, await this.buildSessionContext(stored), await this.attachmentsOf(stored));
       const { result } = await runner(ctx);
-      if (controller.signal.aborted) throw controller.signal.reason ?? new Error('Dibatalkan');
+      if (controller.signal.aborted) throw controller.signal.reason ?? new Error(t(lang, 'task.step.cancelled'));
       await this.finish(active.task, 'completed', { result });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       try {
         if (controller.signal.aborted) {
-          await this.finish(active.task, 'cancelled', { error: message || 'Dibatalkan oleh pengguna' });
+          await this.finish(active.task, 'cancelled', { error: message || t(lang, 'task.cancelledByUser') });
         } else {
           log.error(`Task ${id} failed`, err);
           await this.emit(id, { type: 'error', message });
@@ -232,7 +239,7 @@ export class TaskManager {
       this.active.delete(id);
       for (const [cid, p] of this.pending) {
         if (p.confirmation.taskId === id) {
-          p.resolve({ approved: false, note: 'Task sudah selesai' });
+          p.resolve({ approved: false, note: t(lang, 'confirmation.note.taskFinished') });
           this.pending.delete(cid);
         }
       }
@@ -248,7 +255,7 @@ export class TaskManager {
       ...task,
       status,
       progress: status === 'completed' ? 100 : task.progress,
-      currentStep: status === 'completed' ? 'Selesai' : status === 'cancelled' ? 'Dibatalkan' : 'Gagal',
+      currentStep: t(taskLang({ task }), status === 'completed' ? 'task.step.completed' : status === 'cancelled' ? 'task.step.cancelled' : 'task.step.failed'),
       result: patch.result ?? task.result,
       error: patch.error ?? null,
       finishedAt: nowIso(),
@@ -377,7 +384,8 @@ export class TaskManager {
   }
 
   private async requestConfirmation(active: ActiveTask, request: ConfirmationRequest): Promise<ConfirmationDecision> {
-    if (active.controller.signal.aborted) return { approved: false, note: 'Task dibatalkan' };
+    const lang = taskLang(active);
+    if (active.controller.signal.aborted) return { approved: false, note: t(lang, 'confirmation.note.taskCancelled') };
     const confirmation: Confirmation = {
       id: newId('conf'),
       taskId: active.task.id,
@@ -390,7 +398,7 @@ export class TaskManager {
     await this.repo.upsertConfirmation(confirmation);
     active.pendingConfirmations += 1;
     if (active.task.status !== 'awaiting_confirmation') {
-      await this.save({ ...active.task, status: 'awaiting_confirmation', currentStep: `Menunggu persetujuan: ${request.displayName}` });
+      await this.save({ ...active.task, status: 'awaiting_confirmation', currentStep: t(lang, 'task.step.awaitingApproval', { tool: request.displayName }) });
       await this.emit(active.task.id, { type: 'status', status: 'awaiting_confirmation', message: request.reason });
     }
     await this.emit(active.task.id, { type: 'confirmation_requested', confirmation });
@@ -405,9 +413,9 @@ export class TaskManager {
         this.pending.delete(confirmation.id);
         resolve(d);
       };
-      const onAbort = () => settle({ approved: false, note: 'Task dibatalkan' });
+      const onAbort = () => settle({ approved: false, note: t(lang, 'confirmation.note.taskCancelled') });
       const timer = setTimeout(
-        () => settle({ approved: false, note: 'Tidak ada jawaban sampai batas waktu konfirmasi', expired: true }),
+        () => settle({ approved: false, note: t(lang, 'confirmation.note.timeout'), expired: true }),
         this.options.confirmationTimeoutMs,
       );
       active.controller.signal.addEventListener('abort', onAbort);
@@ -431,7 +439,7 @@ export class TaskManager {
     });
     active.pendingConfirmations -= 1;
     if (active.pendingConfirmations === 0 && !active.controller.signal.aborted && this.active.has(active.task.id)) {
-      await this.save({ ...active.task, status: 'running', currentStep: decision.approved ? 'Disetujui, melanjutkan' : 'Ditolak, melanjutkan' });
+      await this.save({ ...active.task, status: 'running', currentStep: t(lang, decision.approved ? 'task.step.approved' : 'task.step.declined') });
       await this.emit(active.task.id, { type: 'status', status: 'running' });
     }
     return decision;

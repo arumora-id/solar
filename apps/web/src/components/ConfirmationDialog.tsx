@@ -1,11 +1,13 @@
 import gsap from 'gsap';
 import { useEffect, useRef, useState } from 'react';
+import { useT } from '../lib/i18n';
 import { useSolar } from '../lib/store';
 import { HandIcon } from './Icons';
 
 /** Human-in-the-loop: the first pending approval request (e.g. every Visual Paradigm call). */
 export function ConfirmationDialog() {
   const { confirmations, resolveConfirmation, tasks } = useSolar();
+  const t = useT();
   const current = confirmations[0];
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
@@ -38,31 +40,31 @@ export function ConfirmationDialog() {
       <div className="modal" ref={ref}>
         <div className="row" style={{ marginBottom: 8 }}>
           <span className="badge" data-status="awaiting_confirmation">
-            <HandIcon /> Perlu persetujuan Anda
+            <HandIcon /> {t.agent.confirmation.badge}
           </span>
-          {confirmations.length > 1 && <span className="hint">+{confirmations.length - 1} permintaan lain</span>}
+          {confirmations.length > 1 && <span className="hint">{t.agent.confirmation.more(confirmations.length - 1)}</span>}
         </div>
         <h3 id="confirm-title">{current.displayName}</h3>
         <p style={{ marginTop: 0, color: 'var(--ink-2)' }}>
           {current.reason}
-          {current.pluginName ? ` · Plugin: ${current.pluginName}` : ''}
+          {current.pluginName ? ` · ${t.agent.confirmation.plugin(current.pluginName)}` : ''}
         </p>
-        {task && <p className="hint">Task: {task.title}</p>}
+        {task && <p className="hint">{t.agent.confirmation.task(task.title)}</p>}
         <div className="field">
-          <span>Data yang akan dikirim</span>
+          <span>{t.agent.confirmation.data}</span>
           <pre className="json">{typeof current.input === 'string' ? current.input : JSON.stringify(current.input, null, 2)}</pre>
         </div>
         <label className="field">
-          <span>Catatan untuk SOLAR (opsional)</span>
-          <input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="mis. gunakan project 'Order Platform' saja" />
+          <span>{t.agent.confirmation.noteLabel}</span>
+          <input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder={t.agent.confirmation.notePlaceholder} />
         </label>
         {error && <div className="error-box">{error}</div>}
         <div className="modal-actions">
           <button type="button" className="btn danger" disabled={busy} onClick={() => void decide(false)}>
-            Tolak
+            {t.common.reject}
           </button>
           <button type="button" className="btn primary" disabled={busy} onClick={() => void decide(true)}>
-            Setujui &amp; lanjutkan
+            {t.agent.confirmation.approve}
           </button>
         </div>
       </div>

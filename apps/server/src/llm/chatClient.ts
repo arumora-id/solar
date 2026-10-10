@@ -8,6 +8,7 @@ import type {
 } from 'openai/resources/chat/completions';
 import type { ModelCapabilities, Price } from '../agent/models.js';
 import type { ToolResultContent } from '../agent/types.js';
+import { DEFAULT_LANG, t, type Lang } from '../i18n.js';
 import { toLlmError } from './errors.js';
 import { LlmError, type ConversationItem, type ModelClient, type ToolCall, type TurnRequest, type TurnResult } from './types.js';
 
@@ -139,6 +140,8 @@ export interface ChatClientOptions {
   maxTokensParam: 'max_tokens' | 'max_completion_tokens';
   vision: boolean;
   api: ChatCompletionsApi;
+  /** Language of the error messages (the task's; default Indonesian). */
+  lang?: Lang;
 }
 
 interface PartialCall {
@@ -227,11 +230,11 @@ export function createChatClient(opts: ChatClientOptions): ModelClient {
         splitter.end();
       } catch (err) {
         if (req.signal.aborted) throw req.signal.reason ?? err;
-        throw toLlmError(err, opts.providerName, opts.model, false);
+        throw toLlmError(err, opts.providerName, opts.model, false, opts.lang);
       }
 
       if (!finish) {
-        throw Object.assign(new LlmError('cut', `Koneksi ke ${opts.providerName} terputus sebelum respons selesai. Kirim ulang task.`), { usage });
+        throw Object.assign(new LlmError('cut', t(opts.lang ?? DEFAULT_LANG, 'llm.cut', { provider: opts.providerName })), { usage });
       }
 
       const toolCalls: ToolCall[] = [...calls.entries()]

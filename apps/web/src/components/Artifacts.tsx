@@ -4,20 +4,21 @@ import { createPortal } from 'react-dom';
 import type { Artifact, KnowledgeType } from '@solar/shared';
 import { api, ApiError } from '../lib/api';
 import { formatBytes } from '../lib/format';
-import { TYPE_FOLDERS, TYPE_LABEL, TYPES } from '../lib/knowledgeTypes';
+import { useT, type Dict } from '../lib/i18n';
+import { TYPE_FOLDERS, TYPES } from '../lib/knowledgeTypes';
 import { renderMarkdown } from '../lib/markdown';
 import { useSolar } from '../lib/store';
 import { BookIcon, DownloadIcon, EyeIcon, SpinnerIcon, WordIcon, XIcon } from './Icons';
 
-const GROUP_TITLE: Record<string, string> = {
-  archimate: 'ArchiMate',
-  sequence: 'Sequence diagram',
-  tsd: 'Technical Specification',
-  other: 'Lainnya',
-};
-
 function family(a: Artifact): string {
   return a.kind.split('-')[0] ?? 'other';
+}
+
+/** Heading of a group by the family of its kind ("ArchiMate", "Technical Specification"); unknown families too. */
+function groupTitle(a: Artifact, t: Dict): string {
+  const groups = t.artifacts.groups;
+  const f = family(a);
+  return Object.hasOwn(groups, f) ? groups[f as keyof typeof groups] : t.artifacts.groupFallback;
 }
 
 const isMarkdown = (a: Artifact) => a.kind === 'tsd-markdown' || a.mimeType.startsWith('text/markdown') || /\.md$/i.test(a.name);
@@ -64,15 +65,38 @@ function useDialogFocus(ref: RefObject<HTMLElement | null>) {
   }, [ref]);
 }
 
-/** The Indonesian sentence for a failed "Buat Word" request; the server's own (English) text is kept as detail. */
-function wordError(e: unknown): { message: string; detail?: string } {
-  if (!(e instanceof ApiError)) return { message: 'server tidak bisa dihubungi, coba lagi.' };
-  if (e.status === 400) return { message: 'spesifikasi ini tidak valid untuk dibuat versi Word-nya.', detail: e.message };
-  if (e.status === 404) return { message: 'artefak tidak ditemukan (mungkin sudah dihapus).', detail: e.message };
-  return { message: 'server gagal membuat dokumen Word, coba lagi nanti.', detail: e.message };
+type WordErrorReason = keyof Dict['artifacts']['word']['errors'];
+
+/**
+ * Why a "Buat Word" request failed, as a key of `t.artifacts.word.errors` (translated while rendering, so it follows
+ * a language switch); the server's own message is kept as detail.
+ */
+function wordError(e: unknown): { reason: WordErrorReason; detail?: string } {
+  if (!(e instanceof ApiError)) return { reason: 'offline' };
+  if (e.status === 400) return { reason: 'invalid', detail: e.message };
+  if (e.status === 404) return { reason: 'notFound', detail: e.message };
+  return { reason: 'server', detail: e.message };
+}
+
+/**
+ * A failed request: the server's own message (already in the interface language), or none when the server was not
+ * reached (fetch's own message is browser jargon); shown as `failure.message ?? t.artifacts.offline`, so the
+ * fallback follows a language switch.
+ */
+type Failure = { message?: string };
+
+function failure(e: unknown): Failure {
+  return e instanceof ApiError ? { message: e.message } : {};
+}
+
+/** Splits a text at its "{path}" marker, so the path can be shown as code in the middle of a translated sentence. */
+function aroundPath(text: string): [string, string] {
+  const at = text.indexOf('{path}');
+  return at < 0 ? [`${text} `, ''] : [text.slice(0, at), text.slice(at + '{path}'.length)];
 }
 
 export function ArtifactList({ taskId, artifacts, active = false }: { taskId: string; artifacts: Artifact[]; active?: boolean }) {
+  const t = useT();
   const { rememberArtifact } = useSolar();
   const [preview, setPreview] = useState<Artifact | null>(null);
   const [saving, setSaving] = useState<Artifact | null>(null);
@@ -115,7 +139,7 @@ export function ArtifactList({ taskId, artifacts, active = false }: { taskId: st
       ))}
       <div className="row">
         <a className="btn small" href={api.zipUrl(taskId)}>
-          <DownloadIcon /> Unduh semua (ZIP)
+          <DownloadIcon /> {t.artifacts.downloadAll}
         </a>
       </div>
       {/* dialogs go to <body>: inside an animated chat bubble (a transformed ancestor) a fixed backdrop would be clipped to the bubble */}
@@ -167,8 +191,9 @@ function ArtifactGroup({
   onSave: (a: Artifact) => void;
   onCreated: (a: Artifact) => void;
 }) {
+  const t = useT();
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<{ message: string; detail?: string } | null>(null);
+  const [error, setError] = useState<{ reason: WordErrorReason; detail?: string } | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [ready, setReady] = useState(false);
   // after "Buat Word" the button is replaced by the download link, which then takes over the keyboard focus
@@ -216,11 +241,11 @@ function ArtifactGroup({
     <section className="artifact-group">
       <div className="artifact-group-head">
         <h4>
-          {GROUP_TITLE[family(first)] ?? 'Artefak'} · {baseTitle(first)}
+          {groupTitle(first, t)} · {baseTitle(first)}
         </h4>
         {word ? (
-          <a className="btn small primary" ref={wordLink} href={api.artifactUrl(word.id, true)} title={`Unduh ${word.name}, dokumen Word untuk klien`}>
-            <WordIcon /> Unduh Word (.docx)
+          <a className="btn small primary" ref={wordLink} href={api.artifactUrl(word.id, true)} title={t.artifacts.word.downloadTitle(word.name)}>
+            <WordIcon /> {t.artifacts.word.download}
           </a>
         ) : (
           model &&
@@ -232,19 +257,19 @@ function ArtifactGroup({
               onClick={() => void createWord()}
               aria-disabled={busy || undefined}
               aria-busy={busy || undefined}
-              title="Buat dokumen Word dari spesifikasi ini"
+              title={t.artifacts.word.createTitle}
             >
-              {busy ? <SpinnerIcon size={16} /> : <WordIcon />} {busy ? 'Membuat Word…' : 'Buat Word (.docx)'}
+              {busy ? <SpinnerIcon size={16} /> : <WordIcon />} {busy ? t.artifacts.word.creating : t.artifacts.word.create}
             </button>
           )
         )}
       </div>
       {error && (
         <div className="error-box artifact-note" role="alert">
-          Dokumen Word gagal dibuat: {error.message}
+          {t.artifacts.word.failed(t.artifacts.word.errors[error.reason])}
           {error.detail && (
             <details className="artifact-note-detail">
-              <summary>Rincian</summary>
+              <summary>{t.common.details}</summary>
               {error.detail}
             </details>
           )}
@@ -255,9 +280,9 @@ function ArtifactGroup({
         <div role="status">
           {warnings.length > 0 ? (
             <div className="hint artifact-note">
-              Dokumen Word dibuat dengan {warnings.length} catatan.
+              {t.artifacts.word.createdWithNotes(warnings.length)}
               <details className="artifact-note-detail">
-                <summary>Rincian</summary>
+                <summary>{t.common.details}</summary>
                 <ul>
                   {warnings.map((w, i) => (
                     <li key={i}>{w}</li>
@@ -266,14 +291,14 @@ function ArtifactGroup({
               </details>
             </div>
           ) : (
-            ready && <span className="sr-only">Dokumen Word siap diunduh.</span>
+            ready && <span className="sr-only">{t.artifacts.word.ready}</span>
           )}
         </div>
       )}
       {svgs.length > 0 && (
         <div className="thumbs">
           {svgs.map((a) => (
-            <button type="button" key={a.id} className="thumb" onClick={() => onPreview(a)} title={`Pratinjau ${a.name}`}>
+            <button type="button" key={a.id} className="thumb" onClick={() => onPreview(a)} title={t.artifacts.row.preview(a.name)}>
               <img src={api.artifactUrl(a.id)} alt={a.title} loading="lazy" />
             </button>
           ))}
@@ -294,12 +319,12 @@ function ArtifactGroup({
               type="button"
               className="btn ghost small icon"
               onClick={() => onPreview(a)}
-              aria-label={isViewable(a) ? `Pratinjau ${a.name}` : `Info ${a.name}`}
-              title={isViewable(a) ? undefined : 'Tidak bisa dipratinjau di browser'}
+              aria-label={isViewable(a) ? t.artifacts.row.preview(a.name) : t.artifacts.row.info(a.name)}
+              title={isViewable(a) ? undefined : t.artifacts.row.notViewable}
             >
               <EyeIcon />
             </button>
-            <a className="btn ghost small icon" href={api.artifactUrl(a.id, true)} aria-label={`Unduh ${a.name}`}>
+            <a className="btn ghost small icon" href={api.artifactUrl(a.id, true)} aria-label={t.artifacts.row.download(a.name)}>
               <DownloadIcon />
             </a>
             {isMarkdown(a) ? (
@@ -307,8 +332,8 @@ function ArtifactGroup({
                 type="button"
                 className="btn ghost small icon"
                 onClick={() => onSave(a)}
-                aria-label={`Simpan ${a.name} ke knowledge base`}
-                title="Simpan ke knowledge base"
+                aria-label={t.artifacts.row.saveToKnowledge(a.name)}
+                title={t.artifacts.saveToKnowledge.title}
               >
                 <BookIcon />
               </button>
@@ -327,6 +352,7 @@ const isGuidancePath = (path: string) => path.split('/').some((seg) => seg.start
 
 /** Saves a Markdown artifact (e.g. the .md of a TSD) as a knowledge file, so the agent uses it in later tasks. */
 function SaveToKnowledge({ artifact, onClose }: { artifact: Artifact; onClose: () => void }) {
+  const t = useT();
   const fileName = artifact.name.replace(/[^A-Za-z0-9._ -]+/g, '-');
   const [type, setType] = useState<KnowledgeType>('document');
   const [path, setPath] = useState(`${TYPE_FOLDERS.document}/${fileName}`);
@@ -338,7 +364,7 @@ function SaveToKnowledge({ artifact, onClose }: { artifact: Artifact; onClose: (
   const [conflict, setConflict] = useState('');
   const [overwrite, setOverwrite] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<Failure | null>(null);
   const [savedAt, setSavedAt] = useState('');
 
   const onCloseRef = useRef(onClose);
@@ -353,7 +379,7 @@ function SaveToKnowledge({ artifact, onClose }: { artifact: Artifact; onClose: (
 
   const save = async () => {
     setBusy(true);
-    setError('');
+    setError(null);
     try {
       const { entry } = await api.importArtifactToKnowledge({
         artifactId: artifact.id,
@@ -367,14 +393,19 @@ function SaveToKnowledge({ artifact, onClose }: { artifact: Artifact; onClose: (
       setSavedAt(entry.path);
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) setConflict(e.message);
-      else setError(e instanceof Error ? e.message : String(e));
+      else setError(failure(e));
     } finally {
       setBusy(false);
     }
   };
 
+  const st = t.artifacts.saveToKnowledge;
+  const [savedBefore, savedAfter] = aroundPath(st.savedAs);
+  // where the knowledge base is managed: "Pengaturan → Knowledge"
+  const manageAt = `${t.app.settings.title} → ${t.app.settings.tabs.knowledge}`;
+
   return (
-    <div className="backdrop" onClick={(e) => e.target === e.currentTarget && onClose()} role="dialog" aria-modal="true" aria-label="Simpan ke knowledge base">
+    <div className="backdrop" onClick={(e) => e.target === e.currentTarget && onClose()} role="dialog" aria-modal="true" aria-label={st.title}>
       <form
         className="modal"
         ref={formRef}
@@ -384,53 +415,50 @@ function SaveToKnowledge({ artifact, onClose }: { artifact: Artifact; onClose: (
           void save();
         }}
       >
-        <h3>Simpan ke knowledge base</h3>
+        <h3>{st.title}</h3>
         {savedAt ? (
           <>
             <p>
-              Tersimpan sebagai <code>{savedAt}</code>.{' '}
-              {isGuidancePath(savedAt)
-                ? 'File di folder berawalan "_" atau README.md adalah panduan untuk manusia dan tidak dibaca agent'
-                : 'Agent membacanya mulai task berikutnya'}
-              ; kelola di Pengaturan → Knowledge.
+              {savedBefore}
+              <code>{savedAt}</code>
+              {savedAfter} {isGuidancePath(savedAt) ? st.savedGuidance(manageAt) : st.savedForAgent(manageAt)}
             </p>
             <div className="modal-actions">
               <button type="button" className="btn primary" onClick={onClose} autoFocus>
-                Tutup
+                {t.common.close}
               </button>
             </div>
           </>
         ) : (
           <>
             <p className="hint" style={{ marginTop: 0 }}>
-              {artifact.name} disalin ke knowledge base sebagai file Markdown. Isinya diikuti agent di atas aturan bawaan, jadi simpan hanya
-              dokumen yang sudah Anda periksa.
+              {st.intro(artifact.name)}
             </p>
             <label className="field">
-              <span>Jenis</span>
+              <span>{t.common.type}</span>
               <select
                 className="select"
                 value={type}
                 onChange={(e) => {
-                  const t = e.target.value as KnowledgeType;
-                  setType(t);
+                  const next = e.target.value as KnowledgeType;
+                  setType(next);
                   if (!pathEdited) {
-                    setPath(`${TYPE_FOLDERS[t]}/${fileName}`);
+                    setPath(`${TYPE_FOLDERS[next]}/${fileName}`);
                     // the 409 and the consent to replace were for the old path
                     setConflict('');
                     setOverwrite(false);
                   }
                 }}
               >
-                {TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {TYPE_LABEL[t]}
+                {TYPES.map((k) => (
+                  <option key={k} value={k}>
+                    {t.artifacts.knowledgeType[k]}
                   </option>
                 ))}
               </select>
             </label>
             <label className="field">
-              <span>Path</span>
+              <span>{t.common.path}</span>
               <input
                 className="input"
                 value={path}
@@ -444,33 +472,33 @@ function SaveToKnowledge({ artifact, onClose }: { artifact: Artifact; onClose: (
               />
             </label>
             <label className="field">
-              <span>ID (nama di diagram dan dokumen)</span>
+              <span>{st.idLabel}</span>
               <input className="input" value={id} onChange={(e) => setId(e.target.value)} />
             </label>
             <label className="field">
-              <span>Judul</span>
-              <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Kosongkan untuk memakai judul dokumen" />
+              <span>{t.common.title}</span>
+              <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder={st.titlePlaceholder} />
             </label>
             <label className="field">
-              <span>Alias (pisahkan dengan koma, opsional)</span>
-              <input className="input" value={aliases} onChange={(e) => setAliases(e.target.value)} placeholder="mis. AD1 Gateway, ADI Gate" />
+              <span>{st.aliasesLabel}</span>
+              <input className="input" value={aliases} onChange={(e) => setAliases(e.target.value)} placeholder={st.aliasesPlaceholder} />
             </label>
             {conflict && (
               <div className="error-box">
                 {conflict}
                 <label className="toggle" style={{ display: 'flex', marginTop: 8 }}>
                   <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} />
-                  Ganti file yang sudah ada
+                  {st.overwrite}
                 </label>
               </div>
             )}
-            {error && <div className="error-box">{error}</div>}
+            {error && <div className="error-box">{error.message ?? t.artifacts.offline}</div>}
             <div className="modal-actions">
               <button type="button" className="btn" onClick={onClose}>
-                Batal
+                {t.common.cancel}
               </button>
               <button type="submit" className="btn primary" disabled={busy || !path.trim() || (Boolean(conflict) && !overwrite)}>
-                {busy ? 'Menyimpan…' : 'Simpan'}
+                {busy ? t.common.saving : t.common.save}
               </button>
             </div>
           </>
@@ -492,8 +520,9 @@ export function ArtifactPreview({
   onOpen?: (a: Artifact) => void;
   onClose: () => void;
 }) {
+  const t = useT();
   const [text, setText] = useState<string | null>(null);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<Failure | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
   const isSvg = artifact.mimeType.startsWith('image/svg');
   const isHtml = artifact.mimeType.startsWith('text/html');
@@ -506,7 +535,7 @@ export function ArtifactPreview({
     api
       .artifactText(artifact.id)
       .then(setText)
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+      .catch((e: unknown) => setError(failure(e)));
   }, [artifact.id, isSvg, isHtml, isFile]);
 
   const onCloseRef = useRef(onClose);
@@ -537,7 +566,7 @@ export function ArtifactPreview({
         <div className="modal" ref={modalRef} tabIndex={-1}>
           <div className="row" style={{ marginBottom: 10, flexWrap: 'nowrap' }}>
             <h3 style={{ flex: 1, margin: 0, minWidth: 0 }}>{artifact.title}</h3>
-            <button type="button" className="btn small icon" onClick={onClose} aria-label="Tutup">
+            <button type="button" className="btn small icon" onClick={onClose} aria-label={t.common.close}>
               <XIcon />
             </button>
           </div>
@@ -547,21 +576,19 @@ export function ArtifactPreview({
               {artifact.name} · {formatBytes(artifact.size)}
             </div>
             <p>
-              {word
-                ? 'Dokumen Word tidak bisa dipratinjau di browser. Unduh lalu buka di Microsoft Word, LibreOffice Writer atau Google Docs.'
-                : 'File ini tidak bisa dipratinjau di browser. Unduh untuk membukanya.'}
+              {word ? t.artifacts.word.noPreview : t.artifacts.preview.noPreview}
             </p>
             <div className="row" style={{ justifyContent: 'center' }}>
               <a className="btn primary" href={api.artifactUrl(artifact.id, true)} data-autofocus>
-                <DownloadIcon /> {word ? 'Unduh Word (.docx)' : 'Unduh'}
+                <DownloadIcon /> {word ? t.artifacts.word.download : t.common.download}
               </a>
               {html && onOpen && (
                 <button type="button" className="btn" onClick={() => onOpen(html)}>
-                  <EyeIcon /> Pratinjau versi HTML
+                  <EyeIcon /> {t.artifacts.word.previewHtml}
                 </button>
               )}
             </div>
-            {html && onOpen && <p className="hint">Versi HTML memuat isi yang sama, tanpa tata letak halaman Word (sampul, nomor halaman).</p>}
+            {html && onOpen && <p className="hint">{t.artifacts.word.htmlHint}</p>}
           </div>
         </div>
       </div>
@@ -574,13 +601,13 @@ export function ArtifactPreview({
         <div className="row" style={{ marginBottom: 10 }}>
           <h3 style={{ flex: 1, margin: 0 }}>{artifact.title}</h3>
           <a className="btn small" href={api.artifactUrl(artifact.id, true)}>
-            <DownloadIcon /> Unduh
+            <DownloadIcon /> {t.common.download}
           </a>
-          <button type="button" className="btn small icon" onClick={onClose} aria-label="Tutup">
+          <button type="button" className="btn small icon" onClick={onClose} aria-label={t.common.close}>
             <XIcon />
           </button>
         </div>
-        {error && <div className="error-box">{error}</div>}
+        {error && <div className="error-box">{error.message ?? t.artifacts.offline}</div>}
         {isSvg && (
           <div className="preview-frame" style={{ overflow: 'auto', padding: 8 }}>
             <img src={api.artifactUrl(artifact.id)} alt={artifact.title} style={{ maxWidth: 'none' }} />

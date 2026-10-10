@@ -6,20 +6,16 @@ import { AttachmentTable } from '../components/Attachments';
 import { AlertIcon, CheckCircleIcon, ClockIcon, HandIcon, RefreshIcon, SpinnerIcon, StopIcon } from '../components/Icons';
 import { ProgressMeter, StatusBadge } from '../components/Status';
 import { api } from '../lib/api';
-import { formatClock, formatCompact, formatDuration, formatTime, formatUsd, isActive, STATUS_LABEL } from '../lib/format';
+import { formatClock, formatCompact, formatDuration, formatNumber, formatTime, formatUsd, isActive } from '../lib/format';
+import { useLang, useT, type Dict } from '../lib/i18n';
 import { renderMarkdown } from '../lib/markdown';
 import { navigate } from '../lib/router';
 import { useSolar } from '../lib/store';
 
 type Filter = 'all' | 'active' | 'awaiting_confirmation' | 'completed' | 'failed';
 
-const FILTERS: Array<{ id: Filter; label: string }> = [
-  { id: 'all', label: 'Semua' },
-  { id: 'active', label: 'Aktif' },
-  { id: 'awaiting_confirmation', label: 'Menunggu' },
-  { id: 'completed', label: 'Selesai' },
-  { id: 'failed', label: 'Gagal' },
-];
+/** The status filters; their names are `t.monitor.filters[filter]`. */
+const FILTERS: Filter[] = ['all', 'active', 'awaiting_confirmation', 'completed', 'failed'];
 
 function matches(task: Task, filter: Filter, query: string): boolean {
   if (filter === 'active' && !isActive(task.status)) return false;
@@ -29,6 +25,8 @@ function matches(task: Task, filter: Filter, query: string): boolean {
 }
 
 function AnimatedNumber({ value, format }: { value: number; format: (n: number) => string }) {
+  // the tween writes the text itself, so a language switch must run it again to re-format the number
+  const lang = useLang();
   const ref = useRef<HTMLSpanElement>(null);
   const last = useRef(0);
   useEffect(() => {
@@ -46,7 +44,7 @@ function AnimatedNumber({ value, format }: { value: number; format: (n: number) 
     });
     last.current = value;
     return () => void tween.kill();
-  }, [value, format]);
+  }, [value, format, lang]);
   return <span ref={ref}>{format(value)}</span>;
 }
 
@@ -66,6 +64,7 @@ function Kpi({ label, icon, value, sub, format = (n: number) => formatCompact(Ma
 }
 
 export function MonitorPage({ selectedId }: { selectedId: string | null }) {
+  const t = useT();
   const { tasks, refreshTasks } = useSolar();
   const [filter, setFilter] = useState<Filter>('all');
   const [query, setQuery] = useState('');
@@ -73,8 +72,8 @@ export function MonitorPage({ selectedId }: { selectedId: string | null }) {
   const [now, setNow] = useState(Date.now());
 
   const list = useMemo(() => Object.values(tasks).sort((a, b) => b.createdAt.localeCompare(a.createdAt)), [tasks]);
-  const visible = list.filter((t) => matches(t, filter, query));
-  const statusKey = list.map((t) => `${t.id}:${t.status}`).join('|');
+  const visible = list.filter((task) => matches(task, filter, query));
+  const statusKey = list.map((task) => `${task.id}:${task.status}`).join('|');
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -84,7 +83,7 @@ export function MonitorPage({ selectedId }: { selectedId: string | null }) {
   }, [statusKey]);
 
   useEffect(() => {
-    const hasActive = list.some((t) => isActive(t.status));
+    const hasActive = list.some((task) => isActive(task.status));
     if (!hasActive) return;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
@@ -97,78 +96,85 @@ export function MonitorPage({ selectedId }: { selectedId: string | null }) {
     <main className="monitor">
       <div className="row">
         <div style={{ flex: 1 }}>
-          <h1>Monitor Task</h1>
-          <div className="hint">Pembaruan realtime dari SOLAR AI AGENT - progres, langkah kerja, persetujuan, biaya dan artefak.</div>
+          <h1>{t.monitor.title}</h1>
+          <div className="hint">{t.monitor.intro}</div>
         </div>
         <button type="button" className="btn small" onClick={() => void refreshTasks()}>
-          <RefreshIcon /> Muat ulang
+          <RefreshIcon /> {t.common.reload}
         </button>
       </div>
 
-      <section className="kpis" aria-label="Ringkasan">
-        <Kpi label="Total task" icon={<ClockIcon />} value={stats?.total ?? 0} />
-        <Kpi label="Sedang berjalan" icon={<SpinnerIcon />} value={by('running') + by('queued')} sub={`${by('queued')} antre`} />
-        <Kpi label="Menunggu konfirmasi" icon={<HandIcon />} value={by('awaiting_confirmation')} />
-        <Kpi label="Selesai" icon={<CheckCircleIcon />} value={by('completed')} />
-        <Kpi label="Gagal / batal" icon={<AlertIcon />} value={by('failed') + by('cancelled')} sub={`${by('cancelled')} dibatalkan`} />
-        <Kpi label="Estimasi biaya API" icon={<span aria-hidden="true">$</span>} value={stats?.costUsd ?? 0} format={formatUsd} />
+      <section className="kpis" aria-label={t.monitor.kpi.label}>
+        <Kpi label={t.monitor.kpi.total} icon={<ClockIcon />} value={stats?.total ?? 0} />
+        <Kpi label={t.monitor.kpi.running} icon={<SpinnerIcon />} value={by('running') + by('queued')} sub={t.monitor.kpi.queued(by('queued'))} />
+        <Kpi label={t.monitor.kpi.awaiting} icon={<HandIcon />} value={by('awaiting_confirmation')} />
+        <Kpi label={t.monitor.kpi.completed} icon={<CheckCircleIcon />} value={by('completed')} />
+        <Kpi label={t.monitor.kpi.failedOrCancelled} icon={<AlertIcon />} value={by('failed') + by('cancelled')} sub={t.monitor.kpi.cancelled(by('cancelled'))} />
+        <Kpi label={t.monitor.kpi.cost} icon={<span aria-hidden="true">$</span>} value={stats?.costUsd ?? 0} format={formatUsd} />
       </section>
 
       <div className="filters">
-        <div className="seg" role="group" aria-label="Filter status">
+        <div className="seg" role="group" aria-label={t.monitor.filters.label}>
           {FILTERS.map((f) => (
-            <button key={f.id} type="button" aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>
-              {f.label}
+            <button key={f} type="button" aria-pressed={filter === f} onClick={() => setFilter(f)}>
+              {t.monitor.filters[f]}
             </button>
           ))}
         </div>
-        <input className="input" type="search" placeholder="Cari task…" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Cari task" />
+        <input
+          className="input"
+          type="search"
+          placeholder={t.monitor.search.placeholder}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          aria-label={t.monitor.search.label}
+        />
       </div>
 
       <div className="monitor-grid">
-        <section className="panel" aria-label="Daftar task">
+        <section className="panel" aria-label={t.monitor.list.label}>
           <div className="panel-head">
-            <h2>Task ({visible.length})</h2>
+            <h2>{t.monitor.list.heading(visible.length)}</h2>
           </div>
           {visible.length === 0 ? (
             <p className="empty" style={{ padding: 24 }}>
-              Belum ada task untuk filter ini.
+              {t.monitor.list.empty}
             </p>
           ) : (
             <div style={{ overflowX: 'auto' }}>
               <table className="task-table">
                 <thead>
                   <tr>
-                    <th>Task</th>
-                    <th>Status</th>
-                    <th style={{ minWidth: 140 }}>Progres</th>
-                    <th className="hide-sm">Mulai</th>
-                    <th className="hide-sm">Durasi</th>
-                    <th className="hide-sm">Biaya</th>
+                    <th>{t.monitor.list.columns.task}</th>
+                    <th>{t.common.status}</th>
+                    <th style={{ minWidth: 140 }}>{t.common.progress}</th>
+                    <th className="hide-sm">{t.monitor.list.columns.started}</th>
+                    <th className="hide-sm">{t.common.duration}</th>
+                    <th className="hide-sm">{t.common.cost}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {visible.map((t) => (
+                  {visible.map((task) => (
                     <tr
-                      key={t.id}
-                      aria-selected={t.id === selectedId}
+                      key={task.id}
+                      aria-selected={task.id === selectedId}
                       tabIndex={0}
-                      onClick={() => navigate(`/monitor/${t.id}`)}
-                      onKeyDown={(e) => e.key === 'Enter' && navigate(`/monitor/${t.id}`)}
+                      onClick={() => navigate(`/monitor/${task.id}`)}
+                      onKeyDown={(e) => e.key === 'Enter' && navigate(`/monitor/${task.id}`)}
                     >
                       <td>
-                        <div className="task-title">{t.title}</div>
-                        <div className="task-step">{isActive(t.status) ? t.currentStep : t.id}</div>
+                        <div className="task-title">{task.title}</div>
+                        <div className="task-step">{isActive(task.status) ? task.currentStep : task.id}</div>
                       </td>
                       <td>
-                        <StatusBadge status={t.status} />
+                        <StatusBadge status={task.status} />
                       </td>
                       <td>
-                        <ProgressMeter value={t.progress} status={t.status} label={`Progres ${t.title}`} />
+                        <ProgressMeter value={task.progress} status={task.status} label={t.monitor.list.progressOf(task.title)} />
                       </td>
-                      <td className="num hide-sm">{formatTime(t.startedAt ?? t.createdAt)}</td>
-                      <td className="num hide-sm">{formatDuration(t.startedAt, t.finishedAt, now)}</td>
-                      <td className="num hide-sm">{formatUsd(t.usage.costUsd)}</td>
+                      <td className="num hide-sm">{formatTime(task.startedAt ?? task.createdAt)}</td>
+                      <td className="num hide-sm">{formatDuration(task.startedAt, task.finishedAt, now)}</td>
+                      <td className="num hide-sm">{formatUsd(task.usage.costUsd)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -177,46 +183,61 @@ export function MonitorPage({ selectedId }: { selectedId: string | null }) {
           )}
         </section>
 
-        <section className="panel" aria-label="Detail task">
-          {selected ? <TaskDetailPanel task={selected} now={now} /> : <p className="empty" style={{ padding: 24 }}>Pilih task untuk melihat detail, langkah kerja dan artefaknya.</p>}
+        <section className="panel" aria-label={t.monitor.detail.label}>
+          {selected ? (
+            <TaskDetailPanel task={selected} now={now} />
+          ) : (
+            <p className="empty" style={{ padding: 24 }}>
+              {t.monitor.detail.empty}
+            </p>
+          )}
         </section>
       </div>
     </main>
   );
 }
 
-function eventView(e: TaskEvent): { dot: string; title: string; detail?: string; json?: unknown } | null {
+/** A timeline entry; the server's own texts (steps, messages, tool names, reasons) arrive in the task's language. */
+function eventView(e: TaskEvent, t: Dict): { dot: string; title: string; detail?: string; json?: unknown } | null {
+  const tl = t.monitor.timeline;
   switch (e.type) {
     case 'status':
-      return { dot: e.status === 'failed' ? 'err' : e.status === 'completed' ? 'ok' : e.status === 'awaiting_confirmation' ? 'wait' : 'info', title: `Status: ${STATUS_LABEL[e.status]}`, detail: e.message };
+      return {
+        dot: e.status === 'failed' ? 'err' : e.status === 'completed' ? 'ok' : e.status === 'awaiting_confirmation' ? 'wait' : 'info',
+        title: tl.status(t.monitor.status[e.status]),
+        detail: e.message,
+      };
     case 'progress':
-      return { dot: 'info', title: `Progres ${e.progress}% · ${e.step}`, detail: e.detail };
+      return { dot: 'info', title: tl.progress(e.progress, e.step), detail: e.detail };
     case 'thinking':
-      return { dot: '', title: 'Penalaran (ringkasan)', detail: e.text.length > 600 ? `${e.text.slice(0, 600)}…` : e.text };
+      return { dot: '', title: tl.thinking, detail: e.text.length > 600 ? `${e.text.slice(0, 600)}…` : e.text };
     case 'text':
-      return { dot: '', title: 'Catatan agent', detail: e.text.length > 600 ? `${e.text.slice(0, 600)}…` : e.text };
+      return { dot: '', title: tl.agentNote, detail: e.text.length > 600 ? `${e.text.slice(0, 600)}…` : e.text };
     case 'tool_call':
       return { dot: 'info', title: `▶ ${e.displayName}${e.pluginId ? ` (${e.pluginId})` : ''}`, json: e.input };
-    case 'tool_result':
-      return { dot: e.ok ? 'ok' : 'err', title: `${e.ok ? '✓' : '✕'} ${e.tool} · ${(e.durationMs / 1000).toFixed(1)} dtk`, detail: e.summary };
+    case 'tool_result': {
+      const seconds = formatNumber(e.durationMs / 1000, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+      return { dot: e.ok ? 'ok' : 'err', title: `${e.ok ? '✓' : '✕'} ${tl.toolResult(e.tool, seconds)}`, detail: e.summary };
+    }
     case 'confirmation_requested':
-      return { dot: 'wait', title: `Minta persetujuan: ${e.confirmation.displayName}`, detail: e.confirmation.reason, json: e.confirmation.input };
+      return { dot: 'wait', title: tl.confirmationRequested(e.confirmation.displayName), detail: e.confirmation.reason, json: e.confirmation.input };
     case 'confirmation_resolved':
-      return { dot: e.approved ? 'ok' : 'err', title: e.approved ? 'Disetujui pengguna' : 'Ditolak pengguna', detail: e.note };
+      return { dot: e.approved ? 'ok' : 'err', title: e.approved ? tl.approved : tl.rejected, detail: e.note };
     case 'artifact':
-      return { dot: 'ok', title: `Artefak: ${e.artifact.name}`, detail: e.artifact.description ?? undefined };
+      return { dot: 'ok', title: tl.artifact(e.artifact.name), detail: e.artifact.description ?? undefined };
     case 'log':
       return { dot: e.level === 'info' ? '' : 'err', title: e.message };
     case 'error':
-      return { dot: 'err', title: 'Error', detail: e.message };
+      return { dot: 'err', title: tl.error, detail: e.message };
     case 'result':
-      return { dot: 'ok', title: 'Jawaban akhir dikirim' };
+      return { dot: 'ok', title: tl.result };
     case 'usage':
       return null;
   }
 }
 
 function TaskDetailPanel({ task, now }: { task: Task; now: number }) {
+  const t = useT();
   const { events, artifacts, loadTask, cancel } = useSolar();
   useEffect(() => {
     void loadTask(task.id);
@@ -232,63 +253,64 @@ function TaskDetailPanel({ task, now }: { task: Task; now: number }) {
         <StatusBadge status={task.status} />
         {isActive(task.status) && (
           <button type="button" className="btn small" onClick={() => void cancel(task.id)}>
-            <StopIcon /> Batalkan
+            <StopIcon /> {t.monitor.detail.cancel}
           </button>
         )}
       </div>
       <div className="detail-section">
         <ProgressMeter value={task.progress} status={task.status} />
         <div className="stat-line" style={{ marginTop: 8 }}>
-          <span>Langkah: {task.currentStep ?? '-'}</span>
-          <span>Durasi: {formatDuration(task.startedAt, task.finishedAt, now)}</span>
-          <span>Model: {task.model}</span>
-          <span>API call: {u.apiCalls}</span>
-          <span>
-            Token: {formatCompact(u.inputTokens)} in · {formatCompact(u.outputTokens)} out · {formatCompact(u.cacheReadTokens)} cache
-          </span>
-          <span>Biaya: {formatUsd(u.costUsd)}</span>
+          <span>{t.monitor.detail.step(task.currentStep ?? '-')}</span>
+          <span>{t.monitor.detail.duration(formatDuration(task.startedAt, task.finishedAt, now))}</span>
+          <span>{t.monitor.detail.model(task.model)}</span>
+          <span>{t.monitor.detail.apiCalls(formatNumber(u.apiCalls))}</span>
+          <span>{t.monitor.detail.tokens(formatCompact(u.inputTokens), formatCompact(u.outputTokens), formatCompact(u.cacheReadTokens))}</span>
+          <span>{t.monitor.detail.cost(formatUsd(u.costUsd))}</span>
         </div>
       </div>
       <div className="detail-section">
-        <h3>Permintaan</h3>
+        <h3>{t.monitor.detail.request}</h3>
         <div style={{ whiteSpace: 'pre-wrap', fontSize: 13 }}>{task.prompt}</div>
       </div>
       {(task.attachmentIds?.length ?? 0) > 0 && (
         <div className="detail-section">
-          <h3>Dokumen terlampir ({task.attachmentIds.length})</h3>
+          <h3>{t.monitor.detail.attachments(task.attachmentIds.length)}</h3>
           <AttachmentTable ids={task.attachmentIds} />
         </div>
       )}
       {(resultHtml || task.error) && (
         <div className="detail-section">
-          <h3>Hasil</h3>
+          <h3>{t.monitor.detail.result}</h3>
           {task.error && <div className="error-box">{task.error}</div>}
           {resultHtml && <div className="markdown" dangerouslySetInnerHTML={{ __html: resultHtml }} />}
         </div>
       )}
       {(artifacts[task.id]?.length ?? 0) > 0 && (
         <div className="detail-section">
-          <h3>Artefak ({artifacts[task.id]!.length})</h3>
+          <h3>{t.monitor.detail.artifacts(artifacts[task.id]!.length)}</h3>
           <ArtifactList taskId={task.id} artifacts={artifacts[task.id]!} active={isActive(task.status)} />
         </div>
       )}
       <div className="detail-section" style={{ borderBottom: 0, paddingBottom: 0 }}>
-        <h3>Timeline ({list.length} event)</h3>
+        <h3>{t.monitor.detail.timeline(list.length)}</h3>
       </div>
       <ol className="timeline">
         {list.map((e) => {
-          const v = eventView(e);
+          const v = eventView(e, t);
           if (!v) return null;
           return (
-            <li key={e.id}>
-              <time dateTime={e.at}>{formatClock(e.at)}</time>
+            // the time column grows for a 12-hour clock ("04:11:34 PM" does not fit the 64px of "16.11.34")
+            <li key={e.id} style={{ gridTemplateColumns: 'minmax(64px, max-content) 18px 1fr' }}>
+              <time dateTime={e.at} style={{ whiteSpace: 'nowrap' }}>
+                {formatClock(e.at)}
+              </time>
               <span className={`dot ${v.dot}`} aria-hidden="true" />
               <div className="body">
                 {v.title}
                 {v.detail && <small>{v.detail}</small>}
                 {v.json !== undefined && (
                   <details>
-                    <summary className="hint">Input</summary>
+                    <summary className="hint">{t.monitor.timeline.input}</summary>
                     <pre className="json">{JSON.stringify(v.json, null, 2)}</pre>
                   </details>
                 )}

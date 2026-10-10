@@ -1,6 +1,7 @@
 import { stringify as stringifyYaml } from 'yaml';
 import type { KnowledgeEntry, KnowledgeType } from '@solar/shared';
 import type { SheetTable } from '../documents/index.js';
+import { DEFAULT_LANG, t, type Lang } from '../i18n.js';
 import { normalizeKnowledgePath, parseFrontMatter, type KnowledgeStore } from './knowledgeStore.js';
 
 export const MAX_IMPORT_ROWS = 5000;
@@ -29,6 +30,8 @@ export interface TableImportOptions {
   type?: KnowledgeType;
   /** Remove files created by an earlier import of the same file + sheet that are no longer in it. */
   removeStale: boolean;
+  /** Language of the notices, errors and the generated index (the request's); default Indonesian. */
+  lang?: Lang;
 }
 
 export interface TableImportResult {
@@ -61,12 +64,16 @@ export function fileNameOf(id: string): string {
   return base || 'item';
 }
 
-function folderOf(folder: string): string {
+/** The import's target folder; refuses folders whose files the agent does not read. */
+export function importFolder(folder: string, lang: Lang = DEFAULT_LANG): string {
   const f = folder.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
   normalizeKnowledgePath(`${f}/x.md`); // validates the folder segments
-  if (f.split('/').some((seg) => seg.startsWith('_'))) throw new Error('The folder must not start with "_" (those files are not read by the agent)');
+  if (f.split('/').some((seg) => seg.startsWith('_'))) throw new Error(t(lang, 'import.hiddenFolder'));
   return f;
 }
+
+/** Marks in the `source` front matter of the files an import wrote ("(baris 3)", "(row 3)"), in both languages. */
+export const ROW_SOURCE_MARKS = [' (baris ', ' (row '];
 
 function cellValue(v: string): string {
   const t = clean(v);
@@ -76,14 +83,10 @@ function cellValue(v: string): string {
 const mdEscape = (s: string) => s.replace(/\|/g, '\\|').replace(/\n+/g, ' ');
 
 /** Why a table that was not read completely cannot be imported, and what to do about it. */
-function truncatedReason(table: SheetTable): string {
-  if (!table.rows.length) {
-    return `Sheet "${table.name}" tidak dibaca karena teks workbook sudah mencapai batas; simpan sheet ini sebagai file terpisah lalu impor`;
-  }
-  if (table.rows.length > MAX_IMPORT_ROWS) {
-    return `Sheet "${table.name}" berisi lebih dari ${MAX_IMPORT_ROWS} baris; maksimum ${MAX_IMPORT_ROWS} baris per impor, pecah file sebelum impor`;
-  }
-  return `Sheet "${table.name}" tidak terbaca utuh karena teksnya terlalu panjang; pecah file sebelum impor`;
+function truncatedReason(table: SheetTable, lang: Lang): string {
+  if (!table.rows.length) return t(lang, 'import.sheetSkipped', { sheet: table.name });
+  if (table.rows.length > MAX_IMPORT_ROWS) return t(lang, 'import.sheetTooManyRows', { sheet: table.name, max: MAX_IMPORT_ROWS });
+  return t(lang, 'import.sheetCut', { sheet: table.name });
 }
 
 /**
@@ -98,20 +101,21 @@ export async function importTable(
 ): Promise<TableImportResult> {
   // a cut table would import only part of the sheet and (with removeStale) delete the rows that were cut off; checked
   // first, since a sheet skipped while reading has no header row to look the columns up in
-  if (table.truncated) throw new Error(truncatedReason(table));
-  const folder = folderOf(opts.folder);
+  const lang = opts.lang ?? DEFAULT_LANG;
+  if (table.truncated) throw new Error(truncatedReason(table, lang));
+  const folder = importFolder(opts.folder, lang);
   const headerIndex = Math.max(1, opts.headerRow) - 1;
   const headers = (table.rows[headerIndex] ?? []).map(clean);
   const col = (name: string | undefined) => (name ? headers.findIndex((h) => h.toLowerCase() === name.trim().toLowerCase()) : -1);
   const idCol = col(opts.idColumn);
-  if (idCol < 0) throw new Error(`Kolom "${opts.idColumn}" tidak ada di baris header ${opts.headerRow} sheet "${table.name}"`);
+  if (idCol < 0) throw new Error(t(lang, 'import.columnMissing', { column: opts.idColumn, row: opts.headerRow, sheet: table.name }));
   const titleCol = col(opts.titleColumn);
   const aliasCols = opts.aliasColumns.map(col).filter((i) => i >= 0);
   const statusCol = col(opts.statusColumn);
   const source = `excel:${sourceFile}#${table.name}`;
 
   const rows = table.rows.slice(headerIndex + 1);
-  if (rows.length > MAX_IMPORT_ROWS) throw new Error(`Sheet berisi ${rows.length} baris; maksimum ${MAX_IMPORT_ROWS} per impor`);
+  if (rows.length > MAX_IMPORT_ROWS) throw new Error(t(lang, 'import.tooManyRows', { rows: rows.length, max: MAX_IMPORT_ROWS }));
 
   const written: KnowledgeEntry[] = [];
   const skipped: TableImportResult['skipped'] = [];
@@ -128,7 +132,7 @@ export async function importTable(
     const sheetRow = headerIndex + r + 2;
     const id = clean(row[idCol]);
     if (!id) {
-      if (row.some((v) => clean(v))) skipped.push({ row: sheetRow, reason: `kolom "${opts.idColumn}" kosong` });
+      if (row.some((v) => clean(v))) skipped.push({ row: sheetRow, reason: t(lang, 'import.emptyId', { column: opts.idColumn }) });
       continue;
     }
     let name = fileNameOf(id);
@@ -136,7 +140,7 @@ export async function importTable(
     usedNames.set(name.toLowerCase(), seen + 1);
     if (seen) {
       name = `${name}-${seen + 1}`;
-      skipped.push({ row: sheetRow, reason: `id "${id}" duplikat; disimpan sebagai ${name}.md` });
+      skipped.push({ row: sheetRow, reason: t(lang, 'import.duplicateId', { id, file: `${name}.md` }) });
     }
     const title = clean(row[titleCol]) || id;
     const aliases = [...new Set(aliasCols.flatMap((i) => clean(row[i]).split(/[,;\n]/).map((a) => a.trim()).filter((a) => a && a !== id)))];
@@ -151,9 +155,9 @@ export async function importTable(
       .map(([h, v]) => `${h}: ${v}`)
       .join(' · ');
     if (summary) front.description = summary.slice(0, 240);
-    front.source = `${source} (baris ${sheetRow})`;
+    front.source = t(lang, 'import.rowSource', { source, row: sheetRow });
     const fields = headers
-      .map((h, i) => [h || `Kolom ${i + 1}`, clean(row[i])] as const)
+      .map((h, i) => [h || t(lang, 'import.column', { n: i + 1 }), clean(row[i])] as const)
       .filter(([, v]) => v)
       .map(([h, v]) => `- **${h}**: ${cellValue(v)}`);
     const content = `---\n${stringifyYaml(front).trim()}\n---\n\n# ${title}\n\n${fields.join('\n')}\n`;
@@ -167,15 +171,20 @@ export async function importTable(
   }
 
   const indexPath = `${folder}/INDEX.md`;
-  const indexHeader = ['ID', 'Nama', ...(statusCol >= 0 ? ['Status'] : []), ...summaryCols.map((i) => mdEscape(headers[i] || `Kolom ${i + 1}`))];
+  const indexHeader = [
+    'ID',
+    t(lang, 'import.indexName'),
+    ...(statusCol >= 0 ? ['Status'] : []),
+    ...summaryCols.map((i) => mdEscape(headers[i] || t(lang, 'import.column', { n: i + 1 }))),
+  ];
   const index = [
     '---',
-    stringifyYaml({ id: `${folder}-index`, type: 'reference', title: `Indeks ${folder} (${written.length} item)`, source }).trim(),
+    stringifyYaml({ id: `${folder}-index`, type: 'reference', title: t(lang, 'import.indexTitle', { folder, n: written.length }), source }).trim(),
     '---',
     '',
-    `# Indeks ${folder}`,
+    `# ${t(lang, 'import.indexHeading', { folder })}`,
     '',
-    `Dibuat dari ${sourceFile}, sheet "${table.name}". Satu file per baris di folder \`${folder}/\`; baca file itemnya untuk detail.`,
+    t(lang, 'import.indexIntro', { file: sourceFile, sheet: table.name, folder }),
     '',
     `| ${indexHeader.join(' | ')} |`,
     `| ${indexHeader.map(() => '---').join(' | ')} |`,
@@ -191,7 +200,8 @@ export async function importTable(
       if (entry.source !== 'user' || !entry.path.startsWith(`${folder}/`) || keep.has(entry.path)) continue;
       const file = await store.read(entry.path);
       const origin = file ? String(parseFrontMatter(file.content).meta.source ?? '') : '';
-      if (origin === source || origin.startsWith(`${source} (baris `)) {
+      // files of an earlier import of this sheet, in either language
+      if (origin === source || ROW_SOURCE_MARKS.some((mark) => origin.startsWith(`${source}${mark}`))) {
         await store.remove(entry.path);
         removed.push(entry.path);
       }

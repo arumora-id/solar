@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Attachment } from '@solar/shared';
 import { api } from '../lib/api';
 import { formatBytes } from '../lib/format';
+import { t as dict, useT } from '../lib/i18n';
 import { renderDocumentMarkdown } from '../lib/markdown';
 import { useSolar } from '../lib/store';
 import { AlertIcon, DownloadIcon, FileIcon, SpinnerIcon, XIcon } from './Icons';
@@ -13,12 +14,14 @@ export function typeLabel(name: string): string {
   return ext === 'MARKDOWN' ? 'MD' : ext.slice(0, 4) || 'FILE';
 }
 
+/** Pages, slides or sheets of a read document in the current language (call while rendering). */
 function partsText(a: Attachment): string {
   if (!a.parts) return '';
-  return a.kind === 'pdf' ? `${a.parts} halaman` : a.kind === 'pptx' ? `${a.parts} slide` : `${a.parts} sheet`;
+  const words = dict().agent.attachments;
+  return a.kind === 'pdf' ? words.pages(a.parts) : a.kind === 'pptx' ? words.slides(a.parts) : words.sheets(a.parts);
 }
 
-/** What a chip shows for a read document: pages/slides/sheets and size, e.g. "4 halaman · 23.9 KB". */
+/** What a chip shows for a read document: pages/slides/sheets and size, e.g. "4 halaman · 23,9 KB" / "4 pages · 23.9 KB". */
 export function attachmentSummary(a: Attachment): string {
   return [partsText(a), formatBytes(a.size)].filter(Boolean).join(' · ');
 }
@@ -26,7 +29,7 @@ export function attachmentSummary(a: Attachment): string {
 export interface ChipProps {
   name: string;
   size: number;
-  /** Status line instead of the size, e.g. "Mengunggah 40%" or "Membaca…". */
+  /** Status line instead of the size, e.g. "Mengunggah 40%" / "Uploading 40%". */
   status?: string;
   busy?: boolean;
   error?: string;
@@ -36,6 +39,7 @@ export interface ChipProps {
 }
 
 export function AttachmentChip({ name, size, status, busy, error, warnings, onOpen, onRemove }: ChipProps) {
+  const t = useT();
   const warn = !error && warnings && warnings.length > 0;
   const title = error ?? (warn ? warnings!.join('\n') : name);
   const body = (
@@ -44,10 +48,10 @@ export function AttachmentChip({ name, size, status, busy, error, warnings, onOp
       <span className="att-name">{name}</span>
       <span className="att-meta">
         {busy && <SpinnerIcon />}
-        {error ? 'Gagal' : (status ?? formatBytes(size))}
+        {error ? t.common.failed : (status ?? formatBytes(size))}
       </span>
       {(error || warn) && (
-        <span className={error ? 'att-flag error' : 'att-flag warn'} aria-label={error ? 'Error' : 'Peringatan'}>
+        <span className={error ? 'att-flag error' : 'att-flag warn'} aria-label={error ? t.common.error : t.agent.attachments.warning}>
           <AlertIcon />
         </span>
       )}
@@ -56,14 +60,14 @@ export function AttachmentChip({ name, size, status, busy, error, warnings, onOp
   return (
     <div className={`att-chip${error ? ' error' : ''}`} role="listitem" title={title}>
       {onOpen && !error && !busy ? (
-        <button type="button" className="att-open" onClick={onOpen} aria-label={`Lihat isi ${name}`}>
+        <button type="button" className="att-open" onClick={onOpen} aria-label={t.agent.attachments.open(name)}>
           {body}
         </button>
       ) : (
         <span className="att-open">{body}</span>
       )}
       {onRemove && (
-        <button type="button" className="att-remove" onClick={onRemove} aria-label={`Hapus lampiran ${name}`}>
+        <button type="button" className="att-remove" onClick={onRemove} aria-label={t.agent.attachments.remove(name)}>
           <XIcon size={14} />
         </button>
       )}
@@ -75,16 +79,17 @@ export function AttachmentChip({ name, size, status, busy, error, warnings, onOp
 /** Read-only chips of a task's attachments (under the user's message). */
 export function AttachmentStrip({ ids }: { ids: string[] }) {
   const { attachments } = useSolar();
+  const t = useT();
   const [preview, setPreview] = useState<Attachment | null>(null);
   if (ids.length === 0) return null;
   return (
-    <div className="att-strip" role="list" aria-label="Dokumen terlampir">
+    <div className="att-strip" role="list" aria-label={t.agent.attachments.stripLabel}>
       {ids.map((id) => {
         const a = attachments[id];
         return a ? (
           <AttachmentChip key={id} name={a.name} size={a.size} status={attachmentSummary(a)} warnings={a.warnings} onOpen={() => setPreview(a)} />
         ) : (
-          <AttachmentChip key={id} name="Lampiran" size={0} status="…" />
+          <AttachmentChip key={id} name={t.agent.attachments.placeholderName} size={0} status="…" />
         );
       })}
       {preview && <AttachmentPreview attachment={preview} onClose={() => setPreview(null)} />}
@@ -95,9 +100,10 @@ export function AttachmentStrip({ ids }: { ids: string[] }) {
 /** Attachment rows with preview and download (monitor task detail). */
 export function AttachmentTable({ ids }: { ids: string[] }) {
   const { attachments } = useSolar();
+  const t = useT();
   const [preview, setPreview] = useState<Attachment | null>(null);
   const list = ids.map((id) => attachments[id]).filter((a): a is Attachment => Boolean(a));
-  if (list.length === 0) return <p className="muted">Memuat lampiran…</p>;
+  if (list.length === 0) return <p className="muted">{t.agent.attachments.loadingList}</p>;
   return (
     <div className="artifacts">
       {list.map((a) => (
@@ -108,16 +114,16 @@ export function AttachmentTable({ ids }: { ids: string[] }) {
           <span className="kind">
             {[typeLabel(a.name), partsText(a), formatBytes(a.size)].filter(Boolean).join(' · ')}
             {a.warnings.length > 0 && (
-              <span className="att-flag warn" title={a.warnings.join('\n')} aria-label="Peringatan">
+              <span className="att-flag warn" title={a.warnings.join('\n')} aria-label={t.agent.attachments.warning}>
                 {' '}
                 <AlertIcon />
               </span>
             )}
           </span>
           <button type="button" className="btn ghost small" onClick={() => setPreview(a)}>
-            Lihat teks
+            {t.agent.attachments.viewText}
           </button>
-          <a className="btn ghost small icon" href={api.attachmentDownloadUrl(a.id)} aria-label={`Unduh ${a.name}`}>
+          <a className="btn ghost small icon" href={api.attachmentDownloadUrl(a.id)} aria-label={t.agent.attachments.download(a.name)}>
             <DownloadIcon />
           </a>
         </div>
@@ -131,6 +137,8 @@ const PREVIEW_CHARS = 200_000;
 
 /** Shows the text SOLAR extracted from a document - exactly what the agent reads. */
 export function AttachmentPreview({ attachment, onClose }: { attachment: Attachment; onClose: () => void }) {
+  const t = useT();
+  const words = t.agent.attachments;
   const [text, setText] = useState<string | null>(null);
   const [error, setError] = useState('');
   // plain text documents are shown as they are; others can switch between formatted and raw Markdown
@@ -153,16 +161,20 @@ export function AttachmentPreview({ attachment, onClose }: { attachment: Attachm
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const shown = text === null ? '' : text.length > PREVIEW_CHARS ? `${text.slice(0, PREVIEW_CHARS)}\n\n… (pratinjau dipotong; agen tetap membaca seluruh teks)` : text;
+  const shown = text === null ? '' : text.length > PREVIEW_CHARS ? `${text.slice(0, PREVIEW_CHARS)}\n\n${words.truncated}` : text;
+  // `words` in the deps: the page separators and renderDocumentMarkdown's image placeholders follow the language
   const html = useMemo(() => {
     if (text === null || raw) return '';
     // page markers would otherwise appear as escaped comments: show them as separators
     return renderDocumentMarkdown(
       shown
-        .replace(/^<!--\s*page\s+(\d+)\s*-->$/gim, '\n---\n\n*Halaman $1*\n')
-        .replace(/^<!--\s*truncated:\s*pages\s+(\d+)-(\d+)\s+not included\s*-->$/gim, '\n---\n\n*Halaman $1-$2 tidak dibaca (batas panjang dokumen)*\n'),
+        .replace(/^<!--\s*page\s+(\d+)\s*-->$/gim, (_, n: string) => `\n---\n\n*${words.page(n)}*\n`)
+        .replace(
+          /^<!--\s*truncated:\s*pages\s+(\d+)-(\d+)\s+not included\s*-->$/gim,
+          (_, from: string, to: string) => `\n---\n\n*${words.pagesNotRead(from, to)}*\n`,
+        ),
     );
-  }, [text, raw, shown]);
+  }, [text, raw, shown, words]);
 
   return (
     <div className="backdrop" onClick={(e) => e.target === e.currentTarget && onClose()} role="dialog" aria-modal="true" aria-label={attachment.name}>
@@ -170,25 +182,24 @@ export function AttachmentPreview({ attachment, onClose }: { attachment: Attachm
         <div className="row" style={{ marginBottom: 6 }}>
           <h3 style={{ flex: 1, margin: 0, overflowWrap: 'anywhere' }}>{attachment.name}</h3>
           <a className="btn small" href={api.attachmentDownloadUrl(attachment.id)}>
-            <DownloadIcon /> File asli
+            <DownloadIcon /> {words.originalFile}
           </a>
-          <button type="button" className="btn small icon" onClick={onClose} aria-label="Tutup">
+          <button type="button" className="btn small icon" onClick={onClose} aria-label={t.common.close}>
             <XIcon />
           </button>
         </div>
         <p className="muted" style={{ margin: '0 0 10px', fontSize: 13 }}>
-          {[typeLabel(attachment.name), partsText(attachment), formatBytes(attachment.size), `${attachment.chars.toLocaleString('id-ID')} karakter teks`]
-            .filter(Boolean)
-            .join(' · ')}
-          {' - '}teks hasil ekstraksi inilah yang dibaca agen.
+          {[typeLabel(attachment.name), partsText(attachment), formatBytes(attachment.size), t.common.characters(attachment.chars)].filter(Boolean).join(' · ')}
+          {' - '}
+          {words.previewNote}
         </p>
         {attachment.kind !== 'text' && (
-          <div className="seg" role="group" aria-label="Tampilan teks" style={{ marginBottom: 10, alignSelf: 'flex-start' }}>
+          <div className="seg" role="group" aria-label={words.viewLabel} style={{ marginBottom: 10, alignSelf: 'flex-start' }}>
             <button type="button" aria-pressed={!raw} onClick={() => setRaw(false)}>
-              Diformat
+              {words.formatted}
             </button>
             <button type="button" aria-pressed={raw} onClick={() => setRaw(true)}>
-              Teks mentah
+              {words.raw}
             </button>
           </div>
         )}
@@ -204,7 +215,7 @@ export function AttachmentPreview({ attachment, onClose }: { attachment: Attachm
         {error && <div className="error-box">{error}</div>}
         {text === null && !error && (
           <p className="muted">
-            <SpinnerIcon /> Memuat teks…
+            <SpinnerIcon /> {words.loadingText}
           </p>
         )}
         {text !== null && raw && (

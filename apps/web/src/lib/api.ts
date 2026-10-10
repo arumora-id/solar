@@ -2,6 +2,7 @@ import type {
   Artifact,
   Attachment,
   Confirmation,
+  CreateTaskRequest,
   KnowledgeEntry,
   KnowledgeFile,
   KnowledgeSearchHit,
@@ -19,6 +20,8 @@ import type {
   TaskStats,
   TaskStatus,
 } from '@solar/shared';
+import { LANGUAGE_HEADER } from '@solar/shared';
+import { getLang, t } from './i18n';
 
 const TOKEN_KEY = 'solar.accessToken';
 
@@ -66,6 +69,35 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * The message of a failed response: the server's `{error}` (already in the interface language), otherwise a generic
+ * text with the HTTP status (a proxy's or framework's own error page is not shown).
+ */
+function failureMessage(status: number, statusText: string, data: unknown): string {
+  const error = (data as { error?: unknown } | null)?.error;
+  return typeof error === 'string' && error ? error : t().api.httpError(status, statusText);
+}
+
+/** A failed response read as an ApiError (for requests whose success body is not JSON). */
+async function failure(res: Response): Promise<ApiError> {
+  let data: unknown = null;
+  try {
+    data = JSON.parse(await res.text());
+  } catch {
+    // no JSON error body
+  }
+  return new ApiError(res.status, failureMessage(res.status, res.statusText, data));
+}
+
+/**
+ * Headers of every request: the access token and the interface language, in which the server writes its messages
+ * (errors, warnings, notices).
+ */
+function baseHeaders(): Record<string, string> {
+  const token = getToken();
+  return { [LANGUAGE_HEADER]: getLang(), ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+}
+
 /** Adds the access token to URLs used directly by the browser (SSE, downloads, previews). */
 export function withToken(url: string): string {
   const token = getToken();
@@ -74,12 +106,11 @@ export function withToken(url: string): string {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const token = getToken();
   const res = await fetch(path, {
     method,
     headers: {
       ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...baseHeaders(),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -90,25 +121,22 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   } catch {
     data = text;
   }
-  if (!res.ok) {
-    const message = (data as { error?: string } | null)?.error ?? `${res.status} ${res.statusText}`;
-    throw new ApiError(res.status, message);
-  }
+  if (!res.ok) throw new ApiError(res.status, failureMessage(res.status, res.statusText, data));
   return data as T;
 }
 
 export const api = {
   config: () => request<PublicConfig>('GET', '/api/config'),
+  /** The task carries the interface language: the server writes its steps and messages in it. */
   createTask: (prompt: string, sessionId: string, attachmentIds: string[] = []) =>
-    request<Task>('POST', '/api/tasks', { prompt, sessionId, attachmentIds }),
+    request<Task>('POST', '/api/tasks', { prompt, sessionId, attachmentIds, language: getLang() } satisfies CreateTaskRequest),
   listAttachments: (sessionId: string, unsentOnly = false) =>
     request<Attachment[]>('GET', `/api/attachments?sessionId=${encodeURIComponent(sessionId)}${unsentOnly ? '&unsent=1' : ''}`),
   deleteAttachment: (id: string) => request<null>('DELETE', `/api/attachments/${encodeURIComponent(id)}`),
   attachmentDownloadUrl: (id: string) => withToken(`/api/attachments/${encodeURIComponent(id)}/content`),
   attachmentText: async (id: string) => {
-    const token = getToken();
-    const res = await fetch(`/api/attachments/${encodeURIComponent(id)}/text`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-    if (!res.ok) throw new ApiError(res.status, await res.text());
+    const res = await fetch(`/api/attachments/${encodeURIComponent(id)}/text`, { headers: baseHeaders() });
+    if (!res.ok) throw await failure(res);
     return res.text();
   },
   listTasks: (params: { limit?: number; sessionId?: string; status?: TaskStatus } = {}) => {
@@ -165,9 +193,8 @@ export const api = {
   exportWord: (artifactId: string) => request<WordExport>('POST', `/api/artifacts/${encodeURIComponent(artifactId)}/docx`),
   zipUrl: (taskId: string) => withToken(`/api/tasks/${encodeURIComponent(taskId)}/artifacts.zip`),
   artifactText: async (id: string) => {
-    const token = getToken();
-    const res = await fetch(`/api/artifacts/${encodeURIComponent(id)}/content`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-    if (!res.ok) throw new ApiError(res.status, await res.text());
+    const res = await fetch(`/api/artifacts/${encodeURIComponent(id)}/content`, { headers: baseHeaders() });
+    if (!res.ok) throw await failure(res);
     return res.text();
   },
 };
@@ -202,11 +229,10 @@ export interface DocumentImportOptions {
 
 /** Sends a file as the raw body (options as a JSON query parameter). */
 async function uploadFile<T>(path: string, file: File, options?: unknown): Promise<T> {
-  const token = getToken();
   const qs = `name=${encodeURIComponent(file.name)}${options === undefined ? '' : `&options=${encodeURIComponent(JSON.stringify(options))}`}`;
   const res = await fetch(`${path}?${qs}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/octet-stream', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    headers: { 'Content-Type': 'application/octet-stream', ...baseHeaders() },
     body: file,
   });
   const text = await res.text();
@@ -216,7 +242,7 @@ async function uploadFile<T>(path: string, file: File, options?: unknown): Promi
   } catch {
     data = text;
   }
-  if (!res.ok) throw new ApiError(res.status, (data as { error?: string } | null)?.error ?? `${res.status} ${res.statusText}`);
+  if (!res.ok) throw new ApiError(res.status, failureMessage(res.status, res.statusText, data));
   return data as T;
 }
 
@@ -234,8 +260,7 @@ export function uploadAttachment(file: File, sessionId: string, onProgress: (pha
   const promise = new Promise<Attachment>((resolve, reject) => {
     xhr.open('POST', `/api/attachments?sessionId=${encodeURIComponent(sessionId)}&name=${encodeURIComponent(file.name)}`);
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-    const token = getToken();
-    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    for (const [name, value] of Object.entries(baseHeaders())) xhr.setRequestHeader(name, value);
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && e.total > 0) onProgress('upload', e.loaded / e.total);
     };
@@ -248,10 +273,10 @@ export function uploadAttachment(file: File, sessionId: string, onProgress: (pha
         data = null;
       }
       if (xhr.status >= 200 && xhr.status < 300) resolve(data as Attachment);
-      else reject(new ApiError(xhr.status, (data as { error?: string } | null)?.error ?? `${xhr.status} ${xhr.statusText}`));
+      else reject(new ApiError(xhr.status, failureMessage(xhr.status, xhr.statusText, data)));
     };
-    xhr.onerror = () => reject(new ApiError(0, 'Koneksi ke server terputus saat mengunggah.'));
-    xhr.onabort = () => reject(new DOMException('Upload dibatalkan', 'AbortError'));
+    xhr.onerror = () => reject(new ApiError(0, t().api.uploadDisconnected));
+    xhr.onabort = () => reject(new DOMException(t().api.uploadCancelled, 'AbortError'));
     xhr.send(file);
   });
   return { promise, abort: () => xhr.abort() };

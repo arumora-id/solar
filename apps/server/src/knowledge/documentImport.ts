@@ -1,7 +1,8 @@
 import { stringify as stringifyYaml } from 'yaml';
 import type { KnowledgeEntry, KnowledgeType } from '@solar/shared';
-import { normalizeKnowledgePath, parseFrontMatter, type KnowledgeStore } from './knowledgeStore.js';
-import { fileNameOf } from './tableImport.js';
+import { DEFAULT_LANG, t, type Lang } from '../i18n.js';
+import { parseFrontMatter, type KnowledgeStore } from './knowledgeStore.js';
+import { fileNameOf, importFolder } from './tableImport.js';
 
 export interface DocumentImportOptions {
   /** Target folder, e.g. "standards". */
@@ -12,7 +13,12 @@ export interface DocumentImportOptions {
   /** Title / file name (default: the document's file name). */
   title?: string;
   removeStale: boolean;
+  /** Language of the warnings and of the generated chapter index (the request's); default Indonesian. */
+  lang?: Lang;
 }
+
+/** Marks in the `source` front matter of the chapter files ("(bab 2)", "(chapter 2)"), in both languages. */
+const CHAPTER_SOURCE_MARKS = [' (bab ', ' (chapter '];
 
 export interface DocumentImportResult {
   written: KnowledgeEntry[];
@@ -56,9 +62,8 @@ export async function importDocument(
   sourceFile: string,
   opts: DocumentImportOptions,
 ): Promise<DocumentImportResult> {
-  const folder = opts.folder.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
-  normalizeKnowledgePath(`${folder}/x.md`);
-  if (folder.split('/').some((seg) => seg.startsWith('_'))) throw new Error('The folder must not start with "_" (those files are not read by the agent)');
+  const lang = opts.lang ?? DEFAULT_LANG;
+  const folder = importFolder(opts.folder, lang);
   const title = opts.title?.trim() || sourceFile.replace(/\.[^.]+$/, '');
   const base = fileNameOf(title);
   const source = `doc:${sourceFile}`;
@@ -69,7 +74,7 @@ export async function importDocument(
   // one title heading with chapters below it: split one level deeper
   let sections = opts.split === 'none' ? [] : splitSections(markdown, opts.split);
   if (opts.split === 1 && sections.length <= 1) sections = splitSections(markdown, 2);
-  if (opts.split !== 'none' && sections.length <= 1) warnings.push('Dokumen tidak punya heading untuk dipecah; disimpan sebagai satu file.');
+  if (opts.split !== 'none' && sections.length <= 1) warnings.push(t(lang, 'import.noHeadings'));
 
   if (sections.length <= 1) {
     written.push(await store.write(`${folder}/${base}.md`, `${front({ id: title, title, ...typeMeta, source })}${markdown.trim()}\n`));
@@ -79,14 +84,19 @@ export async function importDocument(
     const index: string[] = [];
     for (let i = 0; i < sections.length; i++) {
       const s = sections[i]!;
-      const heading = s.heading || 'Pendahuluan';
+      const heading = s.heading || t(lang, 'import.introduction');
       let name = `${String(i + 1).padStart(Math.max(2, pad), '0')}-${fileNameOf(heading).slice(0, 60)}`;
       while (used.has(name)) name = `${name}-x`;
       used.add(name);
       const body = s.heading ? s.body : `# ${heading}\n\n${s.body}`;
       const entry = await store.write(
         `${folder}/${base}/${name}.md`,
-        `${front({ id: `${base}-${String(i + 1).padStart(2, '0')}`, title: `${title}: ${heading}`, ...typeMeta, source: `${source} (bab ${i + 1})` })}${body.trim()}\n`,
+        `${front({
+          id: `${base}-${String(i + 1).padStart(2, '0')}`,
+          title: `${title}: ${heading}`,
+          ...typeMeta,
+          source: t(lang, 'import.chapterSource', { source, n: i + 1 }),
+        })}${body.trim()}\n`,
       );
       written.push(entry);
       index.push(`- [${heading.replace(/[[\]]/g, '')}](${name}.md)`);
@@ -94,7 +104,7 @@ export async function importDocument(
     written.push(
       await store.write(
         `${folder}/${base}/INDEX.md`,
-        `${front({ id: base, title, ...typeMeta, source })}# ${title}\n\nDiimpor dari ${sourceFile}, dipecah per bab. Baca bab yang relevan:\n\n${index.join('\n')}\n`,
+        `${front({ id: base, title, ...typeMeta, source })}# ${title}\n\n${t(lang, 'import.chapterIndex', { file: sourceFile })}\n\n${index.join('\n')}\n`,
       ),
     );
   }
@@ -106,7 +116,8 @@ export async function importDocument(
       if (entry.source !== 'user' || !entry.path.startsWith(`${folder}/`) || keep.has(entry.path)) continue;
       const file = await store.read(entry.path);
       const origin = file ? String(parseFrontMatter(file.content).meta.source ?? '') : '';
-      if (origin === source || origin.startsWith(`${source} (bab `)) {
+      // files of an earlier import of this document, in either language
+      if (origin === source || CHAPTER_SOURCE_MARKS.some((mark) => origin.startsWith(`${source}${mark}`))) {
         await store.remove(entry.path);
         removed.push(entry.path);
       }

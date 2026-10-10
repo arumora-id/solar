@@ -3,6 +3,7 @@ import { mkdir, readdir, readFile, rm, stat } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { KnowledgeEntry, KnowledgeFile, KnowledgeSearchHit, KnowledgeType } from '@solar/shared';
+import { both, LocalizedError } from '../i18n.js';
 import { resolveInside, writeFileAtomic } from '../util/fs.js';
 
 export const MAX_KNOWLEDGE_FILE_BYTES = 512 * 1024;
@@ -68,7 +69,7 @@ export const KNOWLEDGE_PATH = /^(?:[A-Za-z0-9_][A-Za-z0-9._ -]{0,79}\/){0,4}[A-Z
 export function normalizeKnowledgePath(path: string): string {
   const p = path.trim().replace(/\\/g, '/').replace(/^\/+/, '');
   if (!KNOWLEDGE_PATH.test(p) || p.split('/').some((seg) => seg === '..' || seg.startsWith('.'))) {
-    throw new Error(`Invalid knowledge path "${path}": use folders and a .md file name, e.g. systems/AD1GATE.md`);
+    throw new LocalizedError(both('store.knowledge.invalidPath', { path }), 'en');
   }
   return p;
 }
@@ -238,7 +239,9 @@ export class KnowledgeStore {
 
   async write(path: string, content: string): Promise<KnowledgeEntry> {
     const p = normalizeKnowledgePath(path);
-    if (Buffer.byteLength(content, 'utf8') > MAX_KNOWLEDGE_FILE_BYTES) throw new Error(`File is larger than ${MAX_KNOWLEDGE_FILE_BYTES / 1024} KB`);
+    if (Buffer.byteLength(content, 'utf8') > MAX_KNOWLEDGE_FILE_BYTES) {
+      throw new LocalizedError(both('store.knowledge.tooLarge', { kb: MAX_KNOWLEDGE_FILE_BYTES / 1024 }), 'en');
+    }
     const full = resolveInside(this.userDir, p);
     const text = content.replace(/\r\n/g, '\n');
     await writeFileAtomic(full, text);
@@ -251,7 +254,7 @@ export class KnowledgeStore {
   async remove(path: string): Promise<'deleted' | 'reverted'> {
     const p = normalizeKnowledgePath(path);
     const full = resolveInside(this.userDir, p);
-    if (!existsSync(full)) throw new Error(`"${p}" is not a user file (built-in files can be overridden, not deleted)`);
+    if (!existsSync(full)) throw new LocalizedError(both('store.knowledge.notUserFile', { path: p }), 'en');
     await rm(full, { force: true });
     return existsSync(resolveInside(this.builtinDir, p)) ? 'reverted' : 'deleted';
   }

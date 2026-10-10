@@ -7,6 +7,7 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { PluginConfig, PluginStatus } from '@solar/shared';
 import type { ToolResultBlock } from '../agent/types.js';
 import { APP_SLUG, APP_VERSION } from '../config.js';
+import { both, DEFAULT_LANG, localize, type Lang, type LocalizedText } from '../i18n.js';
 import { createLogger } from '../logger.js';
 import type { EventBus } from '../tasks/eventBus.js';
 import { nowIso } from '../util/ids.js';
@@ -41,7 +42,9 @@ export interface McpCallResult {
 interface Connection {
   client: Client | null;
   transport: Transport | null;
+  /** The status without its error, which is kept in `error` (in both languages when SOLAR wrote it). */
   status: PluginStatus;
+  error: LocalizedText | null;
   tools: McpToolDescriptor[];
   connecting: Promise<void> | null;
   /** Bumped by every connect/disconnect: an attempt that sees a newer generation gives up. */
@@ -113,23 +116,32 @@ export class McpManager {
         gen: 0,
         pending: null,
         status: { id, state: 'disabled', error: null, tools: [], connectedAt: null },
+        error: null,
       };
       this.connections.set(id, c);
     }
     return c;
   }
 
-  statuses(): PluginStatus[] {
-    return this.store.list().map((p) => this.status(p.id));
+  /** Every plugin's status; the errors SOLAR writes itself are in `lang` (errors of a server are as it sent them). */
+  statuses(lang: Lang = DEFAULT_LANG): PluginStatus[] {
+    return this.store.list().map((p) => this.status(p.id, lang));
   }
 
-  status(id: string): PluginStatus {
-    return { ...this.conn(id).status };
-  }
-
-  private setStatus(id: string, patch: Partial<PluginStatus>): void {
+  status(id: string, lang: Lang = DEFAULT_LANG): PluginStatus {
     const c = this.conn(id);
-    c.status = { ...c.status, ...patch };
+    return { ...c.status, error: c.error === null ? null : localize(c.error, lang) };
+  }
+
+  /**
+   * Updates a status and announces every status on the event stream (in Indonesian; the stream route sends each
+   * client the statuses in its own language).
+   */
+  private setStatus(id: string, patch: Omit<Partial<PluginStatus>, 'error'> & { error?: LocalizedText | null }): void {
+    const c = this.conn(id);
+    const { error, ...rest } = patch;
+    if (error !== undefined) c.error = error;
+    c.status = { ...c.status, ...rest };
     this.bus.publish({ kind: 'plugins', plugins: this.statuses() });
   }
 
@@ -188,7 +200,7 @@ export class McpManager {
     if (resolved.missingVars.length > 0) {
       this.setStatus(id, {
         state: 'unconfigured',
-        error: `Isi ${resolved.missingVars.join(', ')} di file .env (atau edit plugin) untuk mengaktifkan.`,
+        error: both('mcp.missingVars', { vars: resolved.missingVars.join(', ') }),
         tools: [],
         connectedAt: null,
       });
@@ -203,9 +215,9 @@ export class McpManager {
         endpoint = new URL(resolved.url ?? '');
         if (endpoint.protocol !== 'http:' && endpoint.protocol !== 'https:') throw new Error('unsupported protocol');
       } catch {
-        const message = `URL tidak valid: "${resolved.url ?? ''}" (harus diawali http:// atau https://)`;
+        const message = both('mcp.invalidUrl', { url: resolved.url ?? '' });
         this.setStatus(id, { state: 'error', error: message, tools: [], connectedAt: null });
-        throw new Error(message);
+        throw new Error(message[DEFAULT_LANG]);
       }
     }
     if (config.transport === 'stdio') {
@@ -261,7 +273,7 @@ export class McpManager {
       client.onclose = () => {
         if (c.client === client) {
           c.client = null;
-          this.setStatus(id, { state: 'error', error: 'Koneksi terputus', connectedAt: null });
+          this.setStatus(id, { state: 'error', error: both('mcp.disconnected'), connectedAt: null });
         }
       };
       this.setStatus(id, {

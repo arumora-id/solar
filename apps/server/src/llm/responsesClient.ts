@@ -9,6 +9,7 @@ import type {
 } from 'openai/resources/responses/responses';
 import type { ModelCapabilities, Price } from '../agent/models.js';
 import type { ToolResultContent } from '../agent/types.js';
+import { DEFAULT_LANG, t, type Lang } from '../i18n.js';
 import { toLlmError } from './errors.js';
 import { LlmError, type ConversationItem, type ModelClient, type ToolCall, type TurnRequest, type TurnResult } from './types.js';
 
@@ -80,6 +81,8 @@ export interface ResponsesClientOptions {
   /** The provider is the one from OPENAI_* in .env (error hints mention .env). */
   envProvider: boolean;
   streamer: ResponsesStreamer;
+  /** Language of the error messages (the task's; default Indonesian). */
+  lang?: Lang;
 }
 
 export function createResponsesClient(opts: ResponsesClientOptions): ModelClient {
@@ -120,7 +123,7 @@ export function createResponsesClient(opts: ResponsesClientOptions): ModelClient
         response = await stream.finalResponse();
       } catch (err) {
         if (req.signal.aborted) throw req.signal.reason ?? err;
-        throw toLlmError(err, opts.providerName, opts.model, opts.envProvider);
+        throw toLlmError(err, opts.providerName, opts.model, opts.envProvider, opts.lang);
       }
 
       const u = response.usage;
@@ -134,12 +137,15 @@ export function createResponsesClient(opts: ResponsesClientOptions): ModelClient
       };
 
       if (response.status === 'failed') {
-        throw Object.assign(new LlmError('failed', `${opts.providerName} gagal memproses permintaan: ${response.error?.message ?? 'unknown error'}`), { usage });
+        throw Object.assign(
+          new LlmError('failed', t(opts.lang ?? DEFAULT_LANG, 'llm.failed', { provider: opts.providerName, error: response.error?.message ?? 'unknown error' })),
+          { usage },
+        );
       }
       // the SDK resolves a stream that ended without a terminal event with the partial snapshot
       if (response.status !== 'completed' && response.status !== 'incomplete') {
         throw Object.assign(
-          new LlmError('cut', `Koneksi ke ${opts.providerName} terputus sebelum respons selesai (status ${response.status ?? 'unknown'}). Kirim ulang task.`),
+          new LlmError('cut', t(opts.lang ?? DEFAULT_LANG, 'llm.cutWithStatus', { provider: opts.providerName, status: response.status ?? 'unknown' })),
           { usage },
         );
       }

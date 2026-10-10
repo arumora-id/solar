@@ -19,6 +19,32 @@
         if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
       } catch (e) {}
     </script>
+    <script>
+      // interface language before the first paint (same rules as detectLang in src/lib/i18n.ts)
+      (function () {
+        var l = null;
+        try {
+          l = JSON.parse(localStorage.getItem('solar.lang') || 'null');
+        } catch (e) {}
+        if (l !== 'id' && l !== 'en') {
+          l = 'id';
+          var tags = (navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language || '']);
+          for (var i = 0; i < tags.length; i++) {
+            var p = String(tags[i]).toLowerCase().split(/[-_]/)[0];
+            if (p === 'id' || p === 'ms') break;
+            if (p === 'en') {
+              l = 'en';
+              break;
+            }
+          }
+        }
+        document.documentElement.lang = l;
+        if (l === 'en') {
+          var m = document.querySelector('link[rel="manifest"]');
+          if (m) m.setAttribute('href', '/manifest.en.webmanifest');
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -2,23 +2,40 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { LlmModelConfig, LlmProviderConfig, LlmProviderKind, LlmProviderView, LlmSettingsView } from '@solar/shared';
 import { SECRET_MASK } from '@solar/shared';
 import { api } from '../../lib/api';
+import { useT, type Dict } from '../../lib/i18n';
 import { useSolar } from '../../lib/store';
 import { PlusIcon, RefreshIcon, TrashIcon } from '../Icons';
+import { rich } from './richText';
 
-const KIND_LABEL: Record<LlmProviderKind, string> = {
-  'openai-chat': 'Chat Completions (OpenAI-compatible)',
-  'openai-responses': 'OpenAI Responses API',
-};
+type PresetId = 'omniroute' | 'openai' | 'openrouter' | 'anthropic' | 'gemini' | 'ollama';
 
-/** Starting points; the base URL of self-hosted gateways must be adjusted. */
-const PRESETS: Array<{ label: string; name: string; kind: LlmProviderKind; baseUrl: string; apiKey: string; hint: string }> = [
-  { label: 'OmniRoute', name: 'OmniRoute', kind: 'openai-chat', baseUrl: 'http://localhost:PORT/v1', apiKey: '', hint: 'Ganti host/port sesuai instalasi OmniRoute Anda.' },
-  { label: 'OpenAI', name: 'OpenAI (Chat)', kind: 'openai-chat', baseUrl: 'https://api.openai.com/v1', apiKey: '', hint: '' },
-  { label: 'OpenRouter', name: 'OpenRouter', kind: 'openai-chat', baseUrl: 'https://openrouter.ai/api/v1', apiKey: '', hint: '' },
-  { label: 'Anthropic', name: 'Anthropic (OpenAI-compatible)', kind: 'openai-chat', baseUrl: 'https://api.anthropic.com/v1', apiKey: '', hint: '' },
-  { label: 'Gemini', name: 'Google Gemini (OpenAI-compatible)', kind: 'openai-chat', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', apiKey: '', hint: '' },
-  { label: 'Ollama', name: 'Ollama (lokal)', kind: 'openai-chat', baseUrl: 'http://localhost:11434/v1', apiKey: '', hint: 'Tanpa API key. Tambahkan model yang sudah di-pull.' },
+/**
+ * Starting points; the base URL of self-hosted gateways must be adjusted. The label is the product name; a preset's
+ * hint and a name with words to translate are in `t.settings.models.presetHint` / `presetName` under its id.
+ */
+const PRESETS: Array<{ id: PresetId; label: string; name: string; kind: LlmProviderKind; baseUrl: string; apiKey: string }> = [
+  { id: 'omniroute', label: 'OmniRoute', name: 'OmniRoute', kind: 'openai-chat', baseUrl: 'http://localhost:PORT/v1', apiKey: '' },
+  { id: 'openai', label: 'OpenAI', name: 'OpenAI (Chat)', kind: 'openai-chat', baseUrl: 'https://api.openai.com/v1', apiKey: '' },
+  { id: 'openrouter', label: 'OpenRouter', name: 'OpenRouter', kind: 'openai-chat', baseUrl: 'https://openrouter.ai/api/v1', apiKey: '' },
+  { id: 'anthropic', label: 'Anthropic', name: 'Anthropic (OpenAI-compatible)', kind: 'openai-chat', baseUrl: 'https://api.anthropic.com/v1', apiKey: '' },
+  { id: 'gemini', label: 'Gemini', name: 'Google Gemini (OpenAI-compatible)', kind: 'openai-chat', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', apiKey: '' },
+  { id: 'ollama', label: 'Ollama', name: 'Ollama', kind: 'openai-chat', baseUrl: 'http://localhost:11434/v1', apiKey: '' },
 ];
+
+const KINDS: LlmProviderKind[] = ['openai-chat', 'openai-responses'];
+
+function presetHint(t: Dict, id: PresetId | ''): string {
+  const hints: Partial<Record<PresetId, string>> = t.settings.models.presetHint;
+  return id ? (hints[id] ?? '') : '';
+}
+
+function presetName(t: Dict, preset: (typeof PRESETS)[number]): string {
+  const names: Partial<Record<PresetId, string>> = t.settings.models.presetName;
+  return names[preset.id] ?? preset.name;
+}
+
+/** Result of "Tes koneksi" for one provider, rendered in the current language. */
+type TestResult = { state: 'testing' } | { state: 'ok'; models: string[] } | { state: 'error'; error: string | null };
 
 interface Draft {
   id: string;
@@ -32,7 +49,8 @@ interface Draft {
   vision: boolean;
   models: string;
   isNew: boolean;
-  hint: string;
+  /** The preset picked for a new provider (its hint is shown). */
+  preset: PresetId | '';
 }
 
 /** One model per line: "id; max=16384; reasoning; effort=high; price=0.5/0.05/2; label=Nama" */
@@ -103,17 +121,19 @@ function toDraft(p?: LlmProviderView): Draft {
     vision: p?.vision ?? true,
     models: modelsToLines(p?.models ?? []),
     isNew: !p,
-    hint: '',
+    preset: '',
   };
 }
 
 export function ModelsPanel() {
+  const t = useT();
+  const words = t.settings.models;
   const [view, setView] = useState<LlmSettingsView | null>(null);
   const [route, setRoute] = useState<string[]>([]);
   const [routeDirty, setRouteDirty] = useState(false);
   const [newEntry, setNewEntry] = useState('');
   const [draft, setDraft] = useState<Draft | null>(null);
-  const [tests, setTests] = useState<Record<string, { ok: boolean; text: string; models?: string[] }>>({});
+  const [tests, setTests] = useState<Record<string, TestResult>>({});
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const { reloadConfig } = useSolar();
@@ -161,7 +181,8 @@ export function ModelsPanel() {
     for (const p of view?.providers ?? []) {
       if (!p.enabled) continue;
       for (const m of p.models) out.push(`${p.id}/${m.id}`);
-      for (const m of tests[p.id]?.models ?? []) out.push(`${p.id}/${m}`);
+      const test = tests[p.id];
+      if (test?.state === 'ok') for (const m of test.models) out.push(`${p.id}/${m}`);
     }
     return [...new Set(out)].filter((c) => !route.includes(c));
   }, [view, tests, route]);
@@ -192,24 +213,22 @@ export function ModelsPanel() {
   };
 
   const test = async (id: string) => {
-    setTests((t) => ({ ...t, [id]: { ok: true, text: 'Menguji…' } }));
+    setTests((all) => ({ ...all, [id]: { state: 'testing' } }));
     try {
       const r = await api.testProvider(id);
-      setTests((t) => ({
-        ...t,
-        [id]: r.ok ? { ok: true, text: `Terhubung · ${r.models?.length ?? 0} model tersedia`, models: r.models } : { ok: false, text: r.error ?? 'Gagal' },
-      }));
+      setTests((all) => ({ ...all, [id]: r.ok ? { state: 'ok', models: r.models ?? [] } : { state: 'error', error: r.error ?? null } }));
     } catch (e) {
-      setTests((t) => ({ ...t, [id]: { ok: false, text: e instanceof Error ? e.message : String(e) } }));
+      setTests((all) => ({ ...all, [id]: { state: 'error', error: e instanceof Error ? e.message : String(e) } }));
     }
   };
+
+  const testText = (r: TestResult): string =>
+    r.state === 'testing' ? words.testing : r.state === 'ok' ? words.testOk(r.models.length) : (r.error ?? t.common.failed);
 
   return (
     <div>
       <p className="hint" style={{ marginTop: 0 }}>
-        SOLAR bisa memakai beberapa provider LLM sekaligus: OpenAI, gateway seperti OmniRoute/OpenRouter/LiteLLM, Claude, Gemini, atau
-        model lokal (Ollama). <b>Rute default</b> menentukan model utama dan cadangannya: bila model utama gagal (koneksi, kuota, limit,
-        key salah), task otomatis pindah ke model berikutnya.
+        {rich(words.intro)}
       </p>
       {error && (
         <div className="error-box" style={{ marginBottom: 10 }}>
@@ -219,16 +238,16 @@ export function ModelsPanel() {
 
       <div className="card">
         <div className="card-head">
-          <h4>Rute default (utama → cadangan)</h4>
+          <h4>{words.route.title}</h4>
         </div>
         {route.map((entry, i) => (
           <div className="row" key={entry} style={{ marginTop: 8 }}>
-            <span className="badge">{i === 0 ? 'Utama' : `Cadangan ${i}`}</span>
+            <span className="badge">{i === 0 ? words.route.primary : words.route.fallback(i)}</span>
             <code style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}>{entry}</code>
-            <button type="button" className="btn small ghost" disabled={i === 0} onClick={() => move(i, -1)} aria-label="Naikkan">
+            <button type="button" className="btn small ghost" disabled={i === 0} onClick={() => move(i, -1)} aria-label={words.route.moveUp}>
               ↑
             </button>
-            <button type="button" className="btn small ghost" disabled={i === route.length - 1} onClick={() => move(i, 1)} aria-label="Turunkan">
+            <button type="button" className="btn small ghost" disabled={i === route.length - 1} onClick={() => move(i, 1)} aria-label={words.route.moveDown}>
               ↓
             </button>
             <button
@@ -239,7 +258,7 @@ export function ModelsPanel() {
                 setRoute(route.filter((_, j) => j !== i));
                 setRouteDirty(true);
               }}
-              aria-label="Hapus dari rute"
+              aria-label={words.route.remove}
             >
               <TrashIcon size={14} />
             </button>
@@ -250,7 +269,7 @@ export function ModelsPanel() {
             className="input"
             style={{ flex: 1, minWidth: 180 }}
             list="solar-model-choices"
-            placeholder="provider/model, mis. omniroute/claude-sonnet"
+            placeholder={words.route.entryPlaceholder}
             value={newEntry}
             onChange={(e) => setNewEntry(e.target.value)}
           />
@@ -269,12 +288,12 @@ export function ModelsPanel() {
               setRouteDirty(true);
             }}
           >
-            <PlusIcon size={14} /> Tambah
+            <PlusIcon size={14} /> {t.common.add}
           </button>
         </div>
         <div className="row" style={{ marginTop: 10 }}>
           <button type="button" className="btn primary small" disabled={busy || !routeDirty || !route.length} onClick={() => void run(() => api.setRoutes({ ...view?.routes, default: route }))}>
-            Simpan rute
+            {words.route.save}
           </button>
           <button
             type="button"
@@ -285,22 +304,22 @@ export function ModelsPanel() {
               void run(() => api.setRoutes(rest));
             }}
           >
-            Kembali ke model .env
+            {words.route.resetToEnv}
           </button>
         </div>
-        <p className="hint">Berlaku untuk task berikutnya, tanpa restart.</p>
+        <p className="hint">{words.route.appliesHint}</p>
       </div>
 
       <div className="row" style={{ margin: '14px 0 8px' }}>
-        <h4 style={{ margin: 0, flex: 1 }}>Provider</h4>
+        <h4 style={{ margin: 0, flex: 1 }}>{words.providers}</h4>
         <button type="button" className="btn primary small" onClick={() => setDraft(toDraft())}>
-          <PlusIcon size={16} /> Tambah provider
+          <PlusIcon size={16} /> {words.addProvider}
         </button>
       </div>
 
       {draft && (
         <div className="card">
-          <h4 style={{ marginTop: 0 }}>{draft.isNew ? 'Provider baru' : `Edit provider: ${draft.id}`}</h4>
+          <h4 style={{ marginTop: 0 }}>{draft.isNew ? words.newProvider : words.editProvider(draft.id)}</h4>
           {draft.isNew && (
             <div className="row" style={{ marginBottom: 10 }}>
               {PRESETS.map((p) => (
@@ -308,40 +327,40 @@ export function ModelsPanel() {
                   key={p.label}
                   type="button"
                   className="btn small"
-                  onClick={() => setDraft({ ...draft, name: p.name, kind: p.kind, baseUrl: p.baseUrl, apiKey: p.apiKey, hint: p.hint })}
+                  onClick={() => setDraft({ ...draft, name: presetName(t, p), kind: p.kind, baseUrl: p.baseUrl, apiKey: p.apiKey, preset: p.id })}
                 >
                   {p.label}
                 </button>
               ))}
             </div>
           )}
-          {draft.hint && <p className="hint">{draft.hint}</p>}
+          {presetHint(t, draft.preset) && <p className="hint">{presetHint(t, draft.preset)}</p>}
           <label className="field">
-            <span>Nama</span>
+            <span>{t.common.name}</span>
             <input className="input" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
           </label>
           {draft.isNew && (
             <label className="field">
-              <span>Id (dipakai di rute, mis. omniroute) - kosong = dari nama</span>
+              <span>{words.fields.id}</span>
               <input className="input" value={draft.id} onChange={(e) => setDraft({ ...draft, id: e.target.value.toLowerCase() })} />
             </label>
           )}
           <label className="field">
-            <span>Jenis API</span>
+            <span>{words.fields.kind}</span>
             <select className="select" value={draft.kind} onChange={(e) => setDraft({ ...draft, kind: e.target.value as LlmProviderKind })}>
-              {(Object.keys(KIND_LABEL) as LlmProviderKind[]).map((k) => (
+              {KINDS.map((k) => (
                 <option key={k} value={k}>
-                  {KIND_LABEL[k]}
+                  {words.kind[k]}
                 </option>
               ))}
             </select>
           </label>
           <label className="field">
-            <span>Base URL (termasuk /v1)</span>
+            <span>{words.fields.baseUrl}</span>
             <input className="input" value={draft.baseUrl} onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })} placeholder="https://host/v1" />
           </label>
           <label className="field">
-            <span>API key (atau referensi variabel .env, mis. {'${OMNIROUTE_API_KEY}'}; kosong untuk model lokal)</span>
+            <span>{words.fields.apiKey}</span>
             <input
               className="input"
               type="password"
@@ -352,7 +371,7 @@ export function ModelsPanel() {
             />
           </label>
           <label className="field">
-            <span>Model (satu per baris). Opsi: max=16384; reasoning; effort=high; price=input/cached/output (USD per 1 juta token)</span>
+            <span>{words.fields.models}</span>
             <textarea
               className="textarea"
               rows={4}
@@ -363,17 +382,17 @@ export function ModelsPanel() {
           </label>
           <details>
             <summary className="hint" style={{ cursor: 'pointer' }}>
-              Lanjutan
+              {words.fields.advanced}
             </summary>
             <label className="field">
-              <span>Header tambahan (KEY=nilai per baris)</span>
+              <span>{words.fields.headers}</span>
               <textarea className="textarea" rows={2} value={draft.headers} onChange={(e) => setDraft({ ...draft, headers: e.target.value })} />
             </label>
             {draft.kind === 'openai-chat' && (
               <label className="field">
-                <span>Parameter batas output</span>
+                <span>{words.fields.maxTokensParam}</span>
                 <select className="select" value={draft.maxTokensParam} onChange={(e) => setDraft({ ...draft, maxTokensParam: e.target.value as Draft['maxTokensParam'] })}>
-                  <option value="">Otomatis (max_completion_tokens untuk api.openai.com, selain itu max_tokens)</option>
+                  <option value="">{words.fields.maxTokensAuto}</option>
                   <option value="max_tokens">max_tokens</option>
                   <option value="max_completion_tokens">max_completion_tokens</option>
                 </select>
@@ -381,63 +400,63 @@ export function ModelsPanel() {
             )}
             <label className="toggle" style={{ display: 'flex', marginBottom: 8 }}>
               <input type="checkbox" checked={draft.vision} onChange={(e) => setDraft({ ...draft, vision: e.target.checked })} />
-              Model menerima gambar
+              {words.fields.vision}
             </label>
           </details>
           <label className="toggle" style={{ display: 'flex', margin: '8px 0' }}>
             <input type="checkbox" checked={draft.enabled} onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} />
-            Aktif
+            {t.common.active}
           </label>
           <div className="row">
             <button type="button" className="btn primary small" disabled={busy || !draft.name.trim()} onClick={() => void save()}>
-              Simpan
+              {t.common.save}
             </button>
             <button type="button" className="btn small" onClick={() => setDraft(null)}>
-              Batal
+              {t.common.cancel}
             </button>
           </div>
         </div>
       )}
 
       {view?.providers.map((p) => {
-        const t = tests[p.id];
+        const result = tests[p.id];
         return (
           <div className="card" key={p.id}>
             <div className="card-head">
               <h4>{p.name}</h4>
-              <span className="badge">{p.source === 'env' ? '.env' : p.enabled ? 'Aktif' : 'Nonaktif'}</span>
-              <span className="badge">{p.ready ? 'Siap' : 'Belum ada API key'}</span>
+              <span className="badge">{p.source === 'env' ? words.fromEnv : p.enabled ? t.common.active : t.common.inactive}</span>
+              <span className="badge">{p.ready ? words.ready : words.missingKey}</span>
             </div>
             <p>
-              <code>{p.id}</code> · {KIND_LABEL[p.kind]}
+              <code>{p.id}</code> · {words.kind[p.kind]}
               {p.baseUrl ? ` · ${p.baseUrl}` : ''}
             </p>
-            {p.models.length > 0 && <p className="hint">Model: {p.models.map((m) => m.id).join(', ')}</p>}
-            {p.missingVars.length > 0 && <p className="hint">Variabel belum diisi: {p.missingVars.join(', ')}</p>}
-            {p.source === 'env' && <p className="hint">Diatur lewat OPENAI_API_KEY, OPENAI_BASE_URL dan SOLAR_MODEL di .env.</p>}
-            {t && (
-              <p className="hint" style={{ color: t.ok ? undefined : 'var(--danger, #c0392b)' }}>
-                {t.text}
+            {p.models.length > 0 && <p className="hint">{words.modelList(p.models.map((m) => m.id).join(', '))}</p>}
+            {p.missingVars.length > 0 && <p className="hint">{words.missingVars(p.missingVars.join(', '))}</p>}
+            {p.source === 'env' && <p className="hint">{words.envHint}</p>}
+            {result && (
+              <p className="hint" style={{ color: result.state === 'error' ? 'var(--danger, #c0392b)' : undefined }}>
+                {testText(result)}
               </p>
             )}
             <div className="row" style={{ marginTop: 8 }}>
               <button type="button" className="btn small" onClick={() => void test(p.id)}>
-                <RefreshIcon size={14} /> Tes koneksi
+                <RefreshIcon size={14} /> {words.testConnection}
               </button>
               {p.source === 'user' && (
                 <>
                   <button type="button" className="btn small" onClick={() => setDraft(toDraft(p))}>
-                    Edit
+                    {t.common.edit}
                   </button>
                   <button
                     type="button"
                     className="btn small danger"
                     disabled={busy}
                     onClick={() => {
-                      if (window.confirm(`Hapus provider "${p.name}"?`)) void run(() => api.deleteProvider(p.id));
+                      if (window.confirm(words.confirmDelete(p.name))) void run(() => api.deleteProvider(p.id));
                     }}
                   >
-                    Hapus
+                    {t.common.delete}
                   </button>
                 </>
               )}

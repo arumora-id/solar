@@ -38,6 +38,7 @@ import {
 import { estimatePageNumbers } from 'docx/layout';
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { Lexer, type Token, type Tokens } from 'marked';
+import { t as message, type Lang } from '../../i18n.js';
 import { markdownToPlain } from '../../util/markdown.js';
 import { placeholderPng, rasterizeSvg, svgSize } from '../svgRaster.js';
 import type { Block, BuiltDocument } from './document.js';
@@ -62,6 +63,11 @@ export interface DocxRenderOptions {
    * does (docx/layout). Default true; tests turn it off for speed.
    */
   pageNumbers?: boolean;
+  /**
+   * Language of the warnings: English by default (the TSD tool hands them to the model); the Word export of the API
+   * passes the language of the request, since the user reads them.
+   */
+  warningLanguage?: Lang;
 }
 
 // ---- page & look ---------------------------------------------------------------------
@@ -179,10 +185,16 @@ function fit(size: { width: number; height: number }, box: { width: number; heig
   return Math.min(1, box.width / size.width, box.height / size.height);
 }
 
-async function prepareFigure(block: Extract<Block, { kind: 'figure' }>, context: FigureContext, warnings: string[]): Promise<FigureImage> {
+async function prepareFigure(
+  block: Extract<Block, { kind: 'figure' }>,
+  context: FigureContext,
+  warnings: string[],
+  lang: Lang,
+): Promise<FigureImage> {
   const svg = svgForWord(block.diagram.svg.replace(/^\uFEFF/, ''));
   const natural = svgSize(svg);
-  if (!natural) warnings.push(`Diagram ${block.diagram.fileName}: the SVG has no width/height, it is shown at 800x600`);
+  const file = block.diagram.fileName;
+  if (!natural) warnings.push(message(lang, 'docx.warning.noSize', { file }));
   const size = natural ?? { width: 800, height: 600 };
   // a wide diagram is shown larger on a landscape page of its own (with the headings right before it)
   const portrait = fit(size, { width: MAX_IMAGE.portrait.width, height: MAX_IMAGE.portrait.height - context.trailingPx });
@@ -196,17 +208,14 @@ async function prepareFigure(block: Extract<Block, { kind: 'figure' }>, context:
   // CSS pixels at 96 dpi -> points at 72 dpi
   const printed = textPx === null ? null : textPx * scale * 0.75;
   if (printed !== null && printed < MIN_PRINTED_TEXT_PT) {
-    warnings.push(
-      `Diagram ${block.diagram.fileName}: shrunk to ${Math.round(scale * 100)}% to fit the page, so its text prints at about ${printed.toFixed(1)} pt; split it into smaller views (fewer elements or steps each) for a readable printout`,
-    );
+    const points = printed.toLocaleString(lang === 'id' ? 'id-ID' : 'en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    warnings.push(message(lang, 'docx.warning.smallText', { file, scale: Math.round(scale * 100), points }));
   }
   let png: Buffer;
   try {
     png = (await rasterizeSvg(svg, width * RASTER_SCALE)).png;
   } catch (err) {
-    warnings.push(
-      `Diagram ${block.diagram.fileName}: the PNG fallback could not be drawn (${err instanceof Error ? err.message : String(err)}); Word 2016+ shows the SVG, older viewers a grey placeholder`,
-    );
+    warnings.push(message(lang, 'docx.warning.noPng', { file, error: err instanceof Error ? err.message : String(err) }));
     png = placeholderPng(Math.min(width, 480), Math.min(height, 480));
   }
   return { svg: Buffer.from(svg, 'utf8'), png, width, height, landscape };
@@ -1216,7 +1225,7 @@ export async function renderTechSpecDocx(input: BuiltDocument, options: DocxRend
   const warnings: string[] = [];
   const figures = new Map<Block, FigureImage>();
   const contexts = figureContexts(doc.blocks);
-  for (const b of doc.blocks) if (b.kind === 'figure') figures.set(b, await prepareFigure(b, contexts.get(b)!, warnings));
+  for (const b of doc.blocks) if (b.kind === 'figure') figures.set(b, await prepareFigure(b, contexts.get(b)!, warnings, options.warningLanguage ?? 'en'));
 
   const L = (key: StringKey) => t(doc.lang, key);
   const summary = markdownToPlain(doc.info.summary);

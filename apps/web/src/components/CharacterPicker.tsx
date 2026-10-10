@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { CHARACTER_EVENT, CHARACTERS, characterInfo, readCharacter, saveCharacter, type CharacterId } from '../character/characters';
+import { CHARACTER_EVENT, CHARACTERS, readCharacter, saveCharacter, type CharacterId } from '../character/characters';
+import { useT } from '../lib/i18n';
 
 /** The chosen character, kept in sync across the stage switcher and the settings panel. */
 export function useCharacter(): CharacterId {
@@ -30,6 +31,7 @@ function moveIndex(key: string, index: number, count: number, vertical: boolean,
 
 /** Large cards for the settings drawer: a radio group (one tab stop, arrow keys move the selection). */
 export function CharacterCards() {
+  const t = useT();
   const current = useCharacter();
   const refs = useRef<Array<HTMLButtonElement | null>>([]);
   const onKeyDown = (e: KeyboardEvent, index: number) => {
@@ -40,7 +42,7 @@ export function CharacterCards() {
     refs.current[next]?.focus();
   };
   return (
-    <div className="character-cards" role="radiogroup" aria-label="Karakter">
+    <div className="character-cards" role="radiogroup" aria-label={t.character.cardsLabel}>
       {CHARACTERS.map((c, i) => (
         <button
           key={c.id}
@@ -57,8 +59,8 @@ export function CharacterCards() {
         >
           <img src={thumb(c.id)} alt="" width={72} height={72} />
           <span>
-            <strong>{c.name}</strong>
-            <small>{c.description}</small>
+            <strong>{t.character.characters[c.id].name}</strong>
+            <small>{t.character.characters[c.id].description}</small>
           </span>
         </button>
       ))}
@@ -68,6 +70,7 @@ export function CharacterCards() {
 
 /** Compact switcher on the stage: the current character, opening a small menu of all characters. */
 export function CharacterSwitcher() {
+  const t = useT();
   const current = useCharacter();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -121,13 +124,13 @@ export function CharacterSwitcher() {
             setOpen(true);
           }
         }}
-        title="Ganti karakter"
+        title={t.character.switchTitle}
       >
         <img src={thumb(current)} alt="" width={20} height={20} />
-        {characterInfo(current).name}
+        {t.character.characters[current].name}
       </button>
       {open && (
-        <div className="character-menu" role="menu" aria-label="Pilih karakter" ref={menuRef} onKeyDown={onMenuKeyDown}>
+        <div className="character-menu" role="menu" aria-label={t.character.menuLabel} ref={menuRef} onKeyDown={onMenuKeyDown}>
           {CHARACTERS.map((c) => (
             <button
               key={c.id}
@@ -141,7 +144,7 @@ export function CharacterSwitcher() {
               }}
             >
               <img src={thumb(c.id)} alt="" width={30} height={30} />
-              {c.name}
+              {t.character.characters[c.id].name}
             </button>
           ))}
         </div>

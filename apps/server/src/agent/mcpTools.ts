@@ -1,3 +1,4 @@
+import { DEFAULT_LANG, t } from '../i18n.js';
 import type { McpManager } from '../plugins/mcpManager.js';
 import { isWriteTool } from '../plugins/mcpManager.js';
 import type { AgentTool } from './types.js';
@@ -27,6 +28,7 @@ export function createMcpTools(mcp: McpManager): AgentTool[] {
     const description = `${clip(`[${plugin.name}] ${tool.description ?? title}`, MAX_DESCRIPTION - note.length)}${note}`;
     return {
       name: qualifiedName,
+      // the plugin's own names, the same in both languages
       displayName: `${plugin.name}: ${title}`,
       description,
       inputSchema: sanitizeSchema(tool.inputSchema),
@@ -39,9 +41,9 @@ export function createMcpTools(mcp: McpManager): AgentTool[] {
         }
         return { ok: true, value: input };
       },
-      confirmation() {
-        if (plugin.confirm === 'always') return `${plugin.name} mewajibkan persetujuan Anda untuk setiap pemanggilan`;
-        if (plugin.confirm === 'writes' && write) return `${tool.name} dapat mengubah data di ${plugin.name}`;
+      confirmation(_input, lang = DEFAULT_LANG) {
+        if (plugin.confirm === 'always') return t(lang, 'confirm.mcp.always', { plugin: plugin.name });
+        if (plugin.confirm === 'writes' && write) return t(lang, 'confirm.mcp.write', { tool: tool.name, plugin: plugin.name });
         return null;
       },
       async execute(input, ctx) {

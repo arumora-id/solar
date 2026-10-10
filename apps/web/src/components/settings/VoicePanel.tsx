@@ -1,9 +1,21 @@
 import { useState } from 'react';
+import { t as dictionary, useLang, useT } from '../../lib/i18n';
 import { browserSpeechAvailable, isElectron, microphoneAvailable } from '../../voice/recognition';
 import { speak, ttsAvailable } from '../../voice/tts';
-import { loadVoicePrefs, resolveEngine, saveVoicePrefs, WHISPER_MODELS, type VoicePrefs } from '../../voice/useVoice';
+import {
+  loadVoicePrefs,
+  resolveEngine,
+  saveVoicePrefs,
+  SPEECH_LOCALES,
+  speechLocale,
+  WHISPER_MODELS,
+  type VoicePrefs,
+} from '../../voice/useVoice';
 
 export function VoicePanel() {
+  const t = useT();
+  const lang = useLang();
+  const words = t.voice.panel;
   const [prefs, setPrefs] = useState<VoicePrefs>(loadVoicePrefs);
   const update = (patch: Partial<VoicePrefs>) => {
     const next = { ...prefs, ...patch };
@@ -11,60 +23,68 @@ export function VoicePanel() {
     saveVoicePrefs(next);
   };
   const engine = resolveEngine(prefs, false);
+  // 'auto' follows the interface language; shown in the option so the user sees which one that is now
+  const locale = speechLocale(prefs.lang);
 
   return (
     <div>
       <p className="hint" style={{ marginTop: 0 }}>
-        Mesin aktif: <strong>{engine === 'browser' ? 'Web Speech API (browser)' : engine === 'whisper' ? 'Whisper lokal (offline setelah unduh model)' : 'tidak tersedia'}</strong>
-        {isElectron() ? ' · Aplikasi desktop memakai Whisper lokal.' : ''}
+        {words.activeEngine} <strong>{words.engines[engine ?? 'none']}</strong>
+        {isElectron() ? ` · ${words.desktopNote}` : ''}
       </p>
       <div className="grid-2">
         <label className="field">
-          <span>Bahasa</span>
+          <span>{words.language}</span>
           <select className="select" value={prefs.lang} onChange={(e) => update({ lang: e.target.value as VoicePrefs['lang'] })}>
-            <option value="id-ID">Bahasa Indonesia</option>
-            <option value="en-US">English (US)</option>
+            <option value="auto">{words.languageAuto(t.common.languageName[lang])}</option>
+            {SPEECH_LOCALES.map((l) => (
+              <option key={l} value={l}>
+                {words.languages[l]}
+              </option>
+            ))}
           </select>
+          <span className="hint">{words.languageAutoHint}</span>
         </label>
         <label className="field">
-          <span>Mesin pengenalan suara</span>
+          <span>{words.engine}</span>
           <select className="select" value={prefs.engine} onChange={(e) => update({ engine: e.target.value as VoicePrefs['engine'] })}>
-            <option value="auto">Otomatis</option>
+            <option value="auto">{words.engineAuto}</option>
             <option value="browser" disabled={!browserSpeechAvailable()}>
-              Web Speech API (Chrome/Edge)
+              {words.engineBrowser}
             </option>
             <option value="whisper" disabled={!microphoneAvailable()}>
-              Whisper lokal
+              {words.engineWhisper}
             </option>
           </select>
         </label>
       </div>
       <label className="field">
-        <span>Model Whisper</span>
+        <span>{words.whisperModel}</span>
         <select className="select" value={prefs.whisperModel} onChange={(e) => update({ whisperModel: e.target.value })}>
           {WHISPER_MODELS.map((m) => (
             <option key={m.id} value={m.id}>
-              {m.label}
+              {words.whisperModels[m.size]}
             </option>
           ))}
         </select>
-        <span className="hint">Model diunduh sekali dari Hugging Face lalu disimpan di cache browser/aplikasi.</span>
+        <span className="hint">{words.whisperHint}</span>
       </label>
       <label className="toggle" style={{ display: 'flex', marginBottom: 8 }}>
         <input type="checkbox" checked={prefs.autoSend} onChange={(e) => update({ autoSend: e.target.checked })} />
-        Kirim otomatis setelah selesai bicara
+        {words.autoSend}
       </label>
       <label className="toggle" style={{ display: 'flex', marginBottom: 12 }}>
         <input type="checkbox" checked={prefs.speakReplies} disabled={!ttsAvailable()} onChange={(e) => update({ speakReplies: e.target.checked })} />
-        Karakter membacakan ringkasan hasil (text-to-speech)
+        {words.speakReplies}
       </label>
       <button
         type="button"
         className="btn small"
         disabled={!ttsAvailable()}
-        onClick={() => speak(prefs.lang === 'id-ID' ? 'Halo, saya SOLAR AI Agent. Siap membantu desain arsitektur Anda.' : 'Hi, I am SOLAR AI Agent, ready to help with your architecture.', prefs.lang)}
+        // the test sentence is in the speech language (its own dictionary), whatever the interface language
+        onClick={() => speak(dictionary(locale === 'en-US' ? 'en' : 'id').voice.panel.testPhrase, locale)}
       >
-        Tes suara
+        {words.test}
       </button>
     </div>
   );

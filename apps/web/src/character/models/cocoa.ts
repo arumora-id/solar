@@ -135,6 +135,5 @@ export function buildCocoa(parent: THREE.Object3D): Rig {
     breath: { x: 1.012, y: 0.985 },
     frame: { height: 3.9, width: 3.5 },
     pickables: kit.pickables,
-    label: 'SOLAR AI AGENT sebagai Cocoa Kelapa, buah kelapa cokelat berkacamata dengan sedotan',
   };
 }

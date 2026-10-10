@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import type { PluginConfig } from '@solar/shared';
 import { SECRET_MASK } from '@solar/shared';
+import { both, LocalizedError } from '../i18n.js';
 import { writeFileAtomic } from '../util/fs.js';
 import { slugify } from '../util/ids.js';
 
@@ -137,7 +138,7 @@ export class PluginStore {
     const derived = slugify(input.name ?? 'plugin', 'plugin').slice(0, 40).replace(/-+$/, '') || 'plugin';
     const candidate = { ...input, id: input.id?.trim() ? input.id : derived };
     const config = PluginConfigSchema.parse(candidate) as PluginConfig;
-    if (this.plugins.some((p) => p.id === config.id)) throw new Error(`Plugin "${config.id}" already exists`);
+    if (this.plugins.some((p) => p.id === config.id)) throw new LocalizedError(both('store.plugin.exists', { id: config.id }), 'en');
     this.plugins.push(config);
     await this.save();
     return config;
@@ -145,7 +146,7 @@ export class PluginStore {
 
   async update(id: string, input: Partial<PluginInput>): Promise<PluginConfig> {
     const index = this.plugins.findIndex((p) => p.id === id);
-    if (index < 0) throw new Error(`Plugin "${id}" not found`);
+    if (index < 0) throw new LocalizedError(both('store.plugin.notFound', { id }), 'en');
     const prev = this.plugins[index]!;
     const merged = {
       ...prev,
@@ -163,7 +164,7 @@ export class PluginStore {
   async remove(id: string): Promise<void> {
     const before = this.plugins.length;
     this.plugins = this.plugins.filter((p) => p.id !== id);
-    if (this.plugins.length === before) throw new Error(`Plugin "${id}" not found`);
+    if (this.plugins.length === before) throw new LocalizedError(both('store.plugin.notFound', { id }), 'en');
     await this.save();
   }
 }

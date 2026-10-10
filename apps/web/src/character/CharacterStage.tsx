@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { characterInfo, type CharacterId } from './characters';
+import { useT } from '../lib/i18n';
+import type { CharacterId } from './characters';
 import { CharacterScene, type CharacterState } from './CharacterScene';
 
 interface Props {
@@ -10,6 +11,7 @@ interface Props {
 
 /** React host for the three.js character. Falls back to a static illustration when WebGL is unavailable. */
 export function CharacterStage({ character, state, onCharacterClick }: Props) {
+  const t = useT();
   const hostRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<CharacterScene | null>(null);
   const clickRef = useRef(onCharacterClick);
@@ -44,7 +46,7 @@ export function CharacterStage({ character, state, onCharacterClick }: Props) {
   return (
     <div className="character-stage" ref={hostRef} data-state={state} data-character={character}>
       {failed && (
-        <button type="button" className="character-fallback" onClick={() => onCharacterClick?.()} aria-label={`SOLAR AI AGENT (${characterInfo(character).name})`}>
+        <button type="button" className="character-fallback" onClick={() => onCharacterClick?.()} aria-label={t.character.fallbackLabel(t.character.characters[character].name)}>
           <img src={`/characters/${character}.svg`} alt="" width={160} height={160} />
         </button>
       )}

@@ -48,8 +48,8 @@ export class FileRepository implements Repository {
       const id = file.slice(0, -'.json'.length);
       try {
         const stored = JSON.parse(await readFile(join(this.dir, file), 'utf8')) as Task;
-        // tasks written before attachments existed have no attachmentIds
-        const task: Task = { ...stored, attachmentIds: stored.attachmentIds ?? [] };
+        // tasks written before attachments existed have no attachmentIds; before languages existed tasks were Indonesian
+        const task: Task = { ...stored, attachmentIds: stored.attachmentIds ?? [], language: stored.language === 'en' ? 'en' : 'id' };
         const artifacts = await this.readJson<Artifact[]>(`${id}.artifacts.json`, []);
         const confirmations = await this.readJson<Confirmation[]>(`${id}.confirmations.json`, []);
         this.records.set(id, { task, events: null, artifacts, confirmations });

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { Artifact, KnowledgeEntry } from '@solar/shared';
+import { t, taskLang, type Lang } from '../i18n.js';
 import { isAgentKnowledge, KNOWLEDGE_TYPES, MAX_KNOWLEDGE_FILE_BYTES, normalizeKnowledgePath, type KnowledgeStore } from '../knowledge/knowledgeStore.js';
 import {
   composeKnowledgeFile,
@@ -70,30 +71,42 @@ interface Approval {
 }
 
 /**
- * What the user approves: where the file goes, and whether it replaces one. Null when nothing will be written
- * (the write would be refused, so execute only reports why).
+ * What the user approves (in `lang`, the task's language): where the file goes, and whether it replaces one. Null when
+ * nothing will be written (the write would be refused, so execute only reports why).
  */
-async function writeApproval(knowledge: KnowledgeStore, path: string, what: string, overwrite: boolean, text: string): Promise<Approval | null> {
+async function writeApproval(
+  knowledge: KnowledgeStore,
+  path: string,
+  what: string,
+  overwrite: boolean,
+  text: string,
+  lang: Lang,
+): Promise<Approval | null> {
   // guidance paths and files over the size limit are refused before anything is written
   if (!isAgentKnowledge(path) || Buffer.byteLength(text, 'utf8') > MAX_KNOWLEDGE_FILE_BYTES) return null;
   const existing = await existingKnowledge(knowledge, path).catch(() => null);
   // without overwrite an existing file is refused before anything is written: nothing to approve
   if (existing && !overwrite) return null;
-  const replaces = existing ? ` - MENGGANTI ${existing.source === 'builtin' ? 'file bawaan' : 'file yang sudah ada'} "${existing.title}" (${existing.path})` : '';
+  const replaces = existing
+    ? t(lang, existing.source === 'builtin' ? 'confirm.knowledge.replacesBuiltin' : 'confirm.knowledge.replacesExisting', {
+        title: existing.title,
+        path: existing.path,
+      })
+    : '';
   return {
-    reason: `Menyimpan ${what} ke knowledge base: ${path}${replaces}. Isi knowledge base diikuti agent di atas aturan bawaan pada task berikutnya.`,
+    reason: t(lang, 'confirm.knowledge.save', { what, path, replaces }),
     state: knowledgeState(existing),
   };
 }
 
 /** Output when the knowledge base changed between the approval check and the write. */
-const STATE_CHANGED: ToolOutput = {
+const stateChanged = (lang: Lang): ToolOutput => ({
   isError: true,
   content: 'The knowledge base changed while this call was checked, so nothing was written. Call the tool again.',
-  summary: 'tidak ditulis',
-};
+  summary: t(lang, 'tool.knowledge.notWritten'),
+});
 
-function saved(result: SaveKnowledgeResult, extra: Record<string, unknown> = {}): ToolOutput {
+function saved(result: SaveKnowledgeResult, lang: Lang, extra: Record<string, unknown> = {}): ToolOutput {
   const { entry, replaced } = result;
   return {
     content: json({
@@ -106,21 +119,25 @@ function saved(result: SaveKnowledgeResult, extra: Record<string, unknown> = {})
       ...extra,
       note: 'The file is in the knowledge base now: list_knowledge, search_knowledge and read_knowledge find it, and new tasks get it in their instructions.',
     }),
-    summary: `${replaced ? 'diganti' : 'disimpan'}: ${entry.path}`,
+    summary: t(lang, replaced ? 'tool.knowledge.replaced' : 'tool.knowledge.saved', { path: entry.path }),
   };
 }
 
-function refused(err: unknown): ToolOutput {
-  if (err instanceof KnowledgeStateChangedError) return STATE_CHANGED;
+function refused(err: unknown, lang: Lang): ToolOutput {
+  if (err instanceof KnowledgeStateChangedError) return stateChanged(lang);
   if (err instanceof KnowledgeConflictError) {
     return {
       isError: true,
       content: `${err.message}\nNothing was written. Read "${err.path}" with read_knowledge; call again with overwrite: true only if the user wants it replaced, or choose another path.`,
-      summary: 'sudah ada',
+      summary: t(lang, 'tool.knowledge.exists'),
     };
   }
   const message = err instanceof Error ? err.message : String(err);
-  return { isError: true, content: `${message}\nNothing was written.`, summary: err instanceof KnowledgeInputError ? 'ditolak' : 'gagal' };
+  return {
+    isError: true,
+    content: `${message}\nNothing was written.`,
+    summary: t(lang, err instanceof KnowledgeInputError ? 'tool.knowledge.refused' : 'tool.knowledge.failed'),
+  };
 }
 
 const brief = (e: KnowledgeEntry) => ({
@@ -141,33 +158,36 @@ export function createKnowledgeTools(knowledge: KnowledgeStore, artifacts?: Arti
    * changed after the user was asked, so the user never approves one file and gets another replaced.
    */
   const asked = new WeakMap<object, string | null>();
-  const ask = (input: object, approval: Approval | null) => {
+  const ask = (input: object, approval: Approval | null): string | null => {
     if (approval) asked.set(input, approval.state);
     return approval?.reason ?? null;
   };
   const tools: AgentTool[] = [
     zodTool({
       name: 'list_knowledge',
-      displayName: 'Daftar knowledge',
+      displayName: { id: 'Daftar knowledge', en: 'Listing knowledge files' },
       description:
         "List the user's knowledge base files (their own systems, integrations, standards and rules), optionally filtered by type or by words in the id/title/aliases.",
       schema: z.object({
         type: typeEnum.optional().describe('Only files of this type'),
         filter: z.string().max(200).optional().describe('Words that must appear in path, id, title or aliases'),
       }),
-      async execute(input) {
+      async execute(input, ctx) {
         const filter = input.filter?.toLowerCase().split(/\s+/).filter(Boolean) ?? [];
         const entries = (await knowledge.list()).filter(
           (e) =>
             (!input.type || e.type === input.type) &&
             filter.every((w) => [e.path, e.id, e.title, ...e.aliases].join(' ').toLowerCase().includes(w)),
         );
-        return { content: json({ count: entries.length, files: entries.map(brief) }), summary: `${entries.length} file` };
+        return {
+          content: json({ count: entries.length, files: entries.map(brief) }),
+          summary: t(taskLang(ctx), 'tool.knowledge.files', { n: entries.length }),
+        };
       },
     }),
     zodTool({
       name: 'search_knowledge',
-      displayName: 'Cari knowledge',
+      displayName: { id: 'Cari knowledge', en: 'Searching knowledge' },
       description:
         'Keyword search over the knowledge base. Returns the best files with matching lines (line numbers) - then read the relevant files with read_knowledge.',
       schema: z.object({
@@ -175,32 +195,39 @@ export function createKnowledgeTools(knowledge: KnowledgeStore, artifacts?: Arti
         type: typeEnum.optional(),
         limit: z.number().int().min(1).max(20).default(8),
       }),
-      async execute(input) {
+      async execute(input, ctx) {
         const hits = await knowledge.search(input.query, { type: input.type as KnowledgeEntry['type'] | undefined, limit: input.limit });
         return {
           content: hits.length
             ? json(hits.map((h) => ({ ...brief(h.entry), score: h.score, matches: h.snippets })))
             : `No knowledge file matches "${input.query}". If the request depends on it, record an assumption or open issue instead of inventing facts.`,
-          summary: `${hits.length} hasil untuk "${input.query.slice(0, 40)}"`,
+          summary: t(taskLang(ctx), 'tool.knowledge.results', { n: hits.length, query: input.query.slice(0, 40) }),
         };
       },
     }),
     zodTool({
       name: 'read_knowledge',
-      displayName: 'Baca knowledge',
+      displayName: { id: 'Baca knowledge', en: 'Reading knowledge' },
       description: `Read a knowledge base file by path (from list_knowledge / search_knowledge). Long files come in chunks of ${READ_CHUNK} characters: call again with next_offset.`,
       schema: z.object({
         path: z.string().min(1).max(300),
         offset: z.number().int().min(0).default(0),
       }),
-      async execute(input) {
+      async execute(input, ctx) {
+        const lang = taskLang(ctx);
         let file;
         try {
           file = await knowledge.read(input.path);
         } catch (err) {
-          return { isError: true, content: err instanceof Error ? err.message : String(err), summary: 'path tidak valid' };
+          return { isError: true, content: err instanceof Error ? err.message : String(err), summary: t(lang, 'tool.knowledge.invalidPath') };
         }
-        if (!file) return { isError: true, content: `Knowledge file "${input.path}" not found. Use list_knowledge to see the available files.`, summary: 'tidak ditemukan' };
+        if (!file) {
+          return {
+            isError: true,
+            content: `Knowledge file "${input.path}" not found. Use list_knowledge to see the available files.`,
+            summary: t(lang, 'tool.notFound'),
+          };
+        }
         const chunk = file.content.slice(input.offset, input.offset + READ_CHUNK);
         const end = input.offset + chunk.length;
         const more = end < file.content.length;
@@ -212,7 +239,7 @@ export function createKnowledgeTools(knowledge: KnowledgeStore, artifacts?: Arti
     }),
     zodTool({
       name: 'save_knowledge',
-      displayName: 'Simpan knowledge',
+      displayName: { id: 'Simpan knowledge', en: 'Saving knowledge' },
       description: [
         'Create or update a Markdown file in the knowledge base (the user approves every write).',
         'Use it only when the user asks to register or update knowledge, e.g. a system, integration, standard or document structure.',
@@ -228,14 +255,15 @@ export function createKnowledgeTools(knowledge: KnowledgeStore, artifacts?: Arti
         ...metaFields,
         content: z.string().min(1).max(500_000).describe('Markdown body of the file'),
       }),
-      confirmation: async (input) => {
+      confirmation: async (input, lang) => {
         const path = savePathOf({ path: input.path, meta: metaOf(input), content: input.content });
         const text = composeKnowledgeFile(input.content, metaOf(input));
-        return ask(input, await writeApproval(knowledge, path, `${input.type}${input.title ? ` "${input.title}"` : ''}`, input.overwrite, text));
+        return ask(input, await writeApproval(knowledge, path, `${input.type}${input.title ? ` "${input.title}"` : ''}`, input.overwrite, text, lang));
       },
       // the whole file the user approves, shown as text instead of the shortened tool input
       confirmationPreview: async (input) => composeKnowledgeFile(input.content, metaOf(input)),
-      async execute(input) {
+      async execute(input, ctx) {
+        const lang = taskLang(ctx);
         const dryRun = !asked.has(input);
         try {
           const result = await saveKnowledgeFile(knowledge, {
@@ -247,9 +275,9 @@ export function createKnowledgeTools(knowledge: KnowledgeStore, artifacts?: Arti
             dryRun,
             approvedState: asked.get(input),
           });
-          return dryRun ? STATE_CHANGED : saved(result);
+          return dryRun ? stateChanged(lang) : saved(result, lang);
         } catch (err) {
-          return refused(err);
+          return refused(err, lang);
         }
       },
     }),
@@ -262,7 +290,7 @@ export function createKnowledgeTools(knowledge: KnowledgeStore, artifacts?: Arti
     tools.push(
       zodTool({
         name: 'import_artifact_to_knowledge',
-        displayName: 'Simpan artefak ke knowledge',
+        displayName: { id: 'Simpan artefak ke knowledge', en: 'Saving artifact to knowledge' },
         description: [
           'Save a Markdown artifact (from this or a previous task, e.g. the .md file of a TSD) as a knowledge base file, so later tasks use it.',
           'Generated artifacts are NOT knowledge until saved with this tool. The user approves every write.',
@@ -273,7 +301,7 @@ export function createKnowledgeTools(knowledge: KnowledgeStore, artifacts?: Arti
           path: pathField.optional().describe('e.g. systems/AD1GATE.md (default: <type folder>/<artifact name>)'),
           ...metaFields,
         }),
-        confirmation: async (input) => {
+        confirmation: async (input, lang) => {
           // an unknown or non-Markdown artifact is refused in execute, before anything is written
           const artifact = await markdownArtifact(artifacts, input.artifact_id).catch(() => null);
           if (!artifact) return null;
@@ -286,14 +314,17 @@ export function createKnowledgeTools(knowledge: KnowledgeStore, artifacts?: Arti
           }
           const text = await artifactFile(artifact, input).catch(() => null);
           if (text === null) return null;
-          return ask(input, await writeApproval(knowledge, normalized, `artefak ${artifact.name}`, input.overwrite, text));
+          const what = t(lang, 'confirm.knowledge.artifact', { name: artifact.name });
+          return ask(input, await writeApproval(knowledge, normalized, what, input.overwrite, text, lang));
         },
         // the artifact and the whole file the user approves (the tool input itself only carries the artifact id)
-        confirmationPreview: async (input) => {
+        confirmationPreview: async (input, lang) => {
           const artifact = await markdownArtifact(artifacts, input.artifact_id);
-          return `Artefak ${artifact.name} (${artifact.id}, task ${artifact.taskId}, ${artifact.createdAt}):\n\n${await artifactFile(artifact, input)}`;
+          const heading = t(lang, 'confirm.knowledge.artifactPreview', { name: artifact.name, id: artifact.id, task: artifact.taskId, created: artifact.createdAt });
+          return `${heading}\n\n${await artifactFile(artifact, input)}`;
         },
-        async execute(input) {
+        async execute(input, ctx) {
+          const lang = taskLang(ctx);
           const dryRun = !asked.has(input);
           try {
             const result = await importArtifactToKnowledge(knowledge, artifacts, {
@@ -305,9 +336,9 @@ export function createKnowledgeTools(knowledge: KnowledgeStore, artifacts?: Arti
               dryRun,
               approvedState: asked.get(input),
             });
-            return dryRun ? STATE_CHANGED : saved(result, { source_artifact: { id: result.artifact.id, name: result.artifact.name } });
+            return dryRun ? stateChanged(lang) : saved(result, lang, { source_artifact: { id: result.artifact.id, name: result.artifact.name } });
           } catch (err) {
-            return refused(err);
+            return refused(err, lang);
           }
         },
       }),

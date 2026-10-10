@@ -1,5 +1,6 @@
 import gsap from 'gsap';
 import * as THREE from 'three';
+import { subscribeLang, t } from '../lib/i18n';
 import { characterInfo, type CharacterId } from './characters';
 import type { CharacterState, Rig } from './rig';
 
@@ -65,11 +66,13 @@ export class CharacterScene {
   private blinkCall: gsap.core.Tween | null = null;
   private state: CharacterState = 'idle';
   private disposed = false;
+  /** Stops re-labelling the canvas on language switches. */
+  private readonly unsubscribeLang: () => void;
   onClick: (() => void) | null = null;
 
   constructor(
     private readonly container: HTMLElement,
-    character: CharacterId,
+    private readonly character: CharacterId,
   ) {
     this.reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'low-power' });
@@ -88,7 +91,9 @@ export class CharacterScene {
 
     this.scene.add(this.root);
     this.rig = characterInfo(character).build(this.root);
-    this.renderer.domElement.setAttribute('aria-label', this.rig.label);
+    // the accessible description follows the interface language
+    this.applyLabel();
+    this.unsubscribeLang = subscribeLang(this.applyLabel);
 
     // thinking dots & state badges above the head
     const { x: ox, y: oy } = this.rig.overhead;
@@ -136,6 +141,10 @@ export class CharacterScene {
     this.setState('idle', true);
     this.renderer.setAnimationLoop(this.tick);
   }
+
+  private readonly applyLabel = () => {
+    this.renderer.domElement.setAttribute('aria-label', t().character.characters[this.character].sceneLabel);
+  };
 
   /** Resting height of the i-th thinking dot (head space). */
   private dotBaseY(i: number): number {
@@ -394,6 +403,7 @@ export class CharacterScene {
 
   dispose(): void {
     this.disposed = true;
+    this.unsubscribeLang();
     this.stateTl?.kill();
     this.breathTl?.kill();
     this.blinkCall?.kill();

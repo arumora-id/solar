@@ -114,6 +114,5 @@ export function buildMochi(parent: THREE.Object3D): Rig {
     breath: { x: 1.02, y: 0.975 },
     frame: { height: 3.7, width: 3.5 },
     pickables: kit.pickables,
-    label: 'SOLAR AI AGENT sebagai Mochi, kue mochi merah muda berkacamata',
   };
 }

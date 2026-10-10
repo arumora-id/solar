@@ -2,6 +2,7 @@
  * PowerPoint (.pptx) → Markdown: slides in presentation order with their title, text (bullets kept), tables, chart
  * data, SmartArt text, image descriptions and speaker notes. Parts are read through the guarded ZIP reader.
  */
+import { t, type Lang } from '../i18n.js';
 import { fmtInt, MB, mdCell, mdTable, yieldToLoop } from './limits.js';
 import { DocumentError, documentError, type ParseContext, type ParsedDocument } from './types.js';
 import { attrNS, descendants, kid, kids, parseXml, path, textContent, type XmlElement } from './xml.js';
@@ -11,11 +12,11 @@ const RELATIONSHIPS_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/
 /** Tree-parsed parts stay modest; a single slide is rarely more than a few hundred KB. */
 const MAX_PART_BYTES = 16 * MB;
 
-function parsePart(xml: string, label: string): XmlElement {
+function parsePart(xml: string, label: string, lang: Lang): XmlElement {
   try {
     return parseXml(xml);
   } catch {
-    throw documentError('CORRUPT', `Presentasi rusak (bagian ${label} tidak bisa dibaca).`);
+    throw documentError('CORRUPT', t(lang, 'doc.pptx.badPart', { part: label }));
   }
 }
 
@@ -82,7 +83,7 @@ const MAX_TABLE_ROWS = 1000;
 const MAX_TABLE_COLUMNS = 50;
 const MAX_CHART_SERIES = 50;
 
-function tableToMarkdown(tbl: XmlElement, maxCellChars: number, cuts: Cuts): string {
+function tableToMarkdown(tbl: XmlElement, maxCellChars: number, cuts: Cuts, lang: Lang): string {
   const trs = kids(tbl, 'tr');
   let cut = trs.length > MAX_TABLE_ROWS;
   const rows = trs.slice(0, MAX_TABLE_ROWS).map((tr) => {
@@ -97,13 +98,13 @@ function tableToMarkdown(tbl: XmlElement, maxCellChars: number, cuts: Cuts): str
     });
   });
   if (cut) cuts.tables += 1;
-  return rows.length ? mdTable(rows) + (cut ? `\n\n_(tabel dipotong: maksimal ${MAX_TABLE_ROWS} baris × ${MAX_TABLE_COLUMNS} kolom)_` : '') : '';
+  return rows.length ? mdTable(rows) + (cut ? `\n\n${t(lang, 'doc.pptx.tableCutNote', { rows: MAX_TABLE_ROWS, columns: MAX_TABLE_COLUMNS })}` : '') : '';
 }
 
 async function chartToMarkdown(zip: ZipArchive, chartPath: string, cuts: Cuts): Promise<string> {
   const xml = zip.text(chartPath, MAX_PART_BYTES);
   if (!xml) return '';
-  const root = parsePart(xml, chartPath);
+  const root = parsePart(xml, chartPath, zip.lang);
   // the chart's own title (c:chart/c:title), not an axis title
   const titleEl = path(root, 'chart', 'title');
   const title = titleEl ? descendants(titleEl, 't').map(textContent).join('').trim() : '';
@@ -138,13 +139,13 @@ async function chartToMarkdown(zip: ZipArchive, chartPath: string, cuts: Cuts): 
 const SKIPPED_PLACEHOLDERS = new Set(['sldNum', 'dt', 'ftr', 'hdr', 'sldImg']);
 
 export async function extractPptx(ctx: ParseContext, zip: ZipArchive, pkg: OoxmlPackage): Promise<ParsedDocument> {
-  const { limits, deadline, warnings, maxChars } = ctx;
+  const { limits, deadline, warnings, maxChars, lang } = ctx;
   const cuts: Cuts = { cells: 0, tables: 0, charts: 0 };
   const presPath = pkg.mainPart;
   const presXml = zip.text(presPath, MAX_PART_BYTES);
-  if (!presXml) throw documentError('CORRUPT', 'File bukan presentasi PowerPoint yang valid (ppt/presentation.xml tidak ada).');
+  if (!presXml) throw documentError('CORRUPT', t(lang, 'doc.pptx.invalid'));
   const presRels = new Map(parseRels(zip.text(relsPathOf(presPath), 4 * MB)).map((r) => [r.id, r]));
-  const presRoot = parsePart(presXml, presPath);
+  const presRoot = parsePart(presXml, presPath, lang);
   const slidePaths: string[] = [];
   for (const s of kids(path(presRoot, 'sldIdLst'), 'sldId')) {
     const rel = presRels.get(relAttr(s, presRoot, 'id'));
@@ -152,7 +153,7 @@ export async function extractPptx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
   }
   const total = slidePaths.length;
   const limit = Math.min(total, limits.maxSlides);
-  if (total > limit) warnings.push(`Presentasi dipotong: hanya ${fmtInt(limit)} dari ${fmtInt(total)} slide pertama yang dibaca.`);
+  if (total > limit) warnings.push(t(lang, 'doc.pptx.slideLimit', { limit: fmtInt(limit, lang), total: fmtInt(total, lang) }));
   const parts: string[] = [];
   let chars = 0;
   let emptySlides = 0;
@@ -164,10 +165,10 @@ export async function extractPptx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
     read += 1;
     const xml = zip.text(slidePath, MAX_PART_BYTES);
     if (!xml) {
-      parts.push(`## Slide ${i + 1}\n\n_(bagian slide tidak ada)_`);
+      parts.push(`## Slide ${i + 1}\n\n${t(lang, 'doc.pptx.slideMissingNote')}`);
       continue;
     }
-    const root = parsePart(xml, slidePath);
+    const root = parsePart(xml, slidePath, lang);
     const slideRels = new Map<string, Relationship>(parseRels(zip.text(relsPathOf(slidePath), 4 * MB)).map((r) => [r.id, r]));
     const hidden = root.attrs.show === '0';
     let title = '';
@@ -197,8 +198,8 @@ export async function extractPptx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
       const uri = gd.attrs.uri ?? '';
       const tbl = kid(gd, 'tbl');
       if (tbl) {
-        const t = tableToMarkdown(tbl, limits.maxCellChars, cuts);
-        if (t) blocks.push(t);
+        const table = tableToMarkdown(tbl, limits.maxCellChars, cuts, lang);
+        if (table) blocks.push(table);
         return;
       }
       if (/\/chart$/.test(uri)) {
@@ -219,7 +220,7 @@ export async function extractPptx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
         const rel = ids ? slideRels.get(relAttr(ids, root, 'dm')) : undefined;
         const dataXml = rel ? zip.text(resolvePart(dirOf(slidePath), rel.target), MAX_PART_BYTES) : null;
         if (!dataXml) return;
-        const items = descendants(parsePart(dataXml, 'SmartArt'), 'pt')
+        const items = descendants(parsePart(dataXml, 'SmartArt', lang), 'pt')
           .map((pt) => {
             const t = kid(pt, 't');
             return t ? kids(t, 'p').map(paragraphText).join(' ').trim() : '';
@@ -265,7 +266,7 @@ export async function extractPptx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
       const notesXml = zip.text(notesPath, MAX_PART_BYTES);
       if (notesXml) {
         const texts: string[] = [];
-        for (const shape of descendants(parsePart(notesXml, notesPath), 'sp')) {
+        for (const shape of descendants(parsePart(notesXml, notesPath, lang), 'sp')) {
           const ph = path(shape, 'nvSpPr', 'nvPr', 'ph');
           if (!ph || (ph.attrs.type || 'obj') !== 'body') continue;
           const tx = kid(shape, 'txBody');
@@ -282,16 +283,18 @@ export async function extractPptx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
     parts.push(section);
     chars += section.length;
     if (chars > maxChars && i + 1 < total) {
-      warnings.push(`Presentasi dipotong setelah slide ${i + 1} dari ${total} (batas ${fmtInt(maxChars)} karakter).`);
+      warnings.push(t(lang, 'doc.pptx.cutAfter', { slide: i + 1, total, max: fmtInt(maxChars, lang) }));
       break;
     }
     if (i % 20 === 19) await yieldToLoop();
   }
-  if (total === 0) warnings.push('Presentasi tidak berisi slide.');
-  else if (read > 0 && emptySlides === read) warnings.push('Tidak ada teks di slide mana pun (presentasi berisi gambar saja?).');
-  if (cuts.tables) warnings.push(`${cuts.tables} tabel lebih besar dari ${MAX_TABLE_ROWS} baris × ${MAX_TABLE_COLUMNS} kolom dan dipotong.`);
-  if (cuts.charts) warnings.push(`${cuts.charts} grafik berisi lebih dari ${MAX_CHART_SERIES} seri atau 200 kategori; hanya bagian awalnya yang dibaca.`);
-  if (cuts.cells) warnings.push(`${fmtInt(cuts.cells)} sel tabel berisi lebih dari ${fmtInt(limits.maxCellChars)} karakter dan dipotong.`);
-  if (/macroenabled/i.test(pkg.mainType)) warnings.push('Presentasi berisi makro; makro diabaikan (tidak pernah dijalankan).');
+  if (total === 0) warnings.push(t(lang, 'doc.pptx.noSlides'));
+  else if (read > 0 && emptySlides === read) warnings.push(t(lang, 'doc.pptx.noText'));
+  if (cuts.tables) warnings.push(t(lang, 'doc.pptx.tablesCut', { n: cuts.tables, rows: MAX_TABLE_ROWS, columns: MAX_TABLE_COLUMNS }));
+  if (cuts.charts) warnings.push(t(lang, 'doc.pptx.chartsCut', { n: cuts.charts, series: MAX_CHART_SERIES }));
+  if (cuts.cells) {
+    warnings.push(t(lang, 'doc.pptx.cellsCut', { n: fmtInt(cuts.cells, lang), cells: cuts.cells, max: fmtInt(limits.maxCellChars, lang) }));
+  }
+  if (/macroenabled/i.test(pkg.mainType)) warnings.push(t(lang, 'doc.pptx.macros'));
   return { kind: 'pptx', markdown: parts.join('\n\n'), parts: total };
 }

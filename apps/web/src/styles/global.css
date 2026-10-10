@@ -279,6 +279,52 @@ a {
 .conn.on i {
   background: var(--good);
 }
+/* interface language switch "ID | EN" in the top bar */
+.lang-switch {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px;
+  background: var(--surface);
+}
+.lang-switch button {
+  min-width: 34px;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--ink-3);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+}
+.lang-switch button + button {
+  position: relative;
+}
+.lang-switch button + button::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 7px;
+  bottom: 7px;
+  width: 1px;
+  background: var(--line);
+}
+.lang-switch button:hover {
+  color: var(--ink);
+}
+.lang-switch button[aria-pressed='true'] {
+  background: var(--accent-wash);
+  color: var(--accent);
+}
+.lang-switch button[aria-pressed='true']::before,
+.lang-switch button[aria-pressed='true'] + button::before {
+  display: none;
+}
 
 /* ---- agent page ------------------------------------------------------------ */
 .agent-page {
@@ -1540,11 +1586,32 @@ button.att-open:hover .att-name {
 
 /* the install button only appears while the browser offers installing: it must not push the top bar past the
    viewport between the phone layout and a full-width window (two rules: a browser without :has() keeps the first) */
-@media (max-width: 960px) {
+@media (max-width: 1060px) {
   .topbar .install .label-wide {
     display: none;
   }
   .topbar:has(.install) .brand small {
+    display: none;
+  }
+}
+
+/* the top bar also holds the language switch: as the window narrows, the tagline, then the button labels (the
+   buttons keep their aria-labels), then the connection text (its dot stays) give way before anything wraps */
+.brand {
+  white-space: nowrap;
+}
+@media (max-width: 900px) {
+  .topbar .brand small {
+    display: none;
+  }
+}
+@media (max-width: 800px) {
+  .topbar .label-wide {
+    display: none;
+  }
+}
+@media (max-width: 700px) {
+  .topbar .conn span {
     display: none;
   }
 }

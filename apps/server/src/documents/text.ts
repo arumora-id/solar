@@ -1,4 +1,5 @@
 /** Text-based formats: Markdown, plain text and CSV. */
+import { DEFAULT_LANG, fmtInt, t, type Lang } from '../i18n.js';
 import { documentError } from './types.js';
 
 // Windows-1252 differs from Latin-1 in 0x80-0x9F (curly quotes, dashes, €, ...). Node's TextDecoder('windows-1252')
@@ -32,7 +33,7 @@ function utf16WithoutBom(probe: Uint8Array): 'utf-16le' | 'utf-16be' | null {
  * Decodes text files: UTF-8 (with or without BOM), UTF-16 (with a BOM, or recognised without one), otherwise
  * Windows-1252 (e.g. an ANSI export from Excel).
  */
-export function decodeText(buffer: Buffer): string {
+export function decodeText(buffer: Buffer, lang: Lang = DEFAULT_LANG): string {
   if (buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
     return new TextDecoder('utf-8').decode(buffer.subarray(3));
   }
@@ -46,7 +47,7 @@ export function decodeText(buffer: Buffer): string {
   let nul = 0;
   for (const byte of probe) if (byte === 0) nul += 1;
   if (nul > Math.max(1, probe.length / 1000)) {
-    throw documentError('UNSUPPORTED', 'File ini tampaknya file biner, bukan teks. Lampirkan PDF, Word, Excel, PowerPoint, Markdown, CSV atau teks biasa.');
+    throw documentError('UNSUPPORTED', t(lang, 'doc.text.binary'));
   }
   try {
     return strictUtf8.decode(buffer);
@@ -179,17 +180,17 @@ export function parseCsv(text: string): string[][] {
 export const MAX_TABLE_ROWS = 2000;
 export const MAX_TABLE_COLUMNS = 60;
 
-/** CSV → Markdown table, capped to a sane size for the model. */
-export function csvToMarkdown(text: string, title: string): { markdown: string; warnings: string[] } {
+/** CSV → Markdown table, capped to a sane size for the model; warnings and notes in `lang`. */
+export function csvToMarkdown(text: string, title: string, lang: Lang = DEFAULT_LANG): { markdown: string; warnings: string[] } {
   const warnings: string[] = [];
   const parsed = parseCsvLimited(text, MAX_TABLE_ROWS + 1);
   let rows = parsed.rows;
-  if (rows.length === 0) return { markdown: `# ${title}\n\n_(file CSV kosong)_`, warnings: ['File CSV kosong.'] };
-  if (parsed.truncated) warnings.push(`CSV berisi lebih dari ${MAX_TABLE_ROWS} baris data; hanya ${MAX_TABLE_ROWS} baris pertama yang dibaca.`);
+  if (rows.length === 0) return { markdown: `# ${title}\n\n${t(lang, 'doc.csv.emptyNote')}`, warnings: [t(lang, 'doc.csv.empty')] };
+  if (parsed.truncated) warnings.push(t(lang, 'doc.csv.rows', { max: MAX_TABLE_ROWS }));
   let width = 0;
   for (const r of rows) if (r.length > width) width = r.length;
   if (width > MAX_TABLE_COLUMNS) {
-    warnings.push(`CSV berisi ${width} kolom; hanya ${MAX_TABLE_COLUMNS} kolom pertama yang dibaca.`);
+    warnings.push(t(lang, 'doc.csv.columns', { width, max: MAX_TABLE_COLUMNS }));
     rows = rows.map((r) => r.slice(0, MAX_TABLE_COLUMNS));
   }
   let cut = 0;
@@ -201,6 +202,6 @@ export function csvToMarkdown(text: string, title: string): { markdown: string; 
     rows = rows.slice(1);
   }
   const table = markdownTable(rows, onCut);
-  if (cut) warnings.push(`${cut.toLocaleString('id-ID')} sel CSV berisi lebih dari ${MAX_CELL_CHARS.toLocaleString('id-ID')} karakter dan dipotong.`);
+  if (cut) warnings.push(t(lang, 'doc.csv.cells', { n: fmtInt(cut, lang), cells: cut, max: fmtInt(MAX_CELL_CHARS, lang) }));
   return { markdown: [`# ${title}`, ...captions, table].join('\n\n'), warnings };
 }

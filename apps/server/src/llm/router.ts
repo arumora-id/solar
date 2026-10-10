@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import type { LlmModelConfig, LlmTestResult } from '@solar/shared';
 import { capabilitiesOf, type ModelCapabilities } from '../agent/models.js';
 import { APP_SLUG, APP_VERSION, type AppConfig } from '../config.js';
+import { DEFAULT_LANG, t, type Lang } from '../i18n.js';
 import { chatApiOf, createChatClient, type ChatCompletionsApi } from './chatClient.js';
 import { toLlmError } from './errors.js';
 import { DEFAULT_ROUTE, ENV_PROVIDER_ID, splitRouteEntry, type LlmProviderStore, type ResolvedProvider } from './providerStore.js';
@@ -85,7 +86,8 @@ export class ModelRouter {
     return client;
   }
 
-  clientsFor(route = DEFAULT_ROUTE): { clients: ModelClient[]; warnings: string[] } {
+  /** `lang`: language of the warnings and of the clients' error messages (the task's). */
+  clientsFor(route = DEFAULT_ROUTE, lang: Lang = DEFAULT_LANG): { clients: ModelClient[]; warnings: string[] } {
     const { config, store } = this.deps;
     const clients: ModelClient[] = [];
     const warnings: string[] = [];
@@ -93,11 +95,11 @@ export class ModelRouter {
       const { providerId, model } = splitRouteEntry(entry);
       const p = store.resolve(providerId);
       if (!p) {
-        warnings.push(`Provider "${providerId}" untuk ${entry} tidak ditemukan; dilewati.`);
+        warnings.push(t(lang, 'llm.route.providerMissing', { provider: providerId, entry }));
         continue;
       }
       if (!p.config.enabled) {
-        warnings.push(`Provider "${p.config.name}" nonaktif; ${entry} dilewati.`);
+        warnings.push(t(lang, 'llm.route.providerDisabled', { provider: p.config.name, entry }));
         continue;
       }
       const env = p.source === 'env';
@@ -107,14 +109,14 @@ export class ModelRouter {
       const name = p.config.name;
 
       if (p.missingVars.length) {
-        warnings.push(`Provider "${name}": variabel ${p.missingVars.join(', ')} belum diisi.`);
+        warnings.push(t(lang, 'llm.route.missingVars', { provider: name, vars: p.missingVars.join(', ') }));
       }
       if (env && !p.apiKey && !this.deps.envStreamer) {
-        clients.push(brokenClient(entry, providerId, name, model, 'OPENAI_API_KEY belum diisi: isi API key OpenAI di .env (lihat README) lalu restart SOLAR AI AGENT.'));
+        clients.push(brokenClient(entry, providerId, name, model, t(lang, 'llm.route.envKeyMissing')));
         continue;
       }
       if (!env && !p.apiKey && !p.baseUrl && !this.deps.chatApis?.[providerId]) {
-        clients.push(brokenClient(entry, providerId, name, model, `Provider "${name}" belum punya API key atau base URL (Pengaturan → Model AI).`));
+        clients.push(brokenClient(entry, providerId, name, model, t(lang, 'llm.route.noKeyOrUrl', { provider: name })));
         continue;
       }
 
@@ -132,6 +134,7 @@ export class ModelRouter {
             effort: override?.effort ?? config.openai.effort,
             envProvider: env,
             streamer,
+            lang,
           }),
         );
       } else {
@@ -148,6 +151,7 @@ export class ModelRouter {
             maxTokensParam: p.config.maxTokensParam ?? (isOpenAIHost ? 'max_completion_tokens' : 'max_tokens'),
             vision: p.config.vision ?? true,
             api: this.deps.chatApis?.[providerId] ?? chatApiOf(this.sdk(p)),
+            lang,
           }),
         );
       }
@@ -155,11 +159,11 @@ export class ModelRouter {
     return { clients, warnings };
   }
 
-  /** Checks a provider by listing its models (GET /models). */
-  async test(providerId: string): Promise<LlmTestResult> {
+  /** Checks a provider by listing its models (GET /models); the error is in `lang` (the request's). */
+  async test(providerId: string, lang: Lang = DEFAULT_LANG): Promise<LlmTestResult> {
     const p = this.deps.store.resolve(providerId);
-    if (!p) return { ok: false, error: `Provider "${providerId}" tidak ditemukan` };
-    if (p.source === 'env' && !p.apiKey) return { ok: false, error: 'OPENAI_API_KEY belum diisi di .env' };
+    if (!p) return { ok: false, error: t(lang, 'llm.test.notFound', { provider: providerId }) };
+    if (p.source === 'env' && !p.apiKey) return { ok: false, error: t(lang, 'llm.test.envKeyMissing') };
     try {
       const models: string[] = [];
       for await (const m of this.sdk(p).models.list({ timeout: 20_000, maxRetries: 0 })) {
@@ -168,7 +172,7 @@ export class ModelRouter {
       }
       return { ok: true, models: models.sort() };
     } catch (err) {
-      const mapped = toLlmError(err, p.config.name, '-', p.source === 'env');
+      const mapped = toLlmError(err, p.config.name, '-', p.source === 'env', lang);
       return { ok: false, error: mapped instanceof Error ? mapped.message : String(mapped) };
     }
   }

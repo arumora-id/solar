@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { KnowledgeEntry, KnowledgeType } from '@solar/shared';
 import { api, type SheetPreview } from '../../lib/api';
-import { TYPE_LABEL, TYPES } from '../../lib/knowledgeTypes';
+import { useT, type Dict } from '../../lib/i18n';
+import { TYPES } from '../../lib/knowledgeTypes';
 import { useSolar } from '../../lib/store';
 import { PlusIcon } from '../Icons';
+import { messageText, type Message } from './richText';
 
+
+/** Status values (of the user's data, in English or Indonesian) meaning a system is no longer in use. */
 const RETIRED = /^(sunset|retired?|retiring|decommission(ed)?|deprecated|inactive|obsolete|phase[- ]?out|end[- ]of[- ]life|eol|tidak aktif|non[- ]?aktif|pensiun|dihentikan)$/i;
 
 const isGuide = (path: string) => path.split('/').some((s) => s.startsWith('_')) || /^readme\.md$/i.test(path);
@@ -38,28 +42,29 @@ interface DocWizard {
   removeStale: boolean;
 }
 
-const NEW_FILE = `---
-id: NAMA
-type: system
-title: Nama lengkap
-aliases: []
-status: active
----
+/** An error whose text is in the dictionary, so it is shown in the current language. */
+class MessageError extends Error {
+  readonly text: (t: Dict) => string;
+  constructor(text: (t: Dict) => string) {
+    super('');
+    this.text = text;
+  }
+}
 
-# Nama lengkap
-
-Ringkasan.
-`;
+/** Group key: a knowledge type, or the guides and templates (listed last). */
+type GroupKey = KnowledgeType | 'guides';
 
 export function KnowledgePanel() {
+  const t = useT();
+  const words = t.settings.knowledge;
   const [entries, setEntries] = useState<KnowledgeEntry[]>([]);
   const [filter, setFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState<KnowledgeType | ''>('');
   const [editor, setEditor] = useState<Editor | null>(null);
   const [table, setTable] = useState<TableWizard | null>(null);
   const [doc, setDoc] = useState<DocWizard | null>(null);
-  const [notice, setNotice] = useState('');
-  const [error, setError] = useState('');
+  const [notice, setNotice] = useState<Message>('');
+  const [error, setError] = useState<Message>('');
   const [busy, setBusy] = useState(false);
   const { reloadConfig } = useSolar();
 
@@ -76,17 +81,19 @@ export function KnowledgePanel() {
     void load();
   }, [load]);
 
-  const run = async (op: () => Promise<string | void>) => {
+  const run = async (op: () => Promise<Message | void>) => {
     setBusy(true);
     setError('');
     setNotice('');
     try {
       const message = await op();
-      if (message) setNotice(message);
+      // a function is a state updater for React: wrap the message
+      if (message) setNotice(() => message);
       await load();
       return true;
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const message: Message = e instanceof MessageError ? e.text : e instanceof Error ? e.message : String(e);
+      setError(() => message);
       return false;
     } finally {
       setBusy(false);
@@ -102,14 +109,18 @@ export function KnowledgePanel() {
     );
   }, [entries, filter, typeFilter]);
 
+  const groupLabel = (key: GroupKey) => (key === 'guides' ? words.guides : t.artifacts.knowledgeType[key]);
+
+  // sorted by the label in the current language, guides last
   const groups = useMemo(() => {
-    const out = new Map<string, KnowledgeEntry[]>();
+    const out = new Map<GroupKey, KnowledgeEntry[]>();
     for (const e of shown) {
-      const key = isGuide(e.path) ? 'Panduan & template (tidak dibaca agent)' : TYPE_LABEL[e.type];
+      const key: GroupKey = isGuide(e.path) ? 'guides' : e.type;
       out.set(key, [...(out.get(key) ?? []), e]);
     }
-    return [...out.entries()].sort(([a], [b]) => (a.startsWith('Panduan') ? 1 : b.startsWith('Panduan') ? -1 : a.localeCompare(b)));
-  }, [shown]);
+    const label = (key: GroupKey) => (key === 'guides' ? '' : t.artifacts.knowledgeType[key]);
+    return [...out.entries()].sort(([a], [b]) => (a === 'guides' ? 1 : b === 'guides' ? -1 : label(a).localeCompare(label(b))));
+  }, [shown, t]);
 
   const open = async (e: KnowledgeEntry) => {
     try {
@@ -132,12 +143,14 @@ export function KnowledgePanel() {
         }),
     );
     if (!list.length) {
-      setError('Tidak ada file .md yang dipilih.');
+      setError(() => (d: Dict) => d.settings.knowledge.noMarkdownPicked);
       return;
     }
     await run(async () => {
       const r = await api.importKnowledge(list);
-      return `${r.imported.length} file diimpor${r.failed.length ? `; gagal: ${r.failed.map((f) => `${f.path} (${f.error})`).join(', ')}` : ''}.`;
+      const failures = r.failed.map((f) => `${f.path} (${f.error})`).join(', ');
+      return (d: Dict) =>
+        failures ? d.settings.knowledge.importedWithFailures(r.imported.length, failures) : d.settings.knowledge.imported(r.imported.length);
     });
   };
 
@@ -145,7 +158,7 @@ export function KnowledgePanel() {
     await run(async () => {
       const sheets = await api.previewTables(file);
       const first = sheets.find((s) => s.headers.length) ?? sheets[0];
-      if (!first) throw new Error('File tidak berisi tabel.');
+      if (!first) throw new MessageError((d) => d.settings.knowledge.noTable);
       setTable({
         file,
         sheets,
@@ -166,20 +179,18 @@ export function KnowledgePanel() {
   return (
     <div>
       <p className="hint" style={{ marginTop: 0 }}>
-        Knowledge base berisi aturan dan fakta Anda (sistem, integrasi, standar ArchiMate, PlantUML, API, prinsip). Agent membaca file yang
-        relevan sebelum mendesain, dan isinya mengalahkan aturan bawaan. Registry besar (daftar sistem/API) cukup diimpor dari Excel: satu
-        file per baris, sehingga agent hanya membaca yang dibutuhkan.
+        {words.intro}
       </p>
       <div className="row" style={{ marginBottom: 12 }}>
-        <button type="button" className="btn primary small" onClick={() => setEditor({ path: 'systems/NAMA.md', content: NEW_FILE, isNew: true, source: null })}>
-          <PlusIcon size={16} /> File baru
+        <button type="button" className="btn primary small" onClick={() => setEditor({ path: words.template.path, content: words.template.content, isNew: true, source: null })}>
+          <PlusIcon size={16} /> {words.newFile}
         </button>
         <label className="btn small">
-          Impor .md
+          {words.importMarkdown}
           <input type="file" accept=".md,text/markdown" multiple hidden onChange={(e) => e.target.files && void importMarkdown(e.target.files).finally(() => (e.target.value = ''))} />
         </label>
         <label className="btn small">
-          Impor folder
+          {words.importFolder}
           <input
             type="file"
             hidden
@@ -189,7 +200,7 @@ export function KnowledgePanel() {
           />
         </label>
         <label className="btn small">
-          Impor Excel/CSV
+          {words.importTable}
           <input
             type="file"
             accept=".xlsx,.xlsm,.csv"
@@ -202,7 +213,7 @@ export function KnowledgePanel() {
           />
         </label>
         <label className="btn small">
-          Impor dokumen
+          {words.importDocument}
           <input
             type="file"
             accept=".docx,.pdf,.pptx,.md,.txt"
@@ -217,20 +228,20 @@ export function KnowledgePanel() {
       </div>
       {error && (
         <div className="error-box" style={{ marginBottom: 10 }}>
-          {error}
+          {messageText(error, t)}
         </div>
       )}
       {notice && (
         <div className="card" style={{ marginBottom: 10 }}>
-          {notice}
+          {messageText(notice, t)}
         </div>
       )}
 
       {table && (
         <div className="card">
-          <h4 style={{ marginTop: 0 }}>Impor tabel: {table.file.name}</h4>
+          <h4 style={{ marginTop: 0, overflowWrap: 'anywhere' }}>{words.table.title(table.file.name)}</h4>
           <label className="field">
-            <span>Sheet</span>
+            <span>{words.table.sheet}</span>
             <select
               className="select"
               value={table.sheet}
@@ -241,7 +252,7 @@ export function KnowledgePanel() {
             >
               {table.sheets.map((s) => (
                 <option key={s.name} value={s.name}>
-                  {s.name} ({s.rows} baris{s.truncated ? ', dipotong' : ''})
+                  {words.table.sheetOption(s.name, s.rows, s.truncated)}
                 </option>
               ))}
             </select>
@@ -249,23 +260,23 @@ export function KnowledgePanel() {
           {sheet?.truncated && (
             <p className="hint">
               {sheet.rows || sheet.headers.length
-                ? 'Sheet ini tidak terbaca utuh (terlalu banyak baris atau teks), jadi tidak bisa diimpor. Pecah file lalu impor tiap bagian.'
-                : 'Sheet ini tidak dibaca karena teks workbook sudah mencapai batas, jadi tidak bisa diimpor. Simpan sheet ini sebagai file terpisah lalu impor.'}
+                ? words.table.truncatedRows
+                : words.table.truncatedWorkbook}
             </p>
           )}
           {sheet && (
             <>
               {(
                 [
-                  ['idColumn', 'Kolom ID / nama file (wajib)'],
-                  ['titleColumn', 'Kolom nama lengkap'],
-                  ['statusColumn', 'Kolom status (active / sunset / retired)'],
+                  ['idColumn', words.table.idColumn],
+                  ['titleColumn', words.table.titleColumn],
+                  ['statusColumn', words.table.statusColumn],
                 ] as const
               ).map(([key, label]) => (
                 <label className="field" key={key}>
                   <span>{label}</span>
                   <select className="select" value={table[key]} onChange={(e) => setTable({ ...table, [key]: e.target.value })}>
-                    {key !== 'idColumn' && <option value="">(tidak ada)</option>}
+                    {key !== 'idColumn' && <option value="">{words.table.noColumn}</option>}
                     {sheet.headers.filter(Boolean).map((h) => (
                       <option key={h} value={h}>
                         {h}
@@ -275,7 +286,7 @@ export function KnowledgePanel() {
                 </label>
               ))}
               <div className="field">
-                <span>Kolom nama lain / alias (dicocokkan dengan nama di BRD)</span>
+                <span>{words.table.aliasColumns}</span>
                 <div className="row">
                   {sheet.headers.filter(Boolean).map((h) => (
                     <label className="toggle" key={h}>
@@ -291,20 +302,20 @@ export function KnowledgePanel() {
                   ))}
                 </div>
               </div>
-              {sheet.sample.length > 0 && <p className="hint">Contoh baris: {sheet.sample[0]!.filter(Boolean).slice(0, 5).join(' · ')}</p>}
+              {sheet.sample.length > 0 && <p className="hint">{words.table.sampleRow(sheet.sample[0]!.filter(Boolean).slice(0, 5).join(' · '))}</p>}
             </>
           )}
           <div className="row">
             <label className="field" style={{ flex: 1, minWidth: 140 }}>
-              <span>Folder tujuan</span>
+              <span>{words.targetFolder}</span>
               <input className="input" value={table.folder} onChange={(e) => setTable({ ...table, folder: e.target.value })} />
             </label>
             <label className="field" style={{ flex: 1, minWidth: 140 }}>
-              <span>Jenis</span>
+              <span>{t.common.type}</span>
               <select className="select" value={table.type} onChange={(e) => setTable({ ...table, type: e.target.value as KnowledgeType })}>
-                {TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {TYPE_LABEL[t]}
+                {TYPES.map((type) => (
+                  <option key={type} value={type}>
+                    {t.artifacts.knowledgeType[type]}
                   </option>
                 ))}
               </select>
@@ -312,7 +323,7 @@ export function KnowledgePanel() {
           </div>
           <label className="toggle" style={{ display: 'flex', marginBottom: 10 }}>
             <input type="checkbox" checked={table.removeStale} onChange={(e) => setTable({ ...table, removeStale: e.target.checked })} />
-            Hapus file dari impor sebelumnya (file & sheet yang sama) yang barisnya sudah tidak ada
+            {words.table.removeStale}
           </label>
           <div className="row">
             <button
@@ -333,16 +344,25 @@ export function KnowledgePanel() {
                     removeStale: table.removeStale,
                   });
                   setTable(null);
-                  return `${r.written.length} file ditulis ke ${table.folder}/ (indeks: ${r.index})${r.removed.length ? `, ${r.removed.length} file lama dihapus` : ''}${
-                    r.skipped.length ? `. Catatan: ${r.skipped.slice(0, 5).map((s) => `baris ${s.row}: ${s.reason}`).join('; ')}` : ''
-                  }.`;
+                  const folder = table.folder.trim();
+                  return (d: Dict) =>
+                    d.settings.knowledge.table.done(
+                      r.written.length,
+                      folder,
+                      r.index,
+                      r.removed.length,
+                      r.skipped
+                        .slice(0, 5)
+                        .map((s) => d.settings.knowledge.table.skippedRow(s.row, s.reason))
+                        .join('; '),
+                    );
                 })
               }
             >
-              Impor
+              {t.common.import}
             </button>
             <button type="button" className="btn small" onClick={() => setTable(null)}>
-              Batal
+              {t.common.cancel}
             </button>
           </div>
         </div>
@@ -350,38 +370,38 @@ export function KnowledgePanel() {
 
       {doc && (
         <div className="card">
-          <h4 style={{ marginTop: 0 }}>Impor dokumen: {doc.file.name}</h4>
+          <h4 style={{ marginTop: 0, overflowWrap: 'anywhere' }}>{words.document.title(doc.file.name)}</h4>
           <label className="field">
-            <span>Judul</span>
+            <span>{t.common.title}</span>
             <input className="input" value={doc.title} onChange={(e) => setDoc({ ...doc, title: e.target.value })} />
           </label>
           <div className="row">
             <label className="field" style={{ flex: 1, minWidth: 140 }}>
-              <span>Folder tujuan</span>
+              <span>{words.targetFolder}</span>
               <input className="input" value={doc.folder} onChange={(e) => setDoc({ ...doc, folder: e.target.value })} />
             </label>
             <label className="field" style={{ flex: 1, minWidth: 140 }}>
-              <span>Jenis</span>
+              <span>{t.common.type}</span>
               <select className="select" value={doc.type} onChange={(e) => setDoc({ ...doc, type: e.target.value as KnowledgeType })}>
-                {TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {TYPE_LABEL[t]}
+                {TYPES.map((type) => (
+                  <option key={type} value={type}>
+                    {t.artifacts.knowledgeType[type]}
                   </option>
                 ))}
               </select>
             </label>
           </div>
           <label className="field">
-            <span>Pecah dokumen</span>
+            <span>{words.document.split}</span>
             <select className="select" value={String(doc.split)} onChange={(e) => setDoc({ ...doc, split: e.target.value === 'none' ? 'none' : (Number(e.target.value) as 1 | 2) })}>
-              <option value="none">Tidak, simpan sebagai satu file</option>
-              <option value="1">Per bab (heading 1)</option>
-              <option value="2">Per bab dan sub-bab (heading 1-2)</option>
+              <option value="none">{words.document.splitNone}</option>
+              <option value="1">{words.document.splitChapters}</option>
+              <option value="2">{words.document.splitSections}</option>
             </select>
           </label>
           <label className="toggle" style={{ display: 'flex', marginBottom: 10 }}>
             <input type="checkbox" checked={doc.removeStale} onChange={(e) => setDoc({ ...doc, removeStale: e.target.checked })} />
-            Ganti hasil impor sebelumnya dari dokumen yang sama
+            {words.document.removeStale}
           </label>
           <div className="row">
             <button
@@ -392,14 +412,14 @@ export function KnowledgePanel() {
                 void run(async () => {
                   const r = await api.importDocument(doc.file, { folder: doc.folder.trim(), type: doc.type, split: doc.split, title: doc.title.trim() || undefined, removeStale: doc.removeStale });
                   setDoc(null);
-                  return `${r.written.length} file ditulis${r.removed.length ? `, ${r.removed.length} file lama dihapus` : ''}.${r.warnings.length ? ` Catatan: ${r.warnings.join(' ')}` : ''}`;
+                  return (d: Dict) => d.settings.knowledge.document.done(r.written.length, r.removed.length, r.warnings.join(' '));
                 })
               }
             >
-              Impor
+              {t.common.import}
             </button>
             <button type="button" className="btn small" onClick={() => setDoc(null)}>
-              Batal
+              {t.common.cancel}
             </button>
           </div>
         </div>
@@ -407,16 +427,16 @@ export function KnowledgePanel() {
 
       {editor && (
         <div className="card">
-          <h4 style={{ marginTop: 0 }}>{editor.isNew ? 'File baru' : `Edit: ${editor.path}`}</h4>
+          <h4 style={{ marginTop: 0, overflowWrap: 'anywhere' }}>{editor.isNew ? words.newFile : words.editor.edit(editor.path)}</h4>
           {editor.isNew && (
             <label className="field">
-              <span>Path (folder/nama.md)</span>
+              <span>{words.editor.path}</span>
               <input className="input" value={editor.path} onChange={(e) => setEditor({ ...editor, path: e.target.value })} />
             </label>
           )}
-          {editor.source === 'builtin' && <p className="hint">File bawaan: menyimpan membuat salinan milik Anda (versi bawaan kembali bila salinan dihapus).</p>}
+          {editor.source === 'builtin' && <p className="hint">{words.editor.builtinHint}</p>}
           <label className="field">
-            <span>Isi (Markdown dengan front matter)</span>
+            <span>{words.editor.content}</span>
             <textarea className="textarea" rows={16} value={editor.content} onChange={(e) => setEditor({ ...editor, content: e.target.value })} spellCheck={false} />
           </label>
           <div className="row">
@@ -426,56 +446,57 @@ export function KnowledgePanel() {
               disabled={busy || !editor.path.trim()}
               onClick={() =>
                 void run(async () => {
-                  await api.saveKnowledge(editor.path.trim(), editor.content);
+                  const path = editor.path.trim();
+                  await api.saveKnowledge(path, editor.content);
                   setEditor(null);
-                  return `${editor.path} disimpan.`;
+                  return (d: Dict) => d.settings.knowledge.editor.saved(path);
                 })
               }
             >
-              Simpan
+              {t.common.save}
             </button>
             <button type="button" className="btn small" onClick={() => setEditor(null)}>
-              Batal
+              {t.common.cancel}
             </button>
           </div>
         </div>
       )}
 
       <div className="row" style={{ marginBottom: 10 }}>
-        <input className="input" style={{ flex: 2, minWidth: 160 }} placeholder="Cari path, nama atau alias…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+        <input className="input" style={{ flex: 2, minWidth: 160 }} placeholder={words.searchPlaceholder} value={filter} onChange={(e) => setFilter(e.target.value)} />
         <select className="select" style={{ flex: 1, minWidth: 120 }} value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as KnowledgeType | '')}>
-          <option value="">Semua jenis</option>
-          {TYPES.map((t) => (
-            <option key={t} value={t}>
-              {TYPE_LABEL[t]}
+          <option value="">{words.allTypes}</option>
+          {TYPES.map((type) => (
+            <option key={type} value={type}>
+              {t.artifacts.knowledgeType[type]}
             </option>
           ))}
         </select>
       </div>
       <p className="hint">
-        {entries.filter((e) => !isGuide(e.path)).length} file dibaca agent{shown.length !== entries.length ? ` · ${shown.length} cocok dengan filter` : ''}
+        {words.readByAgent(entries.filter((e) => !isGuide(e.path)).length)}
+        {shown.length !== entries.length ? ` · ${words.matching(shown.length)}` : ''}
       </p>
 
-      {groups.map(([label, list]) => (
-        <div key={label} style={{ marginBottom: 12 }}>
-          <h4 style={{ margin: '8px 0' }}>
-            {label} ({list.length})
-          </h4>
+      {groups.map(([key, list]) => (
+        <div key={key} style={{ marginBottom: 12 }}>
+          <h4 style={{ margin: '8px 0' }}>{words.groupHeading(groupLabel(key), list.length)}</h4>
           {list.slice(0, 300).map((e) => (
             <div className="card" key={e.path}>
               <div className="card-head">
-                <h4 style={{ overflowWrap: 'anywhere' }}>{e.title}</h4>
-                {e.status && <span className="badge">{RETIRED.test(e.status) ? `${e.status} (tidak dipakai untuk solusi baru)` : e.status}</span>}
-                <span className="badge">{e.source === 'builtin' ? 'Bawaan' : 'Pengguna'}</span>
+                {/* a basis wide enough that long badges (e.g. a retired status in English) wrap below the title on a phone */}
+                <h4 style={{ overflowWrap: 'anywhere', flexBasis: '12em' }}>{e.title}</h4>
+                {e.status && <span className="badge">{RETIRED.test(e.status) ? words.retired(e.status) : e.status}</span>}
+                <span className="badge">{t.settings.source[e.source]}</span>
               </div>
               <p className="hint" style={{ overflowWrap: 'anywhere' }}>
                 <code>{e.path}</code>
-                {e.aliases.length ? ` · alias: ${e.aliases.join(', ')}` : ''}
+                {e.aliases.length ? ` · ${words.aliases(e.aliases.join(', '))}` : ''}
               </p>
               {e.description && <p>{e.description}</p>}
               <div className="row" style={{ marginTop: 8 }}>
                 <button type="button" className="btn small" onClick={() => void open(e)}>
-                  {e.source === 'builtin' ? 'Lihat / override' : 'Edit'}
+                  {e.source === 'builtin' ? words.viewOrOverride : t.common.edit}
                 </button>
                 {e.source === 'user' && (
                   <button
@@ -483,16 +504,20 @@ export function KnowledgePanel() {
                     className="btn small danger"
                     disabled={busy}
                     onClick={() => {
-                      if (window.confirm(`Hapus ${e.path}?`)) void run(async () => `${e.path}: ${(await api.deleteKnowledge(e.path)).result === 'reverted' ? 'versi bawaan dipulihkan' : 'dihapus'}.`);
+                      if (window.confirm(words.confirmDelete(e.path)))
+                        void run(async () => {
+                          const reverted = (await api.deleteKnowledge(e.path)).result === 'reverted';
+                          return (d: Dict) => (reverted ? d.settings.knowledge.reverted(e.path) : d.settings.knowledge.deleted(e.path));
+                        });
                     }}
                   >
-                    Hapus
+                    {t.common.delete}
                   </button>
                 )}
               </div>
             </div>
           ))}
-          {list.length > 300 && <p className="hint">{list.length - 300} file lain - persempit dengan pencarian.</p>}
+          {list.length > 300 && <p className="hint">{words.more(list.length - 300)}</p>}
         </div>
       ))}
     </div>

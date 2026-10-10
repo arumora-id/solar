@@ -1,42 +1,36 @@
 import OpenAI from 'openai';
+import { DEFAULT_LANG, t, type Lang } from '../i18n.js';
 import { LlmError } from './types.js';
 
-/** Maps an OpenAI SDK error (any OpenAI-compatible provider) to a friendly, provider-named LlmError. */
-export function toLlmError(err: unknown, providerName: string, model: string, envProvider: boolean): unknown {
+/**
+ * Maps an OpenAI SDK error (any OpenAI-compatible provider) to a friendly, provider-named LlmError, written in `lang`
+ * (the task's language, or the request's for a provider test).
+ */
+export function toLlmError(err: unknown, providerName: string, model: string, envProvider: boolean, lang: Lang = DEFAULT_LANG): unknown {
   if (!(err instanceof OpenAI.APIError)) return err;
-  const p = providerName;
+  const provider = providerName;
   if (err instanceof OpenAI.APIConnectionError) {
-    const hint = envProvider ? 'cek koneksi internet / proxy / OPENAI_BASE_URL' : 'cek koneksi internet / proxy / base URL provider di Pengaturan → Model AI';
-    return new LlmError('connection', `Tidak dapat terhubung ke ${p} (${hint}): ${err.message}`);
+    const hint = t(lang, envProvider ? 'llm.connection.hintEnv' : 'llm.connection.hintUser');
+    return new LlmError('connection', t(lang, 'llm.connection', { provider, hint, error: err.message }));
   }
   if (err instanceof OpenAI.AuthenticationError) {
-    return new LlmError(
-      'auth',
-      envProvider
-        ? `Autentikasi ${p} gagal: isi OPENAI_API_KEY yang valid di .env lalu restart SOLAR AI AGENT.`
-        : `Autentikasi ${p} gagal: periksa API key provider ini di Pengaturan → Model AI.`,
-    );
+    return new LlmError('auth', t(lang, envProvider ? 'llm.auth.env' : 'llm.auth.user', { provider }));
   }
   if (err instanceof OpenAI.RateLimitError && err.code === 'insufficient_quota') {
-    return new LlmError(
-      'quota',
-      `Saldo/kuota API ${p} habis (insufficient_quota).${envProvider ? ' Tambahkan kredit di platform.openai.com → Billing. Catatan: langganan ChatGPT Plus/Pro tidak termasuk kredit API.' : ''}`,
-    );
+    return new LlmError('quota', `${t(lang, 'llm.quota', { provider })}${envProvider ? t(lang, 'llm.quota.hintEnv') : ''}`);
   }
   if (err instanceof OpenAI.RateLimitError) {
-    return new LlmError('rate_limit', `Batas rate ${p} tercapai setelah percobaan ulang otomatis. Tunggu sebentar lalu kirim ulang task.`);
+    return new LlmError('rate_limit', t(lang, 'llm.rateLimit', { provider }));
   }
   if (err instanceof OpenAI.NotFoundError) {
-    return new LlmError(
-      'not_found',
-      `Model "${model}" tidak ditemukan di ${p} atau belum tersedia untuk API key ini. ${envProvider ? 'Ganti SOLAR_MODEL di .env.' : 'Periksa id model di Pengaturan → Model AI.'} (${err.message})`,
-    );
+    const hint = t(lang, envProvider ? 'llm.notFound.hintEnv' : 'llm.notFound.hintUser');
+    return new LlmError('not_found', t(lang, 'llm.notFound', { model, provider, hint, error: err.message }));
   }
   if (err instanceof OpenAI.PermissionDeniedError) {
-    return new LlmError('permission', `Akses ${p} ditolak untuk model/proyek ini: ${err.message}`);
+    return new LlmError('permission', t(lang, 'llm.permission', { provider, error: err.message }));
   }
   if (err instanceof OpenAI.BadRequestError) {
-    return new LlmError('bad_request', `Permintaan ditolak oleh ${p}: ${err.message}`);
+    return new LlmError('bad_request', t(lang, 'llm.badRequest', { provider, error: err.message }));
   }
-  return new LlmError('server', `${p} API error${err.status ? ` ${err.status}` : ''}: ${err.message}`);
+  return new LlmError('server', `${provider} API error${err.status ? ` ${err.status}` : ''}: ${err.message}`);
 }

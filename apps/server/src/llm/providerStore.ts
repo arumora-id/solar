@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { SECRET_MASK, type LlmProviderConfig, type LlmProviderView, type LlmSettingsView } from '@solar/shared';
 import { REASONING_EFFORTS, type AppConfig } from '../config.js';
 import { interpolate } from '../plugins/pluginStore.js';
+import { both, LocalizedError } from '../i18n.js';
 import { writeFileAtomic } from '../util/fs.js';
 import { slugify } from '../util/ids.js';
 
@@ -190,7 +191,7 @@ export class LlmProviderStore {
   async create(input: Omit<LlmProviderInput, 'id'> & { id?: string }): Promise<LlmProviderConfig> {
     const derived = slugify(input.name ?? 'provider', 'provider').slice(0, 40).replace(/-+$/, '') || 'provider';
     const config = LlmProviderBaseSchema.parse({ ...input, id: input.id?.trim() ? input.id : derived }) as LlmProviderConfig;
-    if (this.get(config.id)) throw new Error(`Provider "${config.id}" already exists`);
+    if (this.get(config.id)) throw new LocalizedError(both('store.provider.exists', { id: config.id }), 'en');
     this.providers.push(config);
     await this.save();
     return config;
@@ -198,7 +199,9 @@ export class LlmProviderStore {
 
   async update(id: string, input: Partial<LlmProviderInput>): Promise<LlmProviderConfig> {
     const index = this.providers.findIndex((p) => p.id === id);
-    if (index < 0) throw new Error(id === ENV_PROVIDER_ID ? 'The OpenAI provider from .env is edited in the .env file' : `Provider "${id}" not found`);
+    if (index < 0) {
+      throw new LocalizedError(id === ENV_PROVIDER_ID ? both('store.provider.envProvider') : both('store.provider.notFound', { id }), 'en');
+    }
     const prev = this.providers[index]!;
     const headers =
       input.headers === undefined
@@ -214,7 +217,7 @@ export class LlmProviderStore {
   async remove(id: string): Promise<void> {
     const before = this.providers.length;
     this.providers = this.providers.filter((p) => p.id !== id);
-    if (this.providers.length === before) throw new Error(`Provider "${id}" not found`);
+    if (this.providers.length === before) throw new LocalizedError(both('store.provider.notFound', { id }), 'en');
     // routes may keep naming it; they skip unknown providers with a warning
     await this.save();
   }
@@ -223,7 +226,7 @@ export class LlmProviderStore {
     const parsed = RoutesSchema.parse(routes);
     for (const [name, entries] of Object.entries(parsed)) {
       for (const entry of entries) {
-        if (!this.get(splitRouteEntry(entry).providerId)) throw new Error(`Route "${name}": unknown provider in "${entry}"`);
+        if (!this.get(splitRouteEntry(entry).providerId)) throw new LocalizedError(both('store.provider.unknownInRoute', { route: name, entry }), 'en');
       }
     }
     this.routes = Object.fromEntries(Object.entries(parsed).filter(([, entries]) => entries.length > 0));

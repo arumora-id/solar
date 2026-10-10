@@ -1,4 +1,5 @@
 import type { AttachmentKind } from '@solar/shared';
+import type { Lang } from '../i18n.js';
 
 /** Result of turning an uploaded document into LLM-friendly Markdown. */
 export interface ExtractedDocument {
@@ -28,6 +29,8 @@ export interface ExtractOptions {
   timeoutMs?: number;
   /** Also return the raw tables of spreadsheets (xlsx/csv), up to this many rows per sheet. */
   tableRows?: number;
+  /** Language of the errors, warnings and notes in the text (the upload request's); default Indonesian. */
+  lang?: Lang;
 }
 
 export type DocumentErrorCode =
@@ -51,7 +54,10 @@ const STATUS: Record<DocumentErrorCode, 413 | 415 | 422> = {
   TIMEOUT: 422,
 };
 
-/** A problem with the uploaded file itself (unsupported, corrupt, encrypted, too large); the message is shown to the user. */
+/**
+ * A problem with the uploaded file itself (unsupported, corrupt, encrypted, too large); the message is shown to the
+ * user, in the language the extraction was asked for (ExtractOptions.lang).
+ */
 export class DocumentError extends Error {
   constructor(
     message: string,
@@ -77,8 +83,10 @@ export interface ParseContext {
   deadline: import('./limits.js').Deadline;
   /** Parsers may stop early once this much text is produced. */
   maxChars: number;
-  /** User-facing notes (Indonesian), e.g. what was cut or skipped. */
+  /** User-facing notes in `lang`, e.g. what was cut or skipped. */
   warnings: string[];
+  /** Language of the errors, warnings and the notes written into the text. */
+  lang: Lang;
   /** Collect raw spreadsheet tables (ExtractOptions.tableRows). */
   collectTables?: boolean;
 }

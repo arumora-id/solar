@@ -86,7 +86,12 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "SOLAR AI AGENT"
+      "shortcutName": "SOLAR AI AGENT",
+      "multiLanguageInstaller": true,
+      "installerLanguages": [
+        "en_US",
+        "id_ID"
+      ]
     },
     "electronVersion": "44.5.1",
     "publish": null,

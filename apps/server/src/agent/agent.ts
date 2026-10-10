@@ -1,4 +1,5 @@
 import type { AppConfig } from '../config.js';
+import { LANGUAGE_NAME, localize, t, taskLang, type Lang } from '../i18n.js';
 import type { KnowledgeStore } from '../knowledge/knowledgeStore.js';
 import type { ModelRouter } from '../llm/router.js';
 import { LlmError, type ConversationItem, type ModelClient, type ToolCall, type TurnResult } from '../llm/types.js';
@@ -68,8 +69,10 @@ export function createAgentRunner(deps: AgentDeps): TaskRunner {
     const toolSpecs = tools.map((t) => ({ name: t.name, description: t.description, parameters: t.inputSchema }));
 
     const today = new Date().toISOString().slice(0, 10);
+    // the task's language: its own texts are written in it, and the agent answers in it when the request's language is unclear
+    const lang = taskLang(ctx);
     const intro = [
-      `<task_context>\nDate: ${today}\nTask id: ${ctx.task.id}\n</task_context>`,
+      `<task_context>\nDate: ${today}\nTask id: ${ctx.task.id}\nInterface language: ${LANGUAGE_NAME[lang]}\n</task_context>`,
       ctx.sessionContext
         ? `<session_history>\nEarlier requests in this conversation (oldest first). Their artifacts can be read with read_artifact and their documents with read_document.\n${ctx.sessionContext}\n</session_history>`
         : '',
@@ -81,11 +84,9 @@ export function createAgentRunner(deps: AgentDeps): TaskRunner {
       .join('\n\n');
     const history: ConversationItem[] = [{ role: 'user', text: intro }];
 
-    const { clients, warnings } = deps.models.clientsFor();
+    const { clients, warnings } = deps.models.clientsFor(undefined, lang);
     for (const message of warnings) await ctx.emit({ type: 'log', level: 'warn', message });
-    if (!clients.length) {
-      throw new Error('Tidak ada model AI yang bisa dipakai: aktifkan provider di Pengaturan → Model AI atau isi OPENAI_API_KEY di .env.');
-    }
+    if (!clients.length) throw new Error(t(lang, 'agent.noModel'));
     let clientIndex = 0;
     let client: ModelClient = clients[0]!;
     const initialMaxTokens = (c: ModelClient) => Math.min(config.openai.maxTokens, c.capabilities.maxOutputTokens);
@@ -96,15 +97,13 @@ export function createAgentRunner(deps: AgentDeps): TaskRunner {
     const addUsage = (usage: TokenUsage, model: string) =>
       ctx.addUsage({ ...usage, costUsd: estimateCostUsd(model, usage, client.price) });
 
-    await ctx.progress(2, 'Membaca permintaan');
+    await ctx.progress(2, t(lang, 'agent.step.reading'));
 
     for (;;) {
-      if (ctx.signal.aborted) throw ctx.signal.reason ?? new Error('Cancelled');
+      if (ctx.signal.aborted) throw ctx.signal.reason ?? new Error(t(lang, 'task.step.cancelled'));
       turns += 1;
-      if (turns > config.openai.maxTurns) {
-        throw new Error(`Dihentikan setelah ${config.openai.maxTurns} giliran model (SOLAR_MAX_TURNS). Artefak yang sudah dibuat tetap tersimpan.`);
-      }
-      await ctx.step(turns === 1 ? 'Merencanakan' : 'Berpikir');
+      if (turns > config.openai.maxTurns) throw new Error(t(lang, 'agent.maxTurns', { max: config.openai.maxTurns }));
+      await ctx.step(t(lang, turns === 1 ? 'agent.step.planning' : 'agent.step.thinking'));
 
       let response: TurnResult;
       let thinkingKey = '';
@@ -128,7 +127,7 @@ export function createAgentRunner(deps: AgentDeps): TaskRunner {
         if (partial) await addUsage(partial, client.model);
         const next = clients[clientIndex + 1];
         if (err instanceof LlmError && err.fallback && next) {
-          await ctx.emit({ type: 'log', level: 'warn', message: `Model ${client.key} gagal: ${err.message} Beralih ke model cadangan ${next.key}.` });
+          await ctx.emit({ type: 'log', level: 'warn', message: t(lang, 'agent.fallback', { from: client.key, error: err.message, to: next.key }) });
           log.warn(`Task ${ctx.task.id}: ${client.key} failed (${err.kind}), falling back to ${next.key}`);
           clientIndex += 1;
           client = next;
@@ -150,32 +149,30 @@ export function createAgentRunner(deps: AgentDeps): TaskRunner {
       const calls = response.calls;
 
       if (response.refusal && calls.length === 0) {
-        throw new Error(`Model menolak melanjutkan permintaan ini: "${response.refusal}". Ubah kalimat permintaan atau pecah menjadi bagian yang lebih kecil.`);
+        throw new Error(t(lang, 'agent.refusal', { refusal: response.refusal }));
       }
       if (response.status === 'incomplete') {
         const reason = response.incompleteReason;
-        if (reason === 'content_filter') {
-          throw new Error(`Jawaban dihentikan oleh filter konten ${client.providerName}. Ubah kalimat permintaan atau pecah menjadi bagian yang lebih kecil.`);
-        }
+        if (reason === 'content_filter') throw new Error(t(lang, 'agent.contentFilter', { provider: client.providerName }));
         // A truncated tool call can still look valid: never run it. Retry the same turn with more room.
         if (maxTokens < client.capabilities.maxOutputTokens) {
           maxTokens = client.capabilities.maxOutputTokens;
-          await ctx.emit({ type: 'log', level: 'warn', message: `Output model terpotong (${reason ?? 'incomplete'}); giliran diulang dengan max_output_tokens=${maxTokens}.` });
+          await ctx.emit({ type: 'log', level: 'warn', message: t(lang, 'agent.truncatedRetry', { reason: reason ?? 'incomplete', max: maxTokens }) });
           turns -= 1;
           continue;
         }
         if (calls.length === 0 && answer) {
-          return { result: `${answer}\n\n_(jawaban terpotong: batas output tercapai)_` };
+          return { result: `${answer}\n\n${t(lang, 'agent.truncatedAnswer')}` };
         }
-        throw new Error('Output model terpotong walau sudah ukuran maksimum (max_output_tokens). Pecah permintaan menjadi bagian yang lebih kecil.');
+        throw new Error(t(lang, 'agent.truncatedError'));
       }
       if (calls.length === 0) {
-        return { result: answer || lastText || 'Selesai.' };
+        return { result: answer || lastText || t(lang, 'agent.done') };
       }
 
       // the assistant turn goes back in order (with the client's raw output for the same model), then every call's output
       history.push({ role: 'assistant', text: answer, calls, native: response.native ? { clientKey: client.key, items: response.native } : undefined });
-      const outputs = await Promise.all(calls.map((call) => runTool(call, toolMap, ctx)));
+      const outputs = await Promise.all(calls.map((call) => runTool(call, toolMap, ctx, lang)));
       history.push(...outputs);
     }
   };
@@ -192,15 +189,18 @@ function parseArguments(raw: string): { ok: true; value: unknown } | { ok: false
 
 type ToolOutputItem = Extract<ConversationItem, { role: 'tool' }>;
 
-async function runTool(call: ToolCall, toolMap: Map<string, AgentTool>, ctx: TaskRunContext): Promise<ToolOutputItem> {
+/** Runs one tool call; what the user sees of it (name, summary, approval) is in `lang`, what the model gets in English. */
+async function runTool(call: ToolCall, toolMap: Map<string, AgentTool>, ctx: TaskRunContext, lang: Lang): Promise<ToolOutputItem> {
   const tool = toolMap.get(call.name);
+  const displayName = tool ? localize(tool.displayName, lang) : call.name;
+  const cancelled = () => new Error(t(lang, 'task.step.cancelled'));
   const started = Date.now();
   const args = parseArguments(call.arguments);
   await ctx.emit({
     type: 'tool_call',
     toolUseId: call.id,
     tool: call.name,
-    displayName: tool?.displayName ?? call.name,
+    displayName,
     source: tool?.source ?? 'builtin',
     pluginId: tool?.pluginId,
     input: previewInput(args.ok ? args.value : call.arguments),
@@ -211,47 +211,53 @@ async function runTool(call: ToolCall, toolMap: Map<string, AgentTool>, ctx: Tas
     return { role: 'tool', callId: call.id, name: call.name, content, ok };
   };
 
-  if (!tool) return finish(`Unknown tool "${call.name}".`, false, 'unknown tool');
-  if (!args.ok) return finish(`${args.error}\nCall the tool again with complete, valid JSON arguments.`, false, 'invalid JSON');
+  if (!tool) return finish(`Unknown tool "${call.name}".`, false, t(lang, 'tool.unknown'));
+  if (!args.ok) return finish(`${args.error}\nCall the tool again with complete, valid JSON arguments.`, false, t(lang, 'tool.invalidJson'));
 
   const parsed = tool.parse(args.value);
   if (!parsed.ok) {
-    return finish(`${JSON.stringify({ INVALID_INPUT: true })}\n${parsed.error}\nCall the tool again with a complete, valid input.`, false, 'invalid input');
+    return finish(
+      `${JSON.stringify({ INVALID_INPUT: true })}\n${parsed.error}\nCall the tool again with a complete, valid input.`,
+      false,
+      t(lang, 'tool.invalidInput'),
+    );
   }
 
-  if (ctx.signal.aborted) throw ctx.signal.reason ?? new Error('Cancelled');
-  const reason = await tool.confirmation(parsed.value);
+  if (ctx.signal.aborted) throw ctx.signal.reason ?? cancelled();
+  const reason = await tool.confirmation(parsed.value, lang);
   if (reason) {
     const decision = await ctx.confirm({
       toolUseId: call.id,
       tool: call.name,
-      displayName: tool.displayName,
+      displayName,
       pluginId: tool.pluginId ?? null,
       pluginName: tool.pluginName ?? null,
       reason,
-      input: tool.confirmationPreview ? await tool.confirmationPreview(parsed.value).catch(() => previewInput(parsed.value)) : previewInput(parsed.value),
+      input: tool.confirmationPreview
+        ? await tool.confirmationPreview(parsed.value, lang).catch(() => previewInput(parsed.value))
+        : previewInput(parsed.value),
     });
     if (!decision.approved) {
       return finish(
         `The user did not approve this action${decision.note ? ` (${decision.note})` : ''}. Do not retry it; continue without it and mention it in the final answer.`,
         false,
-        'declined by user',
+        t(lang, 'tool.declined'),
       );
     }
   }
 
-  if (ctx.signal.aborted) throw ctx.signal.reason ?? new Error('Cancelled');
-  if (tool.name !== 'update_progress') await ctx.step(tool.displayName);
+  if (ctx.signal.aborted) throw ctx.signal.reason ?? cancelled();
+  if (tool.name !== 'update_progress') await ctx.step(displayName);
   try {
     const out = await tool.execute(parsed.value, ctx);
     if (tool.name !== 'update_progress' && !out.isError) {
-      await ctx.progress(Math.min(95, ctx.task.progress + 3), tool.displayName, out.summary);
+      await ctx.progress(Math.min(95, ctx.task.progress + 3), displayName, out.summary);
     }
     return finish(out.content, !out.isError, out.summary);
   } catch (err) {
     if (ctx.signal.aborted) throw ctx.signal.reason ?? err;
     const message = err instanceof Error ? err.message : String(err);
     log.warn(`Tool ${call.name} failed: ${message}`);
-    return finish(`Tool error: ${message}`, false, `error: ${message.slice(0, 140)}`);
+    return finish(`Tool error: ${message}`, false, t(lang, 'tool.failed', { message: message.slice(0, 140) }));
   }
 }

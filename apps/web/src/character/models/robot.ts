@@ -202,6 +202,5 @@ export function buildRobot(parent: THREE.Object3D): Rig {
     breath: { x: 1.012, y: 0.985 },
     frame: { height: 3.7, width: 3.5 },
     pickables: kit.pickables,
-    label: 'SOLAR AI AGENT sebagai Robo, robot putih-biru dengan wajah layar bercahaya',
   };
 }

@@ -1,11 +1,12 @@
 import gsap from 'gsap';
 import { useEffect, useRef } from 'react';
 import type { TaskStatus } from '@solar/shared';
-import { STATUS_LABEL } from '../lib/format';
+import { useT } from '../lib/i18n';
 import { AlertIcon, BanIcon, CheckCircleIcon, ClockIcon, HandIcon, SpinnerIcon } from './Icons';
 
 /** Status = icon + label + colour (never colour alone). */
 export function StatusBadge({ status }: { status: TaskStatus }) {
+  const t = useT();
   const icon = {
     queued: <ClockIcon />,
     running: <SpinnerIcon />,
@@ -17,13 +18,14 @@ export function StatusBadge({ status }: { status: TaskStatus }) {
   return (
     <span className="badge" data-status={status}>
       {icon}
-      {STATUS_LABEL[status]}
+      {t.monitor.status[status]}
     </span>
   );
 }
 
 /** Progress meter: the fill carries the state, the track is a lighter step of the same hue. */
 export function ProgressMeter({ value, status, label }: { value: number; status: TaskStatus; label?: string }) {
+  const t = useT();
   const fillRef = useRef<HTMLSpanElement>(null);
   const pct = Math.max(0, Math.min(100, Math.round(value)));
   useEffect(() => {
@@ -33,7 +35,7 @@ export function ProgressMeter({ value, status, label }: { value: number; status:
   }, [pct]);
   return (
     <div className="meter-row">
-      <div className="meter" data-status={status} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label={label ?? 'Progres'}>
+      <div className="meter" data-status={status} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label={label ?? t.app.status.progress}>
         <span ref={fillRef} style={{ width: 0 }} />
       </div>
       <b>{pct}%</b>

@@ -1,4 +1,5 @@
 import type { AttachmentKind } from '@solar/shared';
+import { DEFAULT_LANG, t, type Lang } from '../i18n.js';
 import { documentError } from './types.js';
 
 export const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -26,16 +27,11 @@ export function extensionOf(fileName: string): string {
   return dot >= 0 ? fileName.slice(dot).toLowerCase() : '';
 }
 
-/** Detects the attachment kind from the file name; throws a user-facing DocumentError for unsupported files. */
-export function detectKind(fileName: string): { kind: AttachmentKind; mimeType: string } {
+/** Detects the attachment kind from the file name; throws a user-facing DocumentError (in `lang`) for unsupported files. */
+export function detectKind(fileName: string, lang: Lang = DEFAULT_LANG): { kind: AttachmentKind; mimeType: string } {
   const ext = extensionOf(fileName);
   const known = BY_EXTENSION[ext];
   if (known) return known;
-  if (LEGACY[ext]) {
-    throw documentError('LEGACY_FORMAT', `Format ${LEGACY[ext]} belum didukung. Simpan ulang sebagai ${ext}x (File → Save As) atau PDF, lalu lampirkan lagi.`);
-  }
-  throw documentError(
-    'UNSUPPORTED',
-    `Jenis file "${ext || fileName}" tidak didukung. Gunakan PDF, Word (.docx), Excel (.xlsx/.xlsm/.csv), PowerPoint (.pptx), Markdown (.md) atau teks (.txt).`,
-  );
+  if (LEGACY[ext]) throw documentError('LEGACY_FORMAT', t(lang, 'doc.legacyFormat', { format: LEGACY[ext], ext }));
+  throw documentError('UNSUPPORTED', t(lang, 'doc.unsupportedType', { ext: ext || fileName }));
 }

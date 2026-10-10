@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { formatIssues } from '../generators/validation.js';
+import { DEFAULT_LANG, type Lang, type LocalizedText } from '../i18n.js';
 import type { TaskRunContext } from '../tasks/taskManager.js';
 import type { AgentTool, ToolOutput } from './types.js';
 
@@ -23,11 +24,13 @@ export function toInputSchema(schema: z.ZodType): Record<string, unknown> {
 
 export function zodTool<S extends z.ZodType>(def: {
   name: string;
-  displayName: string;
+  /** Shown to the user (see AgentTool.displayName): `{ id, en }`. */
+  displayName: LocalizedText;
   description: string;
   schema: S;
-  confirmation?: (input: z.output<S>) => string | null | Promise<string | null>;
-  confirmationPreview?: (input: z.output<S>) => Promise<unknown>;
+  /** The reason the user must approve the call, in `lang`; null when no approval is needed. */
+  confirmation?: (input: z.output<S>, lang: Lang) => string | null | Promise<string | null>;
+  confirmationPreview?: (input: z.output<S>, lang: Lang) => Promise<unknown>;
   execute: (input: z.output<S>, ctx: TaskRunContext) => Promise<ToolOutput>;
 }): AgentTool {
   return {
@@ -47,8 +50,8 @@ export function zodTool<S extends z.ZodType>(def: {
         ),
       };
     },
-    confirmation: (input) => def.confirmation?.(input as z.output<S>) ?? null,
-    confirmationPreview: def.confirmationPreview && ((input) => def.confirmationPreview!(input as z.output<S>)),
+    confirmation: (input, lang = DEFAULT_LANG) => def.confirmation?.(input as z.output<S>, lang) ?? null,
+    confirmationPreview: def.confirmationPreview && ((input, lang = DEFAULT_LANG) => def.confirmationPreview!(input as z.output<S>, lang)),
     execute: (input, ctx) => def.execute(input as z.output<S>, ctx),
   };
 }

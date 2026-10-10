@@ -1,3 +1,4 @@
+import { DEFAULT_LANG, fmtInt, t, type Lang } from '../i18n.js';
 import { detectKind, extensionOf } from './kind.js';
 import { LIMITS, makeDeadline, withTimeout } from './limits.js';
 import { isOle, oleError } from './ole.js';
@@ -17,12 +18,18 @@ function titleOf(fileName: string): string {
   return base || fileName;
 }
 
-const OFFICE_LABEL: Record<string, string> = {
-  docx: 'dokumen Word (.docx)',
-  xlsx: 'workbook Excel (.xlsx)',
-  xlsm: 'workbook Excel (.xlsm)',
-  pptx: 'presentasi PowerPoint (.pptx)',
-};
+const OFFICE_LABEL = {
+  docx: 'doc.label.docx',
+  xlsx: 'doc.label.xlsx',
+  xlsm: 'doc.label.xlsx',
+  pptx: 'doc.label.pptx',
+} as const;
+
+/** "Word document (.docx)", or null for an extension that is not an Office format. */
+function officeLabel(ext: string, lang: Lang): string | null {
+  const key = OFFICE_LABEL[ext as keyof typeof OFFICE_LABEL];
+  return key ? t(lang, 'doc.label.withExtension', { label: t(lang, key), ext }) : null;
+}
 
 const OFFICE_EXPECTED: Record<string, 'docx' | 'xlsx' | 'pptx'> = { docx: 'docx', xlsx: 'xlsx', xlsm: 'xlsx', pptx: 'pptx' };
 
@@ -42,21 +49,22 @@ function isPdf(bytes: Uint8Array, ext: string): boolean {
 
 /** Picks the parser from the file's content (not only its extension), so renamed or mislabelled files are handled. */
 async function dispatch(ctx: ParseContext): Promise<ParsedDocument> {
-  const { bytes, ext, warnings } = ctx;
-  const mismatch = (actual: string) => warnings.push(`Ekstensi .${ext} tidak sesuai isinya (${KIND_LABEL[actual] ?? actual}); file dibaca sebagai ${KIND_LABEL[actual] ?? actual}.`);
+  const { bytes, ext, warnings, lang } = ctx;
+  const mismatch = (actual: string) => warnings.push(t(lang, 'doc.extensionMismatch', { ext, kind: KIND_LABEL[actual] ?? actual }));
+  const label = officeLabel(ext, lang);
 
   if (isPdf(bytes, ext)) {
     if (ext !== 'pdf') mismatch('pdf');
     return (await import('./pdf.js')).extractPdf(ctx);
   }
-  if (isOle(bytes)) throw oleError(bytes, ext);
+  if (isOle(bytes)) throw oleError(bytes, ext, lang);
   if (isZip(bytes)) {
-    const zip = new ZipArchive(bytes, ctx.limits, ctx.deadline, OFFICE_LABEL[ext] ?? `file .${ext}`);
+    const zip = new ZipArchive(bytes, ctx.limits, ctx.deadline, label ?? t(lang, 'doc.label.file', { ext }), lang);
     const pkg = classifyOoxml(zip);
-    if (pkg.unsupported) throw documentError('UNSUPPORTED', `Jenis file tidak didukung: ${pkg.unsupported}.`);
+    if (pkg.unsupported) throw documentError('UNSUPPORTED', t(lang, 'doc.unsupportedPackage', { reason: pkg.unsupported }));
     if (!pkg.kind) {
-      if (OFFICE_LABEL[ext]) throw documentError('CORRUPT', `File rusak atau bukan ${OFFICE_LABEL[ext]} yang valid (bagian utama dokumen tidak ditemukan).`);
-      throw documentError('UNSUPPORTED', `File .${ext} ini ternyata arsip ZIP, bukan dokumen yang didukung.`);
+      if (label) throw documentError('CORRUPT', t(lang, 'doc.corrupt', { label, detail: t(lang, 'doc.corrupt.mainPartMissing') }));
+      throw documentError('UNSUPPORTED', t(lang, 'doc.zipNotDocument', { ext }));
     }
     if (OFFICE_EXPECTED[ext] !== pkg.kind) mismatch(pkg.kind);
     if (pkg.kind === 'docx') return (await import('./docx.js')).extractDocx(ctx, zip, pkg);
@@ -64,22 +72,23 @@ async function dispatch(ctx: ParseContext): Promise<ParsedDocument> {
     return (await import('./pptx.js')).extractPptx(ctx, zip, pkg);
   }
 
-  const { kind } = detectKind(ctx.fileName);
+  const { kind } = detectKind(ctx.fileName, lang);
   switch (kind) {
     case 'pdf':
-      throw documentError('CORRUPT', 'File rusak atau bukan PDF yang valid (header %PDF tidak ditemukan).');
+      throw documentError('CORRUPT', t(lang, 'doc.pdfHeaderMissing'));
     case 'docx':
     case 'xlsx':
     case 'pptx':
-      throw documentError('CORRUPT', `File rusak atau bukan ${OFFICE_LABEL[ext] ?? kind} yang valid (bukan paket Office/ZIP).`);
+      throw documentError('CORRUPT', t(lang, 'doc.corrupt', { label: label ?? kind, detail: t(lang, 'doc.corrupt.notOfficePackage') }));
     case 'markdown':
     case 'text':
-      return { kind, markdown: decodeText(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)), parts: null };
+      return { kind, markdown: decodeText(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength), lang), parts: null };
     case 'csv': {
-      const { markdown, warnings: csvWarnings } = csvToMarkdown(decodeText(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)), titleOf(ctx.fileName));
+      const text = decodeText(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength), lang);
+      const { markdown, warnings: csvWarnings } = csvToMarkdown(text, titleOf(ctx.fileName), lang);
       warnings.push(...csvWarnings);
       if (!ctx.collectTables) return { kind, markdown, parts: null };
-      const parsed = parseCsvLimited(decodeText(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)), ctx.limits.maxRowsPerSheet);
+      const parsed = parseCsvLimited(text, ctx.limits.maxRowsPerSheet);
       return { kind, markdown, parts: null, tables: [{ name: titleOf(ctx.fileName), rows: parsed.rows, truncated: parsed.truncated }] };
     }
   }
@@ -87,13 +96,14 @@ async function dispatch(ctx: ParseContext): Promise<ParsedDocument> {
 
 /**
  * Turns an uploaded document into Markdown the agent can read.
- * Throws DocumentError (user-facing message) for unsupported, corrupt, encrypted or oversized input.
+ * Throws DocumentError (user-facing message, in `options.lang`) for unsupported, corrupt, encrypted or oversized input.
  */
 export async function extractDocument(buffer: Buffer, fileName: string, options: ExtractOptions = {}): Promise<ExtractedDocument> {
   const maxChars = options.maxChars ?? DEFAULT_MAX_CHARS;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  detectKind(fileName); // rejects unsupported extensions before looking at the content
-  if (buffer.length === 0) throw documentError('EMPTY', 'File kosong (0 byte).');
+  const lang = options.lang ?? DEFAULT_LANG;
+  detectKind(fileName, lang); // rejects unsupported extensions before looking at the content
+  if (buffer.length === 0) throw documentError('EMPTY', t(lang, 'doc.empty'));
 
   const ctx: ParseContext = {
     bytes: buffer,
@@ -101,10 +111,11 @@ export async function extractDocument(buffer: Buffer, fileName: string, options:
     fileName,
     // table import (knowledge base): more rows per sheet; the markdown is still capped by maxChars
     limits: options.tableRows ? { ...LIMITS, maxRowsPerSheet: options.tableRows } : LIMITS,
-    deadline: makeDeadline(timeoutMs),
+    deadline: makeDeadline(timeoutMs, lang),
     maxChars,
     warnings: [],
     collectTables: Boolean(options.tableRows),
+    lang,
   };
   let result: ParsedDocument;
   try {
@@ -112,22 +123,16 @@ export async function extractDocument(buffer: Buffer, fileName: string, options:
   } catch (err) {
     if (err instanceof DocumentError) throw err;
     const message = err instanceof Error ? err.message : String(err);
-    throw documentError('CORRUPT', `"${fileName}" tidak bisa dibaca (file rusak atau memakai fitur yang belum didukung): ${message.slice(0, 300)}`);
+    throw documentError('CORRUPT', t(lang, 'doc.unreadable', { file: fileName, error: message.slice(0, 300) }));
   }
 
   let markdown = wellFormed(normalizeNewlines(result.markdown).replace(/\n{4,}/g, '\n\n\n').trim());
   const warnings = ctx.warnings.map(wellFormed);
   if (markdown.length > maxChars) {
-    markdown = `${truncate(markdown, maxChars)}\n\n[SOLAR: teks dipotong pada ${maxChars.toLocaleString('id-ID')} karakter]`;
-    warnings.push(`Dokumen sangat panjang; hanya ${maxChars.toLocaleString('id-ID')} karakter pertama yang disimpan.`);
+    markdown = `${truncate(markdown, maxChars)}\n\n${t(lang, 'doc.textCut', { n: fmtInt(maxChars, lang) })}`;
+    warnings.push(t(lang, 'doc.veryLong', { n: fmtInt(maxChars, lang) }));
   }
-  if (!markdown.replace(/[#\s|\-:<>!\[\]()*_`]/g, '')) {
-    warnings.push(
-      result.kind === 'pdf'
-        ? 'Tidak ada teks yang bisa dibaca (PDF hasil scan/gambar?). Gunakan PDF dengan teks atau sertakan versi Word.'
-        : 'Dokumen tidak berisi teks.',
-    );
-  }
+  if (!markdown.replace(/[#\s|\-:<>!\[\]()*_`]/g, '')) warnings.push(t(lang, result.kind === 'pdf' ? 'doc.noTextPdf' : 'doc.noText'));
   return { kind: result.kind, markdown, parts: result.parts, warnings: [...new Set(warnings)], ...(result.tables ? { tables: result.tables } : {}) };
 }
 

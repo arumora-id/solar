@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import type { BuiltDocument } from '../generators/techspec/document.js';
 import type { DocxRenderOptions, DocxRenderResult } from '../generators/techspec/docx.js';
+import { t, type Lang } from '../i18n.js';
 import { createLogger } from '../logger.js';
 import type { DocxWorkerRequest, DocxWorkerResponse } from './techSpecDocxWorker.js';
 
@@ -61,6 +62,7 @@ function release(): void {
 
 /** One render in a fresh worker; 'timeout' when it took longer than `timeoutMs` (the worker is then stopped). */
 function inWorker(url: URL, request: DocxWorkerRequest, timeoutMs: number): Promise<DocxRenderResult | 'timeout'> {
+  const lang: Lang = request.options.warningLanguage ?? 'en';
   return new Promise((resolve, reject) => {
     const worker = new Worker(url, { resourceLimits: { maxOldGenerationSizeMb: MEMORY_MB } });
     let settled = false;
@@ -80,9 +82,9 @@ function inWorker(url: URL, request: DocxWorkerRequest, timeoutMs: number): Prom
       ),
     );
     worker.once('error', (err: Error & { code?: string }) =>
-      finish(() => reject(new Error(err.code === 'ERR_WORKER_OUT_OF_MEMORY' ? 'the document is too large to render (memory limit)' : err.message))),
+      finish(() => reject(new Error(err.code === 'ERR_WORKER_OUT_OF_MEMORY' ? t(lang, 'docx.error.memory') : err.message))),
     );
-    worker.once('exit', (code) => finish(() => reject(new Error(`the Word renderer stopped unexpectedly (code ${code})`))));
+    worker.once('exit', (code) => finish(() => reject(new Error(t(lang, 'docx.error.stopped', { code: String(code) })))));
     worker.postMessage(request);
   });
 }
@@ -101,6 +103,8 @@ export async function renderTechSpecDocxIsolated(
   options: DocxRenderOptions & { timeouts?: Partial<DocxTimeouts> } = {},
 ): Promise<DocxRenderResult> {
   const { timeouts: custom, ...renderOptions } = options;
+  // English unless the caller shows them to a user in another language (see DocxRenderOptions.warningLanguage)
+  const lang: Lang = renderOptions.warningLanguage ?? 'en';
   const url = workerUrl();
   if (!url) {
     const { renderTechSpecDocx } = await import('../generators/techspec/docx.js');
@@ -115,15 +119,9 @@ export async function renderTechSpecDocxIsolated(
       log.warn(`Laying out the pages of "${document.title}" took over ${timeouts.withLayout / 1000} s; rendering it without page numbers`);
     }
     const result = await inWorker(url, { document, options: { ...renderOptions, pageNumbers: false } }, timeouts.withoutLayout);
-    if (result === 'timeout') throw new Error(`rendering the Word document took longer than ${Math.round(timeouts.withoutLayout / 1000)} s`);
+    if (result === 'timeout') throw new Error(t(lang, 'docx.error.timeout', { seconds: Math.round(timeouts.withoutLayout / 1000) }));
     if (renderOptions.pageNumbers === false) return result;
-    return {
-      ...result,
-      warnings: [
-        ...result.warnings,
-        'The document was too long to lay out its pages in time: Word fills in the page numbers of the table of contents when it opens the file',
-      ],
-    };
+    return { ...result, warnings: [...result.warnings, t(lang, 'docx.warning.noPageNumbers')] };
   } finally {
     release();
   }

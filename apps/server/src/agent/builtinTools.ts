@@ -5,6 +5,7 @@ import { buildArchimate, ArchimateModelSchema, ELEMENT_INFO, ELEMENT_TYPES, allo
 import { buildSequence, SequenceDiagramSchema } from '../generators/sequence/index.js';
 import { buildTechSpec, TechSpecSchema } from '../generators/techspec/index.js';
 import { formatIssues, type ValidationIssue } from '../generators/validation.js';
+import { t, taskLang, type Lang } from '../i18n.js';
 import { GithubClient } from '../integrations/github.js';
 import { PlaneClient } from '../integrations/plane.js';
 import type { SkillStore } from '../skills/skillStore.js';
@@ -26,10 +27,10 @@ export interface BuiltinToolDeps {
 }
 
 
-function failure(title: string, errors: ValidationIssue[], warnings: ValidationIssue[]): ToolOutput {
+function failure(title: string, errors: ValidationIssue[], warnings: ValidationIssue[], lang: Lang): ToolOutput {
   return {
     isError: true,
-    summary: `${errors.length} validation error(s)`,
+    summary: t(lang, 'tool.validationErrors', { n: errors.length }),
     content: [
       formatIssues(`${title} - ${errors.length} error(s), nothing was saved`, errors),
       formatIssues('Warnings', warnings),
@@ -67,7 +68,7 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
   tools.push(
     zodTool({
       name: 'update_progress',
-      displayName: 'Perbarui progres',
+      displayName: { id: 'Perbarui progres', en: 'Updating progress' },
       description:
         'Report progress of the whole request to the monitoring dashboard. Call it when you start, after each major deliverable and before the final answer.',
       schema: z.object({
@@ -85,13 +86,13 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
   tools.push(
     zodTool({
       name: 'load_skill',
-      displayName: 'Muat skill',
+      displayName: { id: 'Muat skill', en: 'Loading skill' },
       description: 'Load the full instructions of an enabled skill (listed in the system prompt). Follow the loaded instructions.',
       schema: z.object({ skill_id: z.string().min(1).max(80) }),
-      async execute(input) {
+      async execute(input, ctx) {
         const skill = await skills.get(input.skill_id);
         if (!skill || !skill.enabled) {
-          return { isError: true, content: `Skill "${input.skill_id}" does not exist or is disabled.`, summary: 'skill not found' };
+          return { isError: true, content: `Skill "${input.skill_id}" does not exist or is disabled.`, summary: t(taskLang(ctx), 'tool.skillNotFound') };
         }
         const files = skill.files.length ? `\n\nReference files (read with read_skill_file): ${skill.files.join(', ')}` : '';
         return { content: `# Skill: ${skill.name}\n\n${skill.content}${files}`, summary: skill.name };
@@ -102,15 +103,15 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
   tools.push(
     zodTool({
       name: 'read_skill_file',
-      displayName: 'Baca file skill',
+      displayName: { id: 'Baca file skill', en: 'Reading skill file' },
       description: 'Read a reference file (template, checklist, example) bundled with a skill.',
       schema: z.object({ skill_id: z.string().min(1).max(80), path: z.string().min(1).max(200) }),
-      async execute(input) {
+      async execute(input, ctx) {
         try {
           const content = await skills.readFile(input.skill_id, input.path);
           return { content, summary: `${input.skill_id}/${input.path}` };
         } catch (err) {
-          return { isError: true, content: err instanceof Error ? err.message : String(err), summary: 'file not found' };
+          return { isError: true, content: err instanceof Error ? err.message : String(err), summary: t(taskLang(ctx), 'tool.fileNotFound') };
         }
       },
     }),
@@ -119,7 +120,7 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
   tools.push(
     zodTool({
       name: 'archimate_relationship_rules',
-      displayName: 'Cek aturan relasi ArchiMate',
+      displayName: { id: 'Cek aturan relasi ArchiMate', en: 'Checking ArchiMate relationship rules' },
       description:
         'Look up which ArchiMate 3.2 relationships are allowed between element types (official relationship table). Use it before modelling relationships you are not sure about.',
       schema: z.object({
@@ -128,13 +129,13 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
           .min(1)
           .max(60),
       }),
-      async execute(input) {
+      async execute(input, ctx) {
         const rows = input.pairs.map((p) => ({
           source: p.source,
           target: p.target,
           allowed: allowedRelationships(p.source, p.target),
         }));
-        return { content: json(rows), summary: `${rows.length} pair(s)` };
+        return { content: json(rows), summary: t(taskLang(ctx), 'tool.pairs', { n: rows.length }) };
       },
     }),
   );
@@ -142,7 +143,7 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
   tools.push(
     zodTool({
       name: 'create_archimate_model',
-      displayName: 'Membuat model ArchiMate',
+      displayName: { id: 'Membuat model ArchiMate', en: 'Creating ArchiMate model' },
       description: [
         'Create an ArchiMate 3.2 model with one or more views. The input is validated against the official ArchiMate relationship table,',
         'referential integrity, junction rules and view consistency; on errors nothing is saved and every error is listed so you can fix it.',
@@ -152,10 +153,12 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
       ].join(' '),
       schema: ArchimateModelSchema.extend({ fileName }),
       async execute(input, ctx) {
+        const lang = taskLang(ctx);
         const { fileName: base, ...model } = input;
         const result = buildArchimate(model);
-        if (!result.ok) return failure('ArchiMate model rejected', result.errors, result.warnings);
+        if (!result.ok) return failure('ArchiMate model rejected', result.errors, result.warnings, lang);
         const out = result.output;
+        const counts = { elements: out.model.elements.length, relationships: out.model.relationships.length, views: out.views.length };
         const stem = base ?? slugify(model.name, 'archimate-model');
         const bundle = newId('bundle');
         const xml = await ctx.createArtifact({
@@ -164,32 +167,32 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
           kind: 'archimate-exchange',
           mimeType: 'application/xml',
           bundle,
-          description: `${out.model.elements.length} elements, ${out.model.relationships.length} relationships, ${out.views.length} view(s)`,
+          description: t(lang, 'artifact.archimate.summary', counts),
           content: out.exchangeXml,
         });
         const views: Array<{ view: string; svgArtifactId: string; file: string; elements: number; relationships: number }> = [];
         for (const v of out.views) {
           const svg = await ctx.createArtifact({
             name: `${stem}-${slugify(v.name, 'view')}.svg`,
-            title: `${v.name} (ArchiMate view)`,
+            title: t(lang, 'artifact.archimate.view', { name: v.name }),
             kind: 'archimate-svg',
             mimeType: 'image/svg+xml',
             bundle,
-            description: `${v.elementCount} elements, ${v.relationshipCount} relationships`,
+            description: t(lang, 'artifact.archimate.viewSummary', { elements: v.elementCount, relationships: v.relationshipCount }),
             content: v.svg,
           });
           views.push({ view: v.name, svgArtifactId: svg.id, file: svg.name, elements: v.elementCount, relationships: v.relationshipCount });
         }
         const modelJson = await ctx.createArtifact({
           name: `${stem}.archimate.json`,
-          title: `${model.name} (model source)`,
+          title: t(lang, 'artifact.archimate.source', { name: model.name }),
           kind: 'archimate-model',
           mimeType: 'application/json',
           bundle,
           content: json(out.model),
         });
         return {
-          summary: `${out.model.elements.length} elements, ${out.model.relationships.length} relationships, ${out.views.length} view(s)`,
+          summary: t(lang, 'artifact.archimate.summary', counts),
           content: json({
             status: 'saved',
             bundle,
@@ -207,7 +210,7 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
   tools.push(
     zodTool({
       name: 'create_sequence_diagram',
-      displayName: 'Membuat sequence diagram',
+      displayName: { id: 'Membuat sequence diagram', en: 'Creating sequence diagram' },
       description: [
         'Create a UML sequence diagram. Steps are a flat ordered list: messages (sync/async/reply with optional activation),',
         'notes, dividers and combined fragments opened with fragment_start (alt/opt/loop/par/critical/break/group),',
@@ -216,10 +219,12 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
       ].join(' '),
       schema: SequenceDiagramSchema.extend({ fileName }),
       async execute(input, ctx) {
+        const lang = taskLang(ctx);
         const { fileName: base, ...diagram } = input;
         const result = buildSequence(diagram);
-        if (!result.ok) return failure('Sequence diagram rejected', result.errors, result.warnings);
+        if (!result.ok) return failure('Sequence diagram rejected', result.errors, result.warnings, lang);
         const out = result.output;
+        const counts = { participants: diagram.participants.length, messages: diagram.steps.filter((s) => s.type === 'message').length };
         const stem = base ?? slugify(diagram.title, 'sequence');
         const bundle = newId('bundle');
         const svg = await ctx.createArtifact({
@@ -228,7 +233,7 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
           kind: 'sequence-svg',
           mimeType: 'image/svg+xml',
           bundle,
-          description: `${diagram.participants.length} participants, ${diagram.steps.filter((s) => s.type === 'message').length} messages`,
+          description: t(lang, 'artifact.sequence.summary', counts),
           content: out.svg,
         });
         const mmd = await ctx.createArtifact({
@@ -249,14 +254,14 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
         });
         await ctx.createArtifact({
           name: `${stem}.sequence.json`,
-          title: `${diagram.title} (source)`,
+          title: t(lang, 'artifact.source', { name: diagram.title }),
           kind: 'sequence-model',
           mimeType: 'application/json',
           bundle,
           content: json(out.diagram),
         });
         return {
-          summary: `${diagram.participants.length} participants, ${diagram.steps.filter((s) => s.type === 'message').length} messages`,
+          summary: t(lang, 'artifact.sequence.summary', counts),
           content: json({
             status: 'saved',
             bundle,
@@ -273,7 +278,7 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
   tools.push(
     zodTool({
       name: 'create_technical_specification',
-      displayName: 'Menyusun Technical Specification',
+      displayName: { id: 'Menyusun Technical Specification', en: 'Writing the Technical Specification' },
       description: [
         'Create the Technical Specification Document (TSD) as Markdown (GitHub ready, diagrams linked as sibling SVG files and Mermaid sources),',
         'as a standalone print-ready HTML with embedded diagrams, and as a Word document (.docx) for delivery to the client: A4 with cover page,',
@@ -281,13 +286,22 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
         'with page numbers and the diagrams embedded as figures. Reference diagrams by the SVG artifact ids returned by',
         'create_archimate_model / create_sequence_diagram in this task. Ids of requirements, decisions, risks and issues must be unique.',
       ].join(' '),
-      schema: TechSpecSchema.extend({ fileName }),
+      // without a language the document is written in the task's interface language (the schema's own default is "id")
+      schema: TechSpecSchema.extend({
+        fileName,
+        language: z
+          .enum(['id', 'en'])
+          .optional()
+          .describe('Language of headings and labels: "id" (Bahasa Indonesia) or "en"; default: the interface language of the task'),
+      }),
       async execute(input, ctx) {
-        const { fileName: base, ...spec } = input;
+        const lang = taskLang(ctx);
+        const { fileName: base, ...rest } = input;
+        const spec = { ...rest, language: rest.language ?? lang };
         const diagrams = await resolveTaskDiagrams(artifacts, await ctx.listArtifacts());
         const today = new Date().toISOString().slice(0, 10);
         const result = buildTechSpec(spec, diagrams, today);
-        if (!result.ok) return failure('Technical specification rejected', result.errors, result.warnings);
+        if (!result.ok) return failure('Technical specification rejected', result.errors, result.warnings, lang);
         const out = result.output;
         const requested = base ?? slugify(spec.title, 'technical-specification');
         const bundle = newId('bundle');
@@ -297,14 +311,17 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
           kind: 'tsd-markdown',
           mimeType: 'text/markdown; charset=utf-8',
           bundle,
-          description: `${out.spec.functionalRequirements.length} functional / ${out.spec.nonFunctionalRequirements.length} non-functional requirements`,
+          description: t(lang, 'artifact.tsd.summary', {
+            functional: out.spec.functionalRequirements.length,
+            nonFunctional: out.spec.nonFunctionalRequirements.length,
+          }),
           content: out.markdown,
         });
         // the other files take the name the .md was saved under ("x-2.md" when the task already has an "x.md")
         const stem = md.name.replace(/\.md$/i, '');
         const html = await ctx.createArtifact({
           name: `${stem}.html`,
-          title: `${spec.title} (HTML, print-ready)`,
+          title: t(lang, 'artifact.html', { name: spec.title }),
           kind: 'tsd-html',
           mimeType: 'text/html; charset=utf-8',
           bundle,
@@ -319,7 +336,7 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
           let failure: string | null = null;
           try {
             const rendered = await renderTechSpecDocxIsolated(out.document);
-            const saved = await ctx.createArtifact(tsdDocxArtifact({ stem, title: spec.title, bundle, document: out.document, buffer: rendered.buffer }));
+            const saved = await ctx.createArtifact(tsdDocxArtifact({ stem, title: spec.title, bundle, document: out.document, buffer: rendered.buffer, lang }));
             docx = { artifactId: saved.id, file: saved.name };
             warnings.push(...rendered.warnings.map((w) => `[docx] ${w}`));
           } catch (err) {
@@ -327,7 +344,7 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
           }
           const model = await ctx.createArtifact({
             name: `${stem}.tsd.json`,
-            title: `${spec.title} (source)`,
+            title: t(lang, 'artifact.source', { name: spec.title }),
             kind: 'tsd-model',
             mimeType: 'application/json',
             bundle,
@@ -358,13 +375,13 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
   tools.push(
     zodTool({
       name: 'list_artifacts',
-      displayName: 'Daftar artefak',
+      displayName: { id: 'Daftar artefak', en: 'Listing artifacts' },
       description: 'List the artifacts (diagrams, documents, models) created so far in this task.',
       schema: z.object({}),
       async execute(_input, ctx) {
         const list = await ctx.listArtifacts();
         return {
-          summary: `${list.length} artifact(s)`,
+          summary: t(taskLang(ctx), 'tool.artifacts', { n: list.length }),
           content: json(list.map((a) => ({ id: a.id, name: a.name, kind: a.kind, title: a.title, bundle: a.bundle, size: a.size }))),
         };
       },
@@ -374,24 +391,25 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
   tools.push(
     zodTool({
       name: 'read_artifact',
-      displayName: 'Membaca artefak',
+      displayName: { id: 'Membaca artefak', en: 'Reading artifact' },
       description:
         'Read the text content of an artifact by id (for review or reuse). Works for artifacts of this task and of previous tasks listed in the session context.',
       schema: z.object({ artifact_id: z.string().regex(/^art_[A-Za-z0-9]+$/) }),
-      async execute(input) {
+      async execute(input, ctx) {
+        const lang = taskLang(ctx);
         const artifact = await artifacts.get(input.artifact_id);
-        if (!artifact) return { isError: true, content: `Artifact ${input.artifact_id} not found`, summary: 'not found' };
+        if (!artifact) return { isError: true, content: `Artifact ${input.artifact_id} not found`, summary: t(lang, 'tool.notFound') };
         if (!TEXT_KINDS.has(artifact.kind)) {
           return {
             isError: true,
             content: `${artifact.name} is a binary file (${artifact.mimeType}); read the Markdown or JSON file of the same bundle instead.`,
-            summary: 'binary',
+            summary: t(lang, 'tool.binaryFile'),
           };
         }
         const text = await artifacts.readText(artifact);
         const limit = 200_000;
         return {
-          summary: `${artifact.name} (${artifact.size} bytes)`,
+          summary: t(lang, 'tool.fileSize', { name: artifact.name, size: artifact.size }),
           content: text.length > limit ? `${text.slice(0, limit)}\n\n[SOLAR: content truncated at ${limit} characters]` : text,
         };
       },
@@ -406,7 +424,7 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
     tools.push(
       zodTool({
         name: 'publish_artifacts_to_github',
-        displayName: 'Publish ke GitHub',
+        displayName: { id: 'Publish ke GitHub', en: 'Publishing to GitHub' },
         description: [
           'Commit artifacts (from this or previous tasks) to a GitHub repository folder in a single commit.',
           `Default repository: ${config.github.defaultRepo ?? '(none - ask the user or use the repository named in the request)'}; default branch: ${config.github.defaultBranch}.`,
@@ -419,23 +437,35 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
           artifact_ids: z.array(z.string().regex(/^art_[A-Za-z0-9]+$/)).min(1).max(100),
           commit_message: z.string().min(1).max(500),
         }),
-        confirmation: (input) =>
+        confirmation: (input, lang) =>
           config.github.publishConfirm === 'always'
-            ? `Commit ${input.artifact_ids.length} file ke ${input.repository ?? config.github.defaultRepo}/${input.path}`
+            ? t(lang, 'confirm.github', { n: input.artifact_ids.length, target: `${input.repository ?? config.github.defaultRepo}/${input.path}` })
             : null,
         async execute(input, ctx) {
+          const lang = taskLang(ctx);
           const repo = input.repository ?? config.github.defaultRepo;
-          if (!repo) return { isError: true, content: 'No repository given and GITHUB_DEFAULT_REPO is not set.', summary: 'no repository' };
+          if (!repo) {
+            return { isError: true, content: 'No repository given and GITHUB_DEFAULT_REPO is not set.', summary: t(lang, 'tool.github.noRepository') };
+          }
           const files = [];
           for (const id of input.artifact_ids) {
             const a = await artifacts.get(id);
-            if (!a) return { isError: true, content: `Artifact ${id} not found`, summary: 'artifact not found' };
+            if (!a) return { isError: true, content: `Artifact ${id} not found`, summary: t(lang, 'tool.github.artifactNotFound') };
             files.push({ path: a.name, content: await artifacts.read(a) });
           }
           const dup = files.map((f) => f.path).find((p, i, arr) => arr.indexOf(p) !== i);
-          if (dup) return { isError: true, content: `Two artifacts share the file name "${dup}"; publish them to different folders.`, summary: 'duplicate file name' };
+          if (dup) {
+            return {
+              isError: true,
+              content: `Two artifacts share the file name "${dup}"; publish them to different folders.`,
+              summary: t(lang, 'tool.github.duplicateName'),
+            };
+          }
           const result = await github.publish(repo, input.branch ?? config.github.defaultBranch, input.path, files, input.commit_message, ctx.signal);
-          return { content: json({ status: 'committed', repository: repo, ...result }), summary: `${files.length} file(s) -> ${repo}@${result.branch}` };
+          return {
+            content: json({ status: 'committed', repository: repo, ...result }),
+            summary: t(lang, 'tool.github.committed', { n: files.length, target: `${repo}@${result.branch}` }),
+          };
         },
       }),
     );
@@ -447,19 +477,19 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
     tools.push(
       zodTool({
         name: 'plane_list_projects',
-        displayName: 'Plane: daftar project',
+        displayName: { id: 'Plane: daftar project', en: 'Plane: listing projects' },
         description: `List projects of the Plane workspace "${config.plane.workspaceSlug}" on ${config.plane.hostUrl}.`,
         schema: z.object({}),
         async execute(_input, ctx) {
           const projects = await plane.listProjects(ctx.signal);
-          return { content: json(projects), summary: `${projects.length} project(s)` };
+          return { content: json(projects), summary: t(taskLang(ctx), 'tool.plane.projects', { n: projects.length }) };
         },
       }),
     );
     tools.push(
       zodTool({
         name: 'plane_create_backlog_items',
-        displayName: 'Plane: membuat backlog',
+        displayName: { id: 'Plane: membuat backlog', en: 'Plane: creating backlog items' },
         description: [
           `Create backlog work items in a project on ${config.plane.hostUrl} (workspace "${config.plane.workspaceSlug}") in one call.`,
           `Default project id: ${config.plane.projectId ?? '(none - call plane_list_projects first)'}.`,
@@ -483,11 +513,20 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
             .min(1)
             .max(200),
         }),
-          confirmation: (input) =>
-          config.plane.confirm === 'always' ? `Membuat ${input.items.length} work item di project Plane ${input.project_id ?? config.plane.projectId}` : null,
+        confirmation: (input, lang) =>
+          config.plane.confirm === 'always'
+            ? t(lang, 'confirm.plane', { n: input.items.length, project: input.project_id ?? config.plane.projectId ?? '' })
+            : null,
         async execute(input, ctx) {
+          const lang = taskLang(ctx);
           const projectId = input.project_id ?? config.plane.projectId;
-          if (!projectId) return { isError: true, content: 'No project_id given and PLANE_PROJECT_ID is not set. Call plane_list_projects.', summary: 'no project' };
+          if (!projectId) {
+            return {
+              isError: true,
+              content: 'No project_id given and PLANE_PROJECT_ID is not set. Call plane_list_projects.',
+              summary: t(lang, 'tool.plane.noProject'),
+            };
+          }
           const result = await plane.createBacklog(projectId, input.items, { skipExisting: input.skip_existing, signal: ctx.signal });
           const created = result.created.filter((c) => !c.skipped).length;
           if (result.error) {
@@ -502,12 +541,12 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
                 not_created_refs: remaining,
                 hint: 'The items listed were created. Call again with the same items and skip_existing=true to create the rest without duplicates.',
               }),
-              summary: `partial: ${created} created, ${remaining.length} not created (${result.error.slice(0, 80)})`,
+              summary: t(lang, 'tool.plane.partial', { created, remaining: remaining.length, error: result.error.slice(0, 80) }),
             };
           }
           return {
             content: json({ status: 'done', project: result.project, items: result.created }),
-            summary: `${created} created, ${result.created.length - created} skipped in ${result.project.identifier}`,
+            summary: t(lang, 'tool.plane.done', { created, skipped: result.created.length - created, project: result.project.identifier }),
           };
         },
       }),

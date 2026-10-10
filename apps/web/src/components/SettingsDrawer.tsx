@@ -1,5 +1,6 @@
 import gsap from 'gsap';
 import { useEffect, useRef, useState } from 'react';
+import { useT } from '../lib/i18n';
 import { CharacterCards } from './CharacterPicker';
 import { XIcon } from './Icons';
 import { KnowledgePanel } from './settings/KnowledgePanel';
@@ -11,17 +12,10 @@ import { VoicePanel } from './settings/VoicePanel';
 
 type Tab = 'character' | 'models' | 'knowledge' | 'skills' | 'plugins' | 'voice' | 'system';
 
-const TABS: Array<{ id: Tab; label: string }> = [
-  { id: 'character', label: 'Karakter' },
-  { id: 'models', label: 'Model AI' },
-  { id: 'knowledge', label: 'Knowledge' },
-  { id: 'skills', label: 'Skills' },
-  { id: 'plugins', label: 'Plugin MCP' },
-  { id: 'voice', label: 'Suara' },
-  { id: 'system', label: 'Sistem' },
-];
+const TABS: Tab[] = ['character', 'models', 'knowledge', 'skills', 'plugins', 'voice', 'system'];
 
 export function SettingsDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const t = useT();
   const [tab, setTab] = useState<Tab>('skills');
   const ref = useRef<HTMLElement>(null);
   // parents pass a new onClose on every render; keep the effect keyed on `open` only
@@ -41,17 +35,17 @@ export function SettingsDrawer({ open, onClose }: { open: boolean; onClose: () =
   return (
     <>
       <div className="backdrop" style={{ zIndex: 39 }} onClick={onClose} aria-hidden="true" />
-      <aside className="drawer" ref={ref} role="dialog" aria-modal="true" aria-label="Pengaturan">
+      <aside className="drawer" ref={ref} role="dialog" aria-modal="true" aria-label={t.app.settings.title}>
         <div className="drawer-head">
-          <h2>Pengaturan</h2>
-          <button type="button" className="btn ghost icon" onClick={onClose} aria-label="Tutup">
+          <h2>{t.app.settings.title}</h2>
+          <button type="button" className="btn ghost icon" onClick={onClose} aria-label={t.common.close}>
             <XIcon />
           </button>
         </div>
         <div className="tabs" role="tablist">
-          {TABS.map((t) => (
-            <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)}>
-              {t.label}
+          {TABS.map((id) => (
+            <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}>
+              {t.app.settings.tabs[id]}
             </button>
           ))}
         </div>
@@ -59,8 +53,7 @@ export function SettingsDrawer({ open, onClose }: { open: boolean; onClose: () =
           {tab === 'character' && (
             <div>
               <p className="muted" style={{ marginTop: 0 }}>
-                Pilih tampilan SOLAR AI AGENT. Animasinya sama untuk semua karakter: mendengarkan, berpikir, bekerja, berbicara,
-                bertanya, senang dan sedih. Pilihan disimpan di perangkat ini.
+                {t.app.settings.characterIntro}
               </p>
               <CharacterCards />
             </div>

@@ -1,3 +1,4 @@
+import { DEFAULT_LANG, fmtInt as formatInt, t, type Lang } from '../i18n.js';
 import { documentError } from './types.js';
 
 export const MB = 1024 * 1024;
@@ -25,27 +26,30 @@ export const LIMITS = Object.freeze({
 
 export type Limits = { readonly [K in keyof typeof LIMITS]: number };
 
-export const fmtInt = (n: number) => Number(n).toLocaleString('id-ID');
+/** An integer formatted for the language of the messages: 1.000 (id), 1,000 (en). */
+export const fmtInt = (n: number, lang: Lang = DEFAULT_LANG) => formatInt(n, lang);
 export const fmtMB = (n: number) => `${(n / MB).toFixed(n >= 10 * MB ? 0 : 1)} MB`;
-const fmtSecs = (ms: number) => (ms >= 1000 ? `${Math.round(ms / 1000)} detik` : `${ms} ms`);
+const fmtSecs = (ms: number, lang: Lang) => (ms >= 1000 ? t(lang, 'doc.seconds', { n: Math.round(ms / 1000) }) : `${ms} ms`);
 
 export interface Deadline {
   readonly timeoutMs: number;
+  /** Language of the TIMEOUT error. */
+  readonly lang: Lang;
   remaining(): number;
   /** Throws a TIMEOUT error once the time is up (called between parsing steps). */
   check(): void;
 }
 
-const timeoutError = (timeoutMs: number) =>
-  documentError('TIMEOUT', `Membaca dokumen melebihi batas waktu ${fmtSecs(timeoutMs)}; dokumen terlalu besar atau terlalu rumit. Pecah menjadi beberapa file.`);
+const timeoutError = (timeoutMs: number, lang: Lang) => documentError('TIMEOUT', t(lang, 'doc.timeout', { time: fmtSecs(timeoutMs, lang) }));
 
-export function makeDeadline(timeoutMs: number): Deadline {
+export function makeDeadline(timeoutMs: number, lang: Lang = DEFAULT_LANG): Deadline {
   const end = Date.now() + timeoutMs;
   return {
     timeoutMs,
+    lang,
     remaining: () => end - Date.now(),
     check() {
-      if (Date.now() > end) throw timeoutError(timeoutMs);
+      if (Date.now() > end) throw timeoutError(timeoutMs, lang);
     },
   };
 }
@@ -54,7 +58,7 @@ export function makeDeadline(timeoutMs: number): Deadline {
 export function withTimeout<T>(promise: Promise<T>, deadline: Deadline): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(timeoutError(deadline.timeoutMs)), Math.max(1, deadline.remaining()));
+    timer = setTimeout(() => reject(timeoutError(deadline.timeoutMs, deadline.lang)), Math.max(1, deadline.remaining()));
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }

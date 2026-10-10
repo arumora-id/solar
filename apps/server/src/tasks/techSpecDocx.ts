@@ -1,6 +1,7 @@
 import type { Artifact } from '@solar/shared';
 import { DOCX_MIME } from '../documents/kind.js';
 import { buildTechSpec, type BuiltDocument, type ResolvedDiagram } from '../generators/techspec/index.js';
+import { both, DEFAULT_LANG, LocalizedError, t, type Lang, type Localized } from '../i18n.js';
 import { KeyedQueue } from '../util/fs.js';
 import type { ArtifactService, NewArtifact } from './artifactService.js';
 import { renderTechSpecDocxIsolated } from './techSpecDocxIsolated.js';
@@ -26,8 +27,18 @@ export async function resolveTaskDiagrams(artifacts: ArtifactService, list: Arti
   return diagrams;
 }
 
-/** The artifact record of a TSD's Word file (same file stem and bundle as its .md/.html/.tsd.json). */
-export function tsdDocxArtifact(input: { stem: string; title: string; bundle: string; document: BuiltDocument; buffer: Buffer }): Omit<NewArtifact, 'taskId'> {
+/**
+ * The artifact record of a TSD's Word file (same file stem and bundle as its .md/.html/.tsd.json); its description is
+ * in `lang`, the task's language (an export: the requester's).
+ */
+export function tsdDocxArtifact(input: {
+  stem: string;
+  title: string;
+  bundle: string;
+  document: BuiltDocument;
+  buffer: Buffer;
+  lang?: Lang;
+}): Omit<NewArtifact, 'taskId'> {
   const figures = input.document.blocks.filter((b) => b.kind === 'figure').length;
   const sections = input.document.blocks.filter((b) => b.kind === 'heading' && b.toc).length;
   return {
@@ -36,17 +47,18 @@ export function tsdDocxArtifact(input: { stem: string; title: string; bundle: st
     kind: 'tsd-docx',
     mimeType: DOCX_MIME,
     bundle: input.bundle,
-    description: `Word delivery document: ${sections} sections, ${figures} diagram(s)`,
+    description: t(input.lang ?? DEFAULT_LANG, 'artifact.tsd.docx', { sections, figures }),
     content: input.buffer,
   };
 }
 
-export class TechSpecDocxError extends Error {
+/** Why a TSD has no Word export; the API answers in the request's language (`message` is English). */
+export class TechSpecDocxError extends LocalizedError {
   constructor(
     readonly status: 400 | 404,
-    message: string,
+    text: Localized,
   ) {
-    super(message);
+    super(text, 'en');
   }
 }
 
@@ -81,33 +93,36 @@ export async function exportTechSpecDocx(
   artifacts: ArtifactService,
   save: (taskId: string, input: Omit<NewArtifact, 'taskId'>) => Promise<Artifact>,
   artifactId: string,
+  /** Language of the warnings and of the new artifact's description (the request's). */
+  lang: Lang = DEFAULT_LANG,
 ): Promise<TechSpecDocxExport> {
   const artifact = await artifacts.get(artifactId);
-  if (!artifact) throw new TechSpecDocxError(404, `Artifact ${artifactId} not found`);
+  if (!artifact) throw new TechSpecDocxError(404, both('docx.artifactNotFound', { id: artifactId }));
   return withTechSpecBundleLock(artifact.taskId, artifact.bundle, async () => {
     const list = await artifacts.list(artifact.taskId);
     const bundle = list.filter((a) => a.bundle === artifact.bundle);
     const existing = bundle.find((a) => a.kind === 'tsd-docx');
     if (existing) return { artifact: existing, created: false, warnings: [] };
     const model = bundle.find((a) => a.kind === 'tsd-model');
-    if (!model) throw new TechSpecDocxError(400, `${artifact.name} is not part of a Technical Specification Document (its bundle has no .tsd.json model)`);
+    if (!model) throw new TechSpecDocxError(400, both('docx.notTsd', { name: artifact.name }));
 
     let input: unknown;
     try {
       input = JSON.parse(await artifacts.readText(model));
     } catch {
-      throw new TechSpecDocxError(400, `${model.name} is not valid JSON`);
+      throw new TechSpecDocxError(400, both('docx.invalidJson', { name: model.name }));
     }
     // the document date defaults to the day the TSD was made, as in its .md and .html
     const result = buildTechSpec(input, await resolveTaskDiagrams(artifacts, list), model.createdAt.slice(0, 10));
     if (!result.ok) {
-      throw new TechSpecDocxError(400, `${model.name} is not a valid specification: ${result.errors.map((e) => `[${e.path}] ${e.message}`).join('; ')}`);
+      const errors = result.errors.map((e) => `[${e.path}] ${e.message}`).join('; ');
+      throw new TechSpecDocxError(400, both('docx.invalidSpec', { name: model.name, errors }));
     }
-    const { buffer, warnings } = await renderTechSpecDocxIsolated(result.output.document);
+    const { buffer, warnings } = await renderTechSpecDocxIsolated(result.output.document, { warningLanguage: lang });
     const stem = model.name.replace(/(\.tsd)?\.json$/i, '') || 'technical-specification';
     const saved = await save(
       artifact.taskId,
-      tsdDocxArtifact({ stem, title: result.output.spec.title, bundle: artifact.bundle, document: result.output.document, buffer }),
+      tsdDocxArtifact({ stem, title: result.output.spec.title, bundle: artifact.bundle, document: result.output.document, buffer, lang }),
     );
     return { artifact: saved, created: true, warnings };
   });

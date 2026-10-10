@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { SkillDetail } from '@solar/shared';
 import { api } from '../../lib/api';
+import { useT } from '../../lib/i18n';
 import { PlusIcon } from '../Icons';
+import { rich } from './richText';
 
 interface Draft {
   id: string | null;
@@ -13,6 +15,8 @@ interface Draft {
 const EMPTY: Draft = { id: null, name: '', description: '', content: '' };
 
 export function SkillsPanel() {
+  const t = useT();
+  const words = t.settings.skills;
   const [skills, setSkills] = useState<SkillDetail[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [error, setError] = useState('');
@@ -60,15 +64,14 @@ export function SkillsPanel() {
   return (
     <div>
       <p className="hint" style={{ marginTop: 0 }}>
-        Skill adalah instruksi “house style” yang dimuat agent saat relevan (format <code>SKILL.md</code>: front matter <code>name</code> dan{' '}
-        <code>description</code>, lalu isi Markdown). Skill bawaan bisa dinonaktifkan atau di-override.
+        {rich(words.intro)}
       </p>
       <div className="row" style={{ marginBottom: 12 }}>
         <button type="button" className="btn primary small" onClick={() => setDraft({ ...EMPTY })}>
-          <PlusIcon size={16} /> Tambah skill
+          <PlusIcon size={16} /> {words.add}
         </button>
         <label className="btn small">
-          Impor SKILL.md
+          {words.importFile}
           <input
             type="file"
             accept=".md,text/markdown,text/plain"
@@ -89,25 +92,25 @@ export function SkillsPanel() {
 
       {draft && (
         <div className="card">
-          <h4 style={{ marginTop: 0 }}>{draft.id ? `Edit skill: ${draft.id}` : 'Skill baru'}</h4>
+          <h4 style={{ marginTop: 0 }}>{draft.id ? words.editSkill(draft.id) : words.newSkill}</h4>
           <label className="field">
-            <span>Nama</span>
-            <input className="input" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="mis. Cloud Cost Review" />
+            <span>{t.common.name}</span>
+            <input className="input" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder={words.namePlaceholder} />
           </label>
           <label className="field">
-            <span>Deskripsi (kapan skill dipakai)</span>
+            <span>{words.description}</span>
             <input className="input" value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
           </label>
           <label className="field">
-            <span>Instruksi (Markdown)</span>
+            <span>{words.content}</span>
             <textarea className="textarea" rows={12} value={draft.content} onChange={(e) => setDraft({ ...draft, content: e.target.value })} />
           </label>
           <div className="row">
             <button type="button" className="btn primary small" disabled={busy || !draft.name.trim() || !draft.content.trim()} onClick={() => void save()}>
-              Simpan
+              {t.common.save}
             </button>
             <button type="button" className="btn small" onClick={() => setDraft(null)}>
-              Batal
+              {t.common.cancel}
             </button>
           </div>
         </div>
@@ -117,20 +120,20 @@ export function SkillsPanel() {
         <div className="card" key={s.id}>
           <div className="card-head">
             <h4>{s.name}</h4>
-            <span className="badge">{s.source === 'builtin' ? 'Bawaan' : 'Pengguna'}</span>
+            <span className="badge">{t.settings.source[s.source]}</span>
             <label className="toggle">
               <input type="checkbox" checked={s.enabled} disabled={busy} onChange={(e) => void run(() => api.updateSkill(s.id, { enabled: e.target.checked }))} />
-              Aktif
+              {t.common.active}
             </label>
           </div>
-          <p>{s.description || 'Tanpa deskripsi'}</p>
+          <p>{s.description || words.noDescription}</p>
           <p className="hint">
             id: <code>{s.id}</code>
-            {s.files.length ? ` · file: ${s.files.join(', ')}` : ''}
+            {s.files.length ? ` · ${words.files(s.files.join(', '))}` : ''}
           </p>
           <div className="row" style={{ marginTop: 8 }}>
             <button type="button" className="btn small" onClick={() => setDraft({ id: s.id, name: s.name, description: s.description, content: s.content })}>
-              Edit
+              {t.common.edit}
             </button>
             {s.source === 'user' && (
               <button
@@ -138,10 +141,10 @@ export function SkillsPanel() {
                 className="btn small danger"
                 disabled={busy}
                 onClick={() => {
-                  if (window.confirm(`Hapus skill "${s.name}"? Skill bawaan dengan id yang sama akan dipulihkan.`)) void run(() => api.deleteSkill(s.id));
+                  if (window.confirm(words.confirmDelete(s.name))) void run(() => api.deleteSkill(s.id));
                 }}
               >
-                Hapus
+                {t.common.delete}
               </button>
             )}
           </div>

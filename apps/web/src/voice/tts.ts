@@ -1,4 +1,5 @@
 /** Text-to-speech with the operating system voices (works in browsers and in Electron on Windows). */
+import { localeOf } from '../lib/i18n';
 
 export function ttsAvailable(): boolean {
   return typeof window !== 'undefined' && 'speechSynthesis' in window;
@@ -15,11 +16,16 @@ function pickVoice(lang: string): SpeechSynthesisVoice | null {
   );
 }
 
+/**
+ * Speaks `text` in `lang` (a BCP 47 tag such as 'id-ID', or 'auto' = the current interface language, as stored in the
+ * voice preferences).
+ */
 export function speak(text: string, lang: string, handlers: { onStart?: () => void; onEnd?: () => void } = {}): void {
   if (!ttsAvailable() || !text.trim()) {
     handlers.onEnd?.();
     return;
   }
+  if (lang === 'auto') lang = localeOf();
   const synth = window.speechSynthesis;
   synth.cancel();
   const utterance = new SpeechSynthesisUtterance(text);

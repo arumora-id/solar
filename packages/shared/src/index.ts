@@ -4,6 +4,22 @@
  */
 
 // ---------------------------------------------------------------------------
+// Languages
+// ---------------------------------------------------------------------------
+
+/**
+ * Interface languages of SOLAR: Bahasa Indonesia and English. The web client sends its language with every request
+ * (header `X-Solar-Language`) and stores it on each task it creates ({@link Task.language}); the server answers in
+ * Indonesian when no language is given.
+ */
+export type Language = 'id' | 'en';
+
+export const LANGUAGES: readonly Language[] = ['id', 'en'];
+
+/** Request header carrying the client's interface language (`id` | `en`); `Accept-Language` is the fallback. */
+export const LANGUAGE_HEADER = 'X-Solar-Language';
+
+// ---------------------------------------------------------------------------
 // Tasks
 // ---------------------------------------------------------------------------
 
@@ -55,6 +71,12 @@ export interface Task {
   usage: TaskUsage;
   /** Documents attached to the request (see {@link Attachment}); empty for older tasks. */
   attachmentIds: string[];
+  /**
+   * Interface language of the client that created the task: task-scoped server text (current step, status messages,
+   * confirmation reasons, tool names, errors) is written in it, and the agent falls back to it when the language of
+   * the request is unclear. Absent on older tasks, which are Indonesian.
+   */
+  language?: Language;
 }
 
 export type ToolSource = 'builtin' | 'mcp';
@@ -423,6 +445,10 @@ export interface PublicConfig {
 export interface CreateTaskRequest {
   prompt: string;
   sessionId: string;
+  /** Documents uploaded beforehand (POST /api/attachments) to attach to this request. */
+  attachmentIds?: string[];
+  /** Interface language of the client; the server's default is `id`. */
+  language?: Language;
 }
 
 export interface TaskDetail {

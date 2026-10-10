@@ -1,12 +1,19 @@
 /** Speech-to-text engines: the browser's Web Speech API, or Whisper running locally in a worker. */
+import { t, type Dict } from '../lib/i18n';
 
 export type VoiceEngine = 'browser' | 'whisper';
+
+/**
+ * A status or error line for the user, rendered from the dictionary when shown (`t.voice.recognition`), so a line on
+ * screen follows a language switch.
+ */
+export type VoiceText = (t: Dict) => string;
 
 export interface RecognitionCallbacks {
   onInterim(text: string): void;
   onFinal(text: string): void;
-  onStatus(status: string): void;
-  onError(message: string, fallbackSuggested: boolean): void;
+  onStatus(status: VoiceText): void;
+  onError(message: VoiceText, fallbackSuggested: boolean): void;
   onEnd(): void;
 }
 
@@ -62,7 +69,7 @@ export function microphoneAvailable(): boolean {
 
 export function startBrowserRecognition(lang: string, cb: RecognitionCallbacks): RecognitionSession {
   const Ctor = recognitionCtor();
-  if (!Ctor) throw new Error('Web Speech API is not available');
+  if (!Ctor) throw new Error(t().voice.recognition.webSpeechUnavailable);
   const rec = new Ctor();
   rec.lang = lang;
   rec.interimResults = true;
@@ -81,19 +88,21 @@ export function startBrowserRecognition(lang: string, cb: RecognitionCallbacks):
   rec.onerror = (e) => {
     if (e.error === 'no-speech' || e.error === 'aborted') return;
     const fallback = e.error === 'network' || e.error === 'service-not-allowed' || e.error === 'language-not-supported';
-    const text: Record<string, string> = {
-      'not-allowed': 'Akses mikrofon ditolak. Izinkan mikrofon di pengaturan browser.',
-      'audio-capture': 'Mikrofon tidak ditemukan.',
-      network: 'Layanan pengenalan suara browser tidak dapat dihubungi.',
-    };
-    cb.onError(text[e.error] ?? `Pengenalan suara gagal (${e.error}).`, fallback);
+    const code = e.error;
+    cb.onError((d) => {
+      const words = d.voice.recognition;
+      if (code === 'not-allowed') return words.micDenied;
+      if (code === 'audio-capture') return words.micNotFound;
+      if (code === 'network') return words.serviceUnreachable;
+      return words.failed(code);
+    }, fallback);
   };
   rec.onend = () => {
     if (finalText.trim()) cb.onFinal(finalText.trim());
     cb.onEnd();
   };
   rec.start();
-  cb.onStatus('Mendengarkan…');
+  cb.onStatus((d) => d.voice.recognition.listening);
   return { stop: () => rec.stop(), abort: () => rec.abort() };
 }
 
@@ -150,7 +159,7 @@ export function startWhisperRecognition(lang: string, model: string, cb: Recogni
       return;
     }
     try {
-      cb.onStatus('Mentranskripsi…');
+      cb.onStatus((d) => d.voice.recognition.transcribing);
       const audio = await decodeTo16k(blob);
       const id = ++requestId;
       const w = getWorker();
@@ -158,9 +167,11 @@ export function startWhisperRecognition(lang: string, model: string, cb: Recogni
         const onMessage = (ev: MessageEvent<{ type: string; id: number; text?: string; message?: string; progress?: number; status?: string }>) => {
           const m = ev.data;
           if (m.id !== id) return;
-          if (m.type === 'progress') cb.onStatus(`Mengunduh model suara… ${Math.round(m.progress ?? 0)}%`);
-          else if (m.type === 'status' && m.status === 'loading') cb.onStatus('Menyiapkan model suara (sekali saja)…');
-          else if (m.type === 'status' && m.status === 'transcribing') cb.onStatus('Mentranskripsi…');
+          if (m.type === 'progress') {
+            const percent = Math.round(m.progress ?? 0);
+            cb.onStatus((d) => d.voice.recognition.downloadingModel(percent));
+          } else if (m.type === 'status' && m.status === 'loading') cb.onStatus((d) => d.voice.recognition.preparingModel);
+          else if (m.type === 'status' && m.status === 'transcribing') cb.onStatus((d) => d.voice.recognition.transcribing);
           else if (m.type === 'result') {
             w.removeEventListener('message', onMessage);
             resolve(m.text ?? '');
@@ -174,7 +185,8 @@ export function startWhisperRecognition(lang: string, model: string, cb: Recogni
       });
       if (text) cb.onFinal(text);
     } catch (err) {
-      cb.onError(`Transkripsi gagal: ${err instanceof Error ? err.message : String(err)}`, false);
+      const reason = err instanceof Error ? err.message : String(err);
+      cb.onError((d) => d.voice.recognition.transcriptionFailed(reason), false);
     }
     cb.onEnd();
   };
@@ -183,7 +195,7 @@ export function startWhisperRecognition(lang: string, model: string, cb: Recogni
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
     } catch {
-      cb.onError('Akses mikrofon ditolak atau mikrofon tidak tersedia.', false);
+      cb.onError((d) => d.voice.recognition.micUnavailable, false);
       cb.onEnd();
       return;
     }
@@ -198,7 +210,7 @@ export function startWhisperRecognition(lang: string, model: string, cb: Recogni
     };
     recorder.onstop = () => void finish();
     recorder.start(250);
-    cb.onStatus('Mendengarkan… (berhenti otomatis saat hening)');
+    cb.onStatus((d) => d.voice.recognition.listeningUntilSilence);
 
     // simple voice activity detection
     audioCtx = new AudioContext();
