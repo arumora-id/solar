@@ -1,4 +1,5 @@
 import type { Attachment, Task } from '@solar/shared';
+import { DEFAULT_LANG, t, type Lang } from '../i18n.js';
 import { createLogger } from '../logger.js';
 import { detectKind, DocumentError, outlineOf } from '../documents/index.js';
 import { extractIsolated } from '../documents/isolated.js';
@@ -40,16 +41,19 @@ export class AttachmentService {
     private readonly options: { maxFileBytes: number },
   ) {}
 
-  /** Validates, extracts and stores a document. Throws DocumentError with a user-facing message. */
-  async create(sessionId: string, rawName: string, body: Buffer): Promise<Attachment> {
+  /**
+   * Validates, extracts and stores a document. Throws DocumentError with a user-facing message in `lang`, the language
+   * of the upload request, which the stored warnings keep (they are shown again later as they were written).
+   */
+  async create(sessionId: string, rawName: string, body: Buffer, lang: Lang = DEFAULT_LANG): Promise<Attachment> {
     const name = cleanFileName(rawName);
-    if (!name) throw new DocumentError('Nama file kosong.');
+    if (!name) throw new DocumentError(t(lang, 'doc.nameEmpty'));
     if (body.length > this.options.maxFileBytes) {
-      throw new DocumentError(`"${name}" terlalu besar (maks ${Math.round(this.options.maxFileBytes / 1024 / 1024)} MB).`, 413);
+      throw new DocumentError(t(lang, 'doc.tooLarge', { file: name, mb: Math.round(this.options.maxFileBytes / 1024 / 1024) }), 413);
     }
-    const { mimeType } = detectKind(name);
+    const { mimeType } = detectKind(name, lang);
     const started = Date.now();
-    const extracted = await extractIsolated(body, name);
+    const extracted = await extractIsolated(body, name, { lang });
     const id = newId('att');
     const safe = name.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[-.]+/, '') || 'document';
     // the original lives in its own folder, so no file name can collide with the extracted text

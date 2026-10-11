@@ -3,24 +3,28 @@ import { readPref, writePref } from '../lib/session';
 import { buildCocoa } from './models/cocoa';
 import { buildMochi } from './models/mochi';
 import { buildRabbit } from './models/rabbit';
+import { buildRobot } from './models/robot';
 import type { Rig } from './rig';
 
-export type CharacterId = 'mochi' | 'cocoa' | 'rabbit';
+export type CharacterId = 'robot' | 'mochi' | 'cocoa' | 'rabbit';
 
+/**
+ * A selectable character. Its name, description and canvas label are texts of the interface language:
+ * `t.character.characters[id]` (i18n/<lang>/character.ts).
+ */
 export interface CharacterInfo {
   id: CharacterId;
-  name: string;
-  description: string;
   build: (parent: THREE.Object3D) => Rig;
 }
 
 export const CHARACTERS: CharacterInfo[] = [
-  { id: 'mochi', name: 'Mochi', description: 'Kue mochi merah muda bertabur tepung, daun sakura di kepala.', build: buildMochi },
-  { id: 'cocoa', name: 'Cocoa Kelapa', description: 'Kelapa cokelat dengan sedotan dan payung kecil.', build: buildCocoa },
-  { id: 'rabbit', name: 'Kelinci', description: 'Kelinci putih berkacamata, karakter klasik SOLAR.', build: buildRabbit },
+  { id: 'robot', build: buildRobot },
+  { id: 'mochi', build: buildMochi },
+  { id: 'cocoa', build: buildCocoa },
+  { id: 'rabbit', build: buildRabbit },
 ];
 
-export const DEFAULT_CHARACTER: CharacterId = 'mochi';
+export const DEFAULT_CHARACTER: CharacterId = 'robot';
 /** Fired on window when the user picks another character. */
 export const CHARACTER_EVENT = 'solar:character';
 

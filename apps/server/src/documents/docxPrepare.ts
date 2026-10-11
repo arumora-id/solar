@@ -5,6 +5,7 @@
  * preparation also removes references mammoth would crash on, hides comments (never shown) and carries Word's list
  * and heading numbering into the text, since mammoth renders every list from 1 and drops heading numbers.
  */
+import { DEFAULT_LANG, t, type Lang } from '../i18n.js';
 import { fmtMB, MB, parseAttrs, type Deadline, type Limits } from './limits.js';
 import { documentError } from './types.js';
 import { assertWellFormed, kid, kids, parseXml, prefixFor, scanXml, type XmlElement } from './xml.js';
@@ -36,15 +37,14 @@ export const normPath = (p: string) => p.replace(/^\/+/, '').toLowerCase();
 /** An XML name prefix (letters, digits, '.', '-', '_') for use inside a RegExp. */
 const esc = (prefix: string) => prefix.replace(/[.-]/g, '\\$&');
 
-const corrupt = (part: string) =>
-  documentError('CORRUPT', `File rusak atau bukan dokumen Word yang valid (XML bagian "${part}" tidak lengkap atau tidak valid).`);
+const corrupt = (part: string, lang: Lang) => documentError('CORRUPT', t(lang, 'doc.docx.badPart', { part }));
 
-/** Throws CORRUPT (Indonesian, without parser internals) unless the part is well-formed XML without a DOCTYPE. */
-export function checkPart(text: string, part: string): void {
+/** Throws CORRUPT (in `lang`, without parser internals) unless the part is well-formed XML without a DOCTYPE. */
+export function checkPart(text: string, part: string, lang: Lang = DEFAULT_LANG): void {
   try {
     assertWellFormed(text);
   } catch {
-    throw corrupt(part);
+    throw corrupt(part, lang);
   }
 }
 
@@ -418,21 +418,25 @@ function addNumberLabels(xml: string, numbering: NumberingDefs, styles: Map<stri
 
 // ---------------------------------------------------------------------------------------------------------------
 
-export function prepareDocx(zip: ZipArchive, options: { limits: Limits; deadline: Deadline; maxChars: number; warnings: string[] }): PreparedDocx {
+export function prepareDocx(
+  zip: ZipArchive,
+  options: { limits: Limits; deadline: Deadline; maxChars: number; warnings: string[]; lang?: Lang },
+): PreparedDocx {
   const { limits, deadline, maxChars, warnings } = options;
+  const lang = options.lang ?? DEFAULT_LANG;
   const texts = new Map<string, string>();
   const hidden = new Set<string>();
 
   // the parts mammoth will read, found the same way mammoth finds them
   const mainPart = findPart(zip, parseRels(zip.text('_rels/.rels', 4 * MB)), 'officeDocument', '', 'word/document.xml');
-  if (!zip.has(mainPart)) throw documentError('CORRUPT', 'File rusak atau bukan dokumen Word yang valid (bagian utama dokumen tidak ditemukan).');
+  if (!zip.has(mainPart)) throw documentError('CORRUPT', t(lang, 'doc.docx.noMainPart'));
   // an oversized relationship list (tens of thousands of hyperlinks) is left out: links and images then read as text
   const relsPath = relsPathOf(mainPart);
   const relsEntry = zip.get(relsPath);
   let mainRels: ReturnType<typeof parseRels> = [];
   if (relsEntry && relsEntry.usize > limits.maxDocxXmlBytes) {
     hidden.add(normPath(relsPath));
-    warnings.push(`Daftar tautan dan gambar dokumen terlalu besar (${fmtMB(relsEntry.usize)}); tautan dibaca sebagai teks biasa.`);
+    warnings.push(t(lang, 'doc.docx.relsTooLarge', { size: fmtMB(relsEntry.usize) }));
   } else {
     mainRels = parseRels(zip.text(relsPath, limits.maxDocxXmlBytes));
   }
@@ -451,12 +455,12 @@ export function prepareDocx(zip: ZipArchive, options: { limits: Limits; deadline
     if (!entry) continue;
     if (entry.usize > MAX_SIDE_PART) {
       hidden.add(normPath(path));
-      warnings.push(`Bagian ${type === 'styles' ? 'gaya' : 'penomoran'} dokumen terlalu besar (${fmtMB(entry.usize)}) dan dilewati.`);
+      warnings.push(t(lang, type === 'styles' ? 'doc.docx.stylesTooLarge' : 'doc.docx.numberingTooLarge', { size: fmtMB(entry.usize) }));
       continue;
     }
     const text = zip.text(path, MAX_SIDE_PART);
     if (text === null) continue;
-    checkPart(text, path);
+    checkPart(text, path, lang);
     texts.set(normPath(path), text);
     side[type] = text;
     sideTotal += text.length;
@@ -471,14 +475,14 @@ export function prepareDocx(zip: ZipArchive, options: { limits: Limits; deadline
     if (text === null) continue;
     if (text.length > MAX_NOTES_PART) {
       const cut = truncateAtChild(text, MAX_NOTES_PART);
-      warnings.push(`${type === 'footnotes' ? 'Catatan kaki' : 'Catatan akhir'} dokumen sangat panjang; hanya ${fmtMB(cut?.length ?? 0)} pertama yang dibaca.`);
+      warnings.push(t(lang, type === 'footnotes' ? 'doc.docx.footnotesLong' : 'doc.docx.endnotesLong', { size: fmtMB(cut?.length ?? 0) }));
       if (!cut) {
         hidden.add(normPath(path));
         continue;
       }
       text = cut;
     }
-    checkPart(text, path);
+    checkPart(text, path, lang);
     const relIds = new Set(parseRels(zip.text(relsPathOf(path), limits.maxDocxXmlBytes)).map((r) => r.id));
     text = stripDanglingRelIds(text, relIds);
     texts.set(normPath(path), text);
@@ -493,12 +497,12 @@ export function prepareDocx(zip: ZipArchive, options: { limits: Limits; deadline
   if (main.length > budget) {
     const cut = truncateDocxXml(main, budget);
     if (!cut) {
-      throw documentError('TOO_LARGE', `Dokumen terlalu besar (${fmtMB(main.length)} isi XML) dan tidak bisa dipotong dengan aman. Pecah dokumen menjadi beberapa file.`);
+      throw documentError('TOO_LARGE', t(lang, 'doc.docx.tooLarge', { size: fmtMB(main.length) }));
     }
-    warnings.push(`Dokumen dipotong: hanya ${fmtMB(cut.length)} pertama dari ${fmtMB(main.length)} isi dokumen (~${Math.round((cut.length / main.length) * 100)}%) yang dibaca.`);
+    warnings.push(t(lang, 'doc.docx.cut', { cut: fmtMB(cut.length), total: fmtMB(main.length), percent: Math.round((cut.length / main.length) * 100) }));
     main = cut;
   }
-  checkPart(main, mainPart);
+  checkPart(main, mainPart, lang);
   deadline.check();
   main = stripDanglingRelIds(main, new Set(mainRels.map((r) => r.id)));
   const w = prefixOf(rootTag(main), WORD_NAMESPACES, 'w');

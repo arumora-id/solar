@@ -85,6 +85,18 @@ const STRINGS = {
   definition: { id: 'Definisi', en: 'Definition' },
   references: { id: 'Referensi', en: 'References' },
   mermaidSource: { id: 'Sumber Mermaid', en: 'Mermaid source' },
+  initialVersion: { id: 'Versi awal', en: 'Initial version' },
+  // Word (.docx) delivery document
+  documentSubtitle: { id: 'Dokumen Spesifikasi Teknis', en: 'Technical Specification Document' },
+  approval: { id: 'Persetujuan Dokumen', en: 'Document Approval' },
+  reviewerRole: { id: 'Reviewer', en: 'Reviewer' },
+  approverRole: { id: 'Penyetuju', en: 'Approver' },
+  signature: { id: 'Tanda Tangan', en: 'Signature' },
+  pageOf: { id: 'Halaman {page} dari {pages}', en: 'Page {page} of {pages}' },
+  mermaidElsewhere: {
+    id: 'tersedia pada file .mmd dan versi Markdown/HTML dokumen ini',
+    en: 'available in the .mmd file and in the Markdown/HTML version of this document',
+  },
   generatedBy: { id: 'Dokumen ini disusun dengan bantuan SOLAR AI AGENT (AI Solution Architect Assistant)', en: 'This document was prepared with SOLAR AI AGENT (AI Solution Architect Assistant)' },
 } as const;
 

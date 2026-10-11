@@ -42,10 +42,8 @@ export interface Rig {
   breath: { x: number; y: number };
   /** Content box (feet to the tip of the badges) used to frame the camera. */
   frame: { height: number; width: number };
-  /** Meshes that react to hover/click. */
+  /** Meshes that react to hover/click. (The canvas' accessible description is `t.character.characters[id].sceneLabel`.) */
   pickables: THREE.Object3D[];
-  /** Accessible description of the canvas. */
-  label: string;
 }
 
 /** 3-step gradient for a soft cel-shaded look. */

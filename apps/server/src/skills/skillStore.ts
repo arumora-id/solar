@@ -3,6 +3,7 @@ import { mkdir, readdir, readFile, rm, stat } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import type { SkillDetail, SkillInput, SkillSource, SkillSummary } from '@solar/shared';
+import { both, LocalizedError } from '../i18n.js';
 import { resolveInside, writeFileAtomic } from '../util/fs.js';
 import { slugify } from '../util/ids.js';
 
@@ -136,18 +137,18 @@ export class SkillStore {
 
   async readFile(id: string, path: string): Promise<string> {
     const skill = await this.get(id);
-    if (!skill) throw new Error(`Skill "${id}" not found`);
+    if (!skill) throw new LocalizedError(both('store.skill.notFound', { id }), 'en');
     const candidates = [join(this.userDir, skill.id), join(this.builtinDir, skill.id)].map((dir) => resolveInside(dir, path));
     const full = candidates.find((c) => existsSync(c));
-    if (!full) throw new Error(`File "${path}" not found in skill "${id}"`);
+    if (!full) throw new LocalizedError(both('store.skill.fileNotFound', { path, id }), 'en');
     const info = await stat(full);
-    if (info.size > MAX_SKILL_FILE_BYTES) throw new Error(`File is larger than ${MAX_SKILL_FILE_BYTES} bytes`);
+    if (info.size > MAX_SKILL_FILE_BYTES) throw new LocalizedError(both('store.skill.fileTooLarge', { bytes: MAX_SKILL_FILE_BYTES }), 'en');
     return readFile(full, 'utf8');
   }
 
   async create(input: SkillInput): Promise<SkillDetail> {
     const id = slugify(input.name, 'skill');
-    if (existsSync(join(this.userDir, id))) throw new Error(`A skill with id "${id}" already exists`);
+    if (existsSync(join(this.userDir, id))) throw new LocalizedError(both('store.skill.exists', { id }), 'en');
     await writeFileAtomic(join(this.userDir, id, SKILL_FILE), renderSkillMarkdown(input));
     await this.setDisabled(id, input.enabled === false);
     return (await this.get(id))!;
@@ -156,7 +157,7 @@ export class SkillStore {
   /** Updating a built-in skill stores an override copy in the user directory. */
   async update(id: string, input: Partial<SkillInput>): Promise<SkillDetail> {
     const current = await this.get(id);
-    if (!current) throw new Error(`Skill "${id}" not found`);
+    if (!current) throw new LocalizedError(both('store.skill.notFound', { id }), 'en');
     if (input.name !== undefined || input.description !== undefined || input.content !== undefined) {
       await writeFileAtomic(
         join(this.userDir, id, SKILL_FILE),
@@ -175,7 +176,7 @@ export class SkillStore {
   async remove(id: string): Promise<'deleted' | 'reverted'> {
     const userPath = join(this.userDir, id);
     if (!/^[a-z0-9][a-z0-9-]*$/.test(id) || !existsSync(userPath)) {
-      throw new Error(`User skill "${id}" not found (built-in skills can only be disabled)`);
+      throw new LocalizedError(both('store.skill.notUserSkill', { id }), 'en');
     }
     await rm(userPath, { recursive: true, force: true });
     const builtinExists = existsSync(join(this.builtinDir, id, SKILL_FILE));
@@ -186,7 +187,7 @@ export class SkillStore {
   /** Imports a raw SKILL.md (with front matter). */
   async importMarkdown(raw: string): Promise<SkillDetail> {
     const parsed = parseSkillMarkdown(raw, 'imported-skill');
-    if (!parsed.body) throw new Error('The skill file has no content');
+    if (!parsed.body) throw new LocalizedError(both('store.skill.noContent'), 'en');
     return this.create({ name: parsed.name, description: parsed.description, content: parsed.body });
   }
 }

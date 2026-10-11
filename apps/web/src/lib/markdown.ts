@@ -1,5 +1,6 @@
 import DOMPurify from 'dompurify';
 import { Marked } from 'marked';
+import { t } from './i18n';
 
 const marked = new Marked({ gfm: true, breaks: true });
 
@@ -25,12 +26,18 @@ export function renderMarkdown(markdown: string, rewriteImage?: (src: string) =>
 
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
-/** Uploaded documents: raw HTML is shown as text (never interpreted or hidden) and images are not loaded. */
+/**
+ * Uploaded documents: raw HTML is shown as text (never interpreted or hidden) and images are not loaded (shown as
+ * "[gambar: alt]" / "[image: alt]" in the current language, read at render time).
+ */
 const documentMarked = new Marked({
   gfm: true,
   renderer: {
     html: ({ text }) => escapeHtml(text),
-    image: ({ text }) => escapeHtml(`[gambar${text ? `: ${text}` : ''}]`),
+    image: ({ text }) => {
+      const words = t().agent.markdown;
+      return escapeHtml(`[${text ? words.imageWithAlt(text) : words.image}]`);
+    },
   },
 });
 

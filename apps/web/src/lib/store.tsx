@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
 import type { Artifact, Attachment, Confirmation, PluginStatus, PublicConfig, StreamMessage, Task, TaskEvent } from '@solar/shared';
-import { api, ApiError, setToken, withToken } from './api';
+import { api, ApiError, setToken, withLang, withToken } from './api';
+import { useLang } from './i18n';
 import { getSessionId, newSessionId } from './session';
 
 interface Draft {
@@ -33,6 +34,7 @@ type Action =
   | { type: 'task'; task: Task }
   | { type: 'detail'; task: Task; events: TaskEvent[]; artifacts: Artifact[]; attachments: Attachment[] }
   | { type: 'attachments'; list: Attachment[] }
+  | { type: 'artifact'; taskId: string; artifact: Artifact }
   | { type: 'event'; event: TaskEvent }
   | { type: 'deltas'; items: Array<{ taskId: string; channel: 'text' | 'thinking'; text: string }> }
   | { type: 'plugins'; plugins: PluginStatus[] }
@@ -96,6 +98,12 @@ function reducer(state: State, action: Action): State {
         artifacts: { ...state.artifacts, [action.task.id]: mergeArtifacts(state.artifacts[action.task.id], action.artifacts) },
         attachments: action.attachments.length ? { ...state.attachments, ...Object.fromEntries(action.attachments.map((a) => [a.id, a])) } : state.attachments,
       };
+    case 'artifact': {
+      // also announced by an 'artifact' event on the stream: whichever arrives second is a no-op
+      const current = state.artifacts[action.taskId] ?? [];
+      if (current.some((a) => a.id === action.artifact.id)) return state;
+      return { ...state, artifacts: { ...state.artifacts, [action.taskId]: [...current, action.artifact] } };
+    }
     case 'attachments':
       return action.list.length ? { ...state, attachments: { ...state.attachments, ...Object.fromEntries(action.list.map((a) => [a.id, a])) } } : state;
     case 'event': {
@@ -137,6 +145,8 @@ function reducer(state: State, action: Action): State {
 interface SolarContextValue extends State {
   submit(prompt: string, attachmentIds?: string[]): Promise<Task>;
   rememberAttachments(list: Attachment[]): void;
+  /** Adds an artifact made outside an agent run (e.g. the Word file of an older TSD) to its task's list. */
+  rememberArtifact(taskId: string, artifact: Artifact): void;
   cancel(taskId: string): Promise<void>;
   loadTask(taskId: string): Promise<void>;
   refreshTasks(): Promise<void>;
@@ -169,6 +179,9 @@ export function SolarProvider({ children }: { children: ReactNode }) {
   stateRef.current = state;
   // bumped to (re)open the event stream after it was closed for good or the token changed
   const [streamNonce, setStreamNonce] = useState(0);
+  // the stream carries the interface language (an EventSource cannot send headers): plugin statuses arrive in it, so a
+  // switch reopens the stream
+  const lang = useLang();
   /** Survives stream re-creation: the next successful open must resync what was missed. */
   const missedEvents = useRef(false);
 
@@ -212,7 +225,7 @@ export function SolarProvider({ children }: { children: ReactNode }) {
     if (state.authRequired) return;
     void reloadConfig();
     void refreshTasks();
-    const source = new EventSource(withToken('/api/stream'));
+    const source = new EventSource(withToken(withLang('/api/stream', lang)));
     let retryTimer: number | undefined;
     // deltas are batched per animation frame; flush them before any event/task message so ordering holds
     // (a 'text' event clears the draft the deltas belong to)
@@ -288,9 +301,11 @@ export function SolarProvider({ children }: { children: ReactNode }) {
     };
     return () => {
       window.clearTimeout(retryTimer);
+      // closing an open stream (language switch, new token) leaves a gap: the next open resyncs what it missed
+      if (source.readyState === EventSource.OPEN) missedEvents.current = true;
       source.close();
     };
-  }, [state.authRequired, streamNonce, reloadConfig, refreshTasks, loadTask, handleError]);
+  }, [state.authRequired, streamNonce, lang, reloadConfig, refreshTasks, loadTask, handleError]);
 
   const submit = useCallback(
     async (prompt: string, attachmentIds: string[] = []) => {
@@ -302,6 +317,7 @@ export function SolarProvider({ children }: { children: ReactNode }) {
   );
 
   const rememberAttachments = useCallback((list: Attachment[]) => dispatch({ type: 'attachments', list }), []);
+  const rememberArtifact = useCallback((taskId: string, artifact: Artifact) => dispatch({ type: 'artifact', taskId, artifact }), []);
 
   const cancel = useCallback(
     async (taskId: string) => {
@@ -332,8 +348,20 @@ export function SolarProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<SolarContextValue>(
-    () => ({ ...state, submit, rememberAttachments, cancel, loadTask, refreshTasks, resolveConfirmation, startNewSession, reloadConfig, submitToken }),
-    [state, submit, rememberAttachments, cancel, loadTask, refreshTasks, resolveConfirmation, startNewSession, reloadConfig, submitToken],
+    () => ({
+      ...state,
+      submit,
+      rememberAttachments,
+      rememberArtifact,
+      cancel,
+      loadTask,
+      refreshTasks,
+      resolveConfirmation,
+      startNewSession,
+      reloadConfig,
+      submitToken,
+    }),
+    [state, submit, rememberAttachments, rememberArtifact, cancel, loadTask, refreshTasks, resolveConfirmation, startNewSession, reloadConfig, submitToken],
   );
   return <SolarContext.Provider value={value}>{children}</SolarContext.Provider>;
 }

@@ -3,6 +3,7 @@
  * ZIP reader), turndown turns that into Markdown with rules for tables, compact lists, footnotes and images.
  */
 import type TurndownService from 'turndown';
+import { t } from '../i18n.js';
 import { fmtInt, mdTable, withTimeout } from './limits.js';
 import { checkPart, LIST_MARK, normPath, prepareDocx } from './docxPrepare.js';
 import { DocumentError, documentError, type ParseContext, type ParsedDocument } from './types.js';
@@ -365,8 +366,8 @@ function lastBlockEnd(html: string, cap: number): number {
 }
 
 export async function extractDocx(ctx: ParseContext, zip: ZipArchive, pkg: OoxmlPackage): Promise<ParsedDocument> {
-  const { limits, deadline, warnings, maxChars } = ctx;
-  const prepared = prepareDocx(zip, { limits, deadline, maxChars, warnings });
+  const { limits, deadline, warnings, maxChars, lang } = ctx;
+  const prepared = prepareDocx(zip, { limits, deadline, maxChars, warnings, lang });
   const mammoth = (await import('mammoth')).default;
   const td = await getTurndown();
 
@@ -389,7 +390,7 @@ export async function extractDocx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
         if (text !== undefined) return Promise.resolve(text);
         const raw = zip.text(name, limits.maxDocxXmlBytes);
         if (raw === null) return Promise.reject(new Error(`missing part ${name}`));
-        checkPart(raw, name);
+        checkPart(raw, name, lang);
         checked.set(key, raw);
         return Promise.resolve(raw);
       } catch (err) {
@@ -414,11 +415,11 @@ export async function extractDocx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
   } catch (err) {
     if (err instanceof DocumentError) throw err;
     // mammoth's own errors are JavaScript internals; the user gets a plain explanation
-    throw documentError('CORRUPT', 'File Word ini berisi struktur yang tidak bisa dibaca (referensi atau elemen rusak). Coba buka di Word lalu simpan ulang.');
+    throw documentError('CORRUPT', t(lang, 'doc.docx.unreadable'));
   }
 
   const unusual = (result.messages ?? []).filter((m) => (m.type === 'warning' || m.type === 'error') && !QUIET_MESSAGES.some((q) => q.test(m.message)));
-  if (unusual.length) warnings.push('Sebagian elemen Word tidak dikenali dan dilewati.');
+  if (unusual.length) warnings.push(t(lang, 'doc.docx.unknownElements'));
 
   let html = result.value ?? '';
   const htmlCap = Math.min(limits.maxDocxHtmlChars, Math.max(200_000, maxChars * 4));
@@ -426,7 +427,9 @@ export async function extractDocx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
     const total = html.length;
     const cut = lastBlockEnd(html, htmlCap);
     html = html.slice(0, cut > 0 ? cut : htmlCap); // the HTML parser closes any list or table left open
-    warnings.push(`Dokumen dipotong: hanya ${fmtInt(html.length)} dari ${fmtInt(total)} karakter hasil konversi (~${Math.round((html.length / total) * 100)}%) yang dibaca.`);
+    warnings.push(
+      t(lang, 'doc.docx.htmlCut', { shown: fmtInt(html.length, lang), total: fmtInt(total, lang), percent: Math.round((html.length / total) * 100) }),
+    );
   }
   deadline.check();
   let md = '';
@@ -439,6 +442,6 @@ export async function extractDocx(ctx: ParseContext, zip: ZipArchive, pkg: Ooxml
   md = md.replace(new RegExp(`${LIST_MARK}([^${LIST_MARK}]*)${LIST_MARK}\\s*`, 'g'), '$1 ');
   // turndown escapes "1." at the start of any block; inside an ATX heading that is unnecessary
   md = md.replace(/^(#{1,6} +\d+(?:\.\d+)*)\\\./gm, '$1.');
-  if (/macroenabled/i.test(pkg.mainType)) warnings.push('Dokumen berisi makro; makro diabaikan (tidak pernah dijalankan).');
+  if (/macroenabled/i.test(pkg.mainType)) warnings.push(t(lang, 'doc.docx.macros'));
   return { kind: 'docx', markdown: md, parts: null };
 }

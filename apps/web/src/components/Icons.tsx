@@ -141,3 +141,17 @@ export const InstallIcon = ({ size = 18, ...p }: IconProps) => (
     <path d="M12 3v12M7 10l5 5 5-5M5 21h14" />
   </svg>
 );
+export const BookIcon = ({ size = 16, ...p }: IconProps) => (
+  <svg {...base(size, p)}>
+    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z" />
+    <path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5" />
+  </svg>
+);
+/** A page with a "W": the Word (.docx) version of a document. */
+export const WordIcon = ({ size = 16, ...p }: IconProps) => (
+  <svg {...base(size, p)}>
+    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+    <path d="M14 3v5h5" />
+    <path d="m8.5 12 1.2 5 2.3-3.6 2.3 3.6 1.2-5" strokeWidth={1.6} />
+  </svg>
+);

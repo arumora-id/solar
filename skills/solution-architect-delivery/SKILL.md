@@ -72,9 +72,11 @@ Ringkasan: <1 paragraf>
 Deliverables:
 - ArchiMate: <file .archimate.xml> (art_...), views: <view.svg> (art_...)
 - Sequence: <judul> - <file.svg> (art_...)
-- TSD: <file.md> (art_...), <file.html> (art_...)
+- TSD: <file.docx> (art_..., dokumen Word untuk klien), <file.md> (art_...), <file.html> (art_...)
 
 Asumsi: ASM-01 ..., ASM-02 ...
 Isu terbuka: OI-01 ...
 Langkah berikutnya: <publish ke GitHub / buat backlog Plane / review dengan stakeholder>
 ```
+The `.docx` is the document the architect sends to the client. If `create_technical_specification` returned
+`docx: null`, leave it out and say that the Word file can be created later with **Buat Word (.docx)** in the artifact list.

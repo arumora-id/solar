@@ -6,6 +6,7 @@ import { AttachmentStrip } from '../components/Attachments';
 import { Composer, type ComposerHandle } from '../components/Composer';
 import { PlusIcon, VolumeIcon } from '../components/Icons';
 import { isActive } from '../lib/format';
+import { localeOf, useT, type Dict } from '../lib/i18n';
 import { speakableSummary } from '../lib/markdown';
 import { readPref } from '../lib/session';
 import { useSolar } from '../lib/store';
@@ -15,26 +16,28 @@ import { CharacterSwitcher, useCharacter } from '../components/CharacterPicker';
 import { speak, stopSpeaking, ttsAvailable } from '../voice/tts';
 import { useVoicePrefs } from '../voice/useVoice';
 
-const QUICK_PROMPTS = [
-  {
-    label: 'Dari dokumen',
-    text: 'Pelajari semua dokumen terlampir, lalu buatkan paket arsitektur lengkap (model ArchiMate, sequence diagram skenario utama dan error, serta Technical Specification Document) sesuai isinya. Catat asumsi dan pertanyaan terbuka. Fokus: ',
-  },
-  {
-    label: 'Paket lengkap',
-    text: 'Buatkan paket arsitektur lengkap dalam sekali proses: model ArchiMate (Layered View dan Application Cooperation View), sequence diagram untuk skenario utama dan alur error, serta Technical Specification Document. Sistem: ',
-  },
-  { label: 'Diagram ArchiMate', text: 'Buatkan model ArchiMate 3.2 (Layered View) untuk sistem berikut: ' },
-  { label: 'Sequence diagram', text: 'Buatkan sequence diagram (happy path dan error path) untuk alur: ' },
-  { label: 'Technical Spec', text: 'Susun Technical Specification Document (TSD) lengkap untuk: ' },
-  { label: 'Backlog Plane', text: 'Buat backlog di Plane (plane.mesthi.com) dari TSD terakhir: epic per komponen, story per functional requirement.' },
-  { label: 'Publish GitHub', text: 'Publish semua artefak dari task terakhir ke GitHub di folder docs/architecture/' },
+/**
+ * Quick prompt chips, in this order. Label and text are in `t.agent.quickPrompts`: the text is written in the interface
+ * language, so the agent answers in it.
+ */
+const QUICK_PROMPTS: ReadonlyArray<keyof Dict['agent']['quickPrompts']> = [
+  'fromDocuments',
+  'fullPackage',
+  'archimate',
+  'sequence',
+  'techSpec',
+  'planeBacklog',
+  'publishGithub',
 ];
 
-const GREETING = 'Halo! Saya SOLAR AI AGENT, asisten solution architect Anda. Ketik atau ucapkan kebutuhan Anda.';
+/** Speech language for the voice preference; 'auto' (when available) follows the interface language. */
+function speechLang(pref: string): string {
+  return pref === 'auto' ? localeOf() : pref;
+}
 
 export function AgentPage() {
   const { tasks, events, sessionId, submit, startNewSession, lastFinished, config, connected } = useSolar();
+  const t = useT();
   const voicePrefs = useVoicePrefs();
   const composerRef = useRef<ComposerHandle>(null);
   const logRef = useRef<HTMLDivElement>(null);
@@ -63,10 +66,10 @@ export function AgentPage() {
   }, []);
 
   const sessionTasks = useMemo(
-    () => Object.values(tasks).filter((t) => t.sessionId === sessionId).sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+    () => Object.values(tasks).filter((task) => task.sessionId === sessionId).sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
     [tasks, sessionId],
   );
-  const current: Task | undefined = [...sessionTasks].reverse().find((t) => isActive(t.status));
+  const current: Task | undefined = [...sessionTasks].reverse().find((task) => isActive(task.status));
 
   // react to a finished task: celebrate (or not) and read the summary aloud
   const handled = useRef<string | null>(null);
@@ -88,7 +91,7 @@ export function AgentPage() {
       const { tasks: now, voicePrefs: prefs } = latest.current;
       const result = (now[lastFinished.taskId] ?? task).result;
       if (lastFinished.status === 'completed' && prefs.speakReplies && ttsAvailable() && result) {
-        speak(speakableSummary(result), prefs.lang, { onStart: () => setSpeaking(true), onEnd: () => setSpeaking(false) });
+        speak(speakableSummary(result), speechLang(prefs.lang), { onStart: () => setSpeaking(true), onEnd: () => setSpeaking(false) });
       }
     }, 1800);
   }, [lastFinished]);
@@ -112,17 +115,18 @@ export function AgentPage() {
   }, [listening, mood, current, speaking, events]);
 
   const bubble = useMemo(() => {
-    if (!connected) return { text: 'Menghubungkan ke server SOLAR AI AGENT…', sub: '' };
-    if (config && !config.llmConfigured)
-      return { text: 'Model AI belum siap', sub: 'Isi OPENAI_API_KEY di .env, atau tambahkan provider di Pengaturan → Model AI.' };
-    if (listening) return { text: 'Saya mendengarkan…', sub: 'Bicaralah, saya berhenti otomatis saat Anda diam.' };
-    if (mood === 'happy') return { text: 'Selesai! Semua deliverable siap.', sub: 'Lihat artefak di panel percakapan.' };
-    if (mood === 'sad') return { text: 'Ada kendala…', sub: 'Detail error ada di percakapan dan monitor.' };
-    if (current?.status === 'awaiting_confirmation') return { text: 'Butuh persetujuan Anda', sub: current.currentStep ?? '' };
-    if (current) return { text: current.currentStep ?? 'Sedang bekerja…', sub: `${current.progress}% · ${current.title}` };
-    if (speaking) return { text: 'Ringkasan hasil…', sub: '' };
-    return { text: GREETING, sub: 'Klik saya untuk mulai bicara.' };
-  }, [connected, config, listening, mood, current, speaking]);
+    const say = t.agent.speech;
+    if (!connected) return { text: say.connecting, sub: '' };
+    if (config && !config.llmConfigured) return { text: say.llmMissing, sub: say.llmMissingSub };
+    if (listening) return { text: say.listening, sub: say.listeningSub };
+    if (mood === 'happy') return { text: say.done, sub: say.doneSub };
+    if (mood === 'sad') return { text: say.failed, sub: say.failedSub };
+    // the step texts come from the server, in the language of the task
+    if (current?.status === 'awaiting_confirmation') return { text: say.needsApproval, sub: current.currentStep ?? '' };
+    if (current) return { text: current.currentStep ?? say.working, sub: `${current.progress}% · ${current.title}` };
+    if (speaking) return { text: say.speaking, sub: '' };
+    return { text: t.agent.greeting, sub: say.idleSub };
+  }, [t, connected, config, listening, mood, current, speaking]);
 
   useEffect(() => {
     if (speechRef.current) gsap.fromTo(speechRef.current, { y: -6, opacity: 0.4 }, { y: 0, opacity: 1, duration: 0.3, ease: 'power2.out' });
@@ -157,18 +161,21 @@ export function AgentPage() {
         </div>
         {!compact && (
           <div className="stage-footer">
-            {QUICK_PROMPTS.map((q) => (
-              <button key={q.label} type="button" className="chip" onClick={() => composerRef.current?.insert(q.text)}>
-                {q.label}
-              </button>
-            ))}
+            {QUICK_PROMPTS.map((key) => {
+              const q = t.agent.quickPrompts[key];
+              return (
+                <button key={key} type="button" className="chip" onClick={() => composerRef.current?.insert(q.text)}>
+                  {q.label}
+                </button>
+              );
+            })}
           </div>
         )}
       </section>
 
       <section
         className="chat"
-        aria-label="Percakapan"
+        aria-label={t.agent.chat.title}
         onDragEnter={(e) => {
           if (!hasFiles(e)) return;
           e.preventDefault();
@@ -195,13 +202,13 @@ export function AgentPage() {
         {dragging && (
           <div className="drop-overlay" aria-hidden="true">
             <div>
-              Lepaskan untuk melampirkan dokumen
-              <small>PDF, Word, Excel, PowerPoint, Markdown atau teks</small>
+              {t.agent.chat.dropTitle}
+              <small>{t.agent.chat.dropFormats}</small>
             </div>
           </div>
         )}
         <div className="chat-head">
-          <h2>Percakapan</h2>
+          <h2>{t.agent.chat.title}</h2>
           {speaking && (
             <button
               type="button"
@@ -211,31 +218,28 @@ export function AgentPage() {
                 setSpeaking(false);
               }}
             >
-              <VolumeIcon /> Hentikan suara
+              <VolumeIcon /> {t.agent.chat.stopSpeaking}
             </button>
           )}
-          <button type="button" className="btn small" onClick={startNewSession} title="Mulai percakapan baru (konteks sebelumnya tidak dibawa)">
-            <PlusIcon size={16} /> Percakapan baru
+          <button type="button" className="btn small" onClick={startNewSession} title={t.agent.chat.newConversationTitle}>
+            <PlusIcon size={16} /> {t.agent.chat.newConversation}
           </button>
         </div>
         <div className="chat-log" ref={logRef}>
           {sessionTasks.length === 0 ? (
             <div className="empty">
               <p>
-                <strong>Mulai dengan satu perintah.</strong>
+                <strong>{t.agent.chat.emptyTitle}</strong>
               </p>
-              <p>
-                Contoh: “Buatkan paket arsitektur lengkap untuk sistem pemesanan online dengan pembayaran via payment gateway, deploy di Kubernetes,
-                database PostgreSQL.”
-              </p>
-              <p>Punya dokumen proyek? Lampirkan PDF, Word, Excel, PowerPoint atau Markdown dengan tombol klip, atau seret file ke sini.</p>
+              <p>{t.agent.chat.emptyExample}</p>
+              <p>{t.agent.chat.emptyAttach}</p>
             </div>
           ) : (
-            sessionTasks.map((t) => (
-              <div key={t.id} style={{ display: 'contents' }}>
-                <div className="bubble user">{t.prompt}</div>
-                <AttachmentStrip ids={t.attachmentIds ?? []} />
-                <AgentBubble task={t} />
+            sessionTasks.map((task) => (
+              <div key={task.id} style={{ display: 'contents' }}>
+                <div className="bubble user">{task.prompt}</div>
+                <AttachmentStrip ids={task.attachmentIds ?? []} />
+                <AgentBubble task={task} />
               </div>
             ))
           )}

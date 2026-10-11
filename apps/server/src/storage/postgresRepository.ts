@@ -66,6 +66,8 @@ CREATE TABLE IF NOT EXISTS solar_confirmations (
 CREATE INDEX IF NOT EXISTS solar_confirmations_status_idx ON solar_confirmations (status, created_at);
 
 ALTER TABLE solar_tasks ADD COLUMN IF NOT EXISTS attachment_ids jsonb NOT NULL DEFAULT '[]'::jsonb;
+-- interface language of the client that created the task; tasks from before languages existed are Indonesian
+ALTER TABLE solar_tasks ADD COLUMN IF NOT EXISTS language text NOT NULL DEFAULT 'id';
 
 CREATE TABLE IF NOT EXISTS solar_attachments (
   id           text PRIMARY KEY,
@@ -106,6 +108,7 @@ function toTask(r: Row): Task {
     error: (r.error as string | null) ?? null,
     usage: { ...EMPTY_USAGE, ...((r.usage as Partial<TaskUsage> | null) ?? {}) },
     attachmentIds: (r.attachment_ids as string[] | null) ?? [],
+    language: r.language === 'en' ? 'en' : 'id',
   };
 }
 
@@ -188,8 +191,8 @@ export class PostgresRepository implements Repository {
   async upsertTask(t: Task): Promise<void> {
     await this.pool.query(
       `INSERT INTO solar_tasks (id, session_id, title, prompt, status, progress, current_step, model, created_at,
-         started_at, finished_at, result, error, usage, attachment_ids)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+         started_at, finished_at, result, error, usage, attachment_ids, language)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
        ON CONFLICT (id) DO UPDATE SET
          title = EXCLUDED.title, status = EXCLUDED.status, progress = EXCLUDED.progress,
          current_step = EXCLUDED.current_step, started_at = EXCLUDED.started_at,
@@ -211,6 +214,7 @@ export class PostgresRepository implements Repository {
         t.error,
         JSON.stringify(t.usage),
         JSON.stringify(t.attachmentIds ?? []),
+        t.language === 'en' ? 'en' : 'id',
       ],
     );
   }

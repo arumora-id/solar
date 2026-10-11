@@ -3,6 +3,7 @@ import { mkdir, readdir, readFile, rm, stat } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { KnowledgeEntry, KnowledgeFile, KnowledgeSearchHit, KnowledgeType } from '@solar/shared';
+import { both, LocalizedError } from '../i18n.js';
 import { resolveInside, writeFileAtomic } from '../util/fs.js';
 
 export const MAX_KNOWLEDGE_FILE_BYTES = 512 * 1024;
@@ -68,7 +69,7 @@ export const KNOWLEDGE_PATH = /^(?:[A-Za-z0-9_][A-Za-z0-9._ -]{0,79}\/){0,4}[A-Z
 export function normalizeKnowledgePath(path: string): string {
   const p = path.trim().replace(/\\/g, '/').replace(/^\/+/, '');
   if (!KNOWLEDGE_PATH.test(p) || p.split('/').some((seg) => seg === '..' || seg.startsWith('.'))) {
-    throw new Error(`Invalid knowledge path "${path}": use folders and a .md file name, e.g. systems/AD1GATE.md`);
+    throw new LocalizedError(both('store.knowledge.invalidPath', { path }), 'en');
   }
   return p;
 }
@@ -84,15 +85,19 @@ export function parseFrontMatter(raw: string): ParsedFile {
   if (!match) return { meta: {}, body: text };
   try {
     const parsed: unknown = parseYaml(match[1] ?? '');
-    return { meta: parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {}, body: match[2] ?? '' };
+    const mapping = parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed);
+    // a non-empty block that is not a YAML mapping (rules around a heading, text or a list) is content, not front matter
+    if (!mapping && (match[1] ?? '').trim()) return { meta: {}, body: text };
+    return { meta: mapping ? (parsed as Record<string, unknown>) : {}, body: match[2] ?? '' };
   } catch {
     return { meta: {}, body: text };
   }
 }
 
-const str = (v: unknown) => (typeof v === 'string' ? v.trim() : typeof v === 'number' ? String(v) : '');
+/** One line of at most 300 characters: front matter values are listed in the agent's instructions, one file per line. */
+const str = (v: unknown) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, 300) : typeof v === 'number' ? String(v) : '');
 const strList = (v: unknown): string[] =>
-  Array.isArray(v) ? v.map(str).filter(Boolean) : typeof v === 'string' ? v.split(',').map((s) => s.trim()).filter(Boolean) : [];
+  (Array.isArray(v) ? v.map(str) : typeof v === 'string' ? v.split(',').map(str) : []).filter(Boolean).slice(0, 50);
 
 export function describeKnowledge(path: string, raw: string, source: 'builtin' | 'user', size: number, updatedAt: string): KnowledgeEntry {
   const { meta, body } = parseFrontMatter(raw);
@@ -206,18 +211,50 @@ export class KnowledgeStore {
     return file ? this.describe(p, file) : null;
   }
 
+  /**
+   * The file on disk at `path` (user copy first), also when only the letter case differs. Unlike read() and
+   * listAll() it also finds the files those leave out: larger than MAX_KNOWLEDGE_FILE_BYTES or past MAX_FILES.
+   */
+  async locate(path: string): Promise<{ path: string; source: 'builtin' | 'user'; size: number; updatedAt: string } | null> {
+    const segments = normalizeKnowledgePath(path).split('/');
+    for (const [dir, source] of [
+      [this.userDir, 'user'],
+      [this.builtinDir, 'builtin'],
+    ] as const) {
+      let full = dir;
+      const found: string[] = [];
+      for (const seg of segments) {
+        const names = await readdir(full).catch(() => [] as string[]);
+        const name = names.find((n) => n === seg) ?? names.find((n) => n.toLowerCase() === seg.toLowerCase());
+        if (!name) break;
+        found.push(name);
+        full = join(full, name);
+      }
+      if (found.length < segments.length) continue;
+      const info = await stat(full).catch(() => null);
+      if (info?.isFile()) return { path: found.join('/'), source, size: info.size, updatedAt: info.mtime.toISOString() };
+    }
+    return null;
+  }
+
   async write(path: string, content: string): Promise<KnowledgeEntry> {
     const p = normalizeKnowledgePath(path);
-    if (Buffer.byteLength(content, 'utf8') > MAX_KNOWLEDGE_FILE_BYTES) throw new Error(`File is larger than ${MAX_KNOWLEDGE_FILE_BYTES / 1024} KB`);
-    await writeFileAtomic(resolveInside(this.userDir, p), content.replace(/\r\n/g, '\n'));
-    return (await this.read(p))!.entry;
+    if (Buffer.byteLength(content, 'utf8') > MAX_KNOWLEDGE_FILE_BYTES) {
+      throw new LocalizedError(both('store.knowledge.tooLarge', { kb: MAX_KNOWLEDGE_FILE_BYTES / 1024 }), 'en');
+    }
+    const full = resolveInside(this.userDir, p);
+    const text = content.replace(/\r\n/g, '\n');
+    await writeFileAtomic(full, text);
+    // describe what was written: a read-back through scan() misses files past MAX_FILES or spelled in another case
+    const info = await stat(full);
+    return describeKnowledge(p, text, 'user', info.size, info.mtime.toISOString());
   }
 
   /** Deletes a user file. For a file that overrides a built-in one, the built-in version comes back. */
   async remove(path: string): Promise<'deleted' | 'reverted'> {
     const p = normalizeKnowledgePath(path);
     const full = resolveInside(this.userDir, p);
-    if (!existsSync(full)) throw new Error(`"${p}" is not a user file (built-in files can be overridden, not deleted)`);
+    if (!existsSync(full)) throw new LocalizedError(both('store.knowledge.notUserFile', { path: p }), 'en');
     await rm(full, { force: true });
     return existsSync(resolveInside(this.builtinDir, p)) ? 'reverted' : 'deleted';
   }

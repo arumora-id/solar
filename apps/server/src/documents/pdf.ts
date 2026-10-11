@@ -1,4 +1,5 @@
 /** PDF → Markdown with unpdf (serverless pdf.js): per-page text with line reconstruction and a heading heuristic. */
+import { t, type Lang } from '../i18n.js';
 import { fmtInt, withTimeout, yieldToLoop } from './limits.js';
 import { DocumentError, documentError, type ParseContext, type ParsedDocument } from './types.js';
 
@@ -30,8 +31,6 @@ export interface Line {
 
 const LIGATURES: Record<string, string> = { 'ﬀ': 'ff', 'ﬁ': 'fi', 'ﬂ': 'fl', 'ﬃ': 'ffi', 'ﬄ': 'ffl', 'ﬅ': 'st', 'ﬆ': 'st' };
 const roundSize = (size: number) => Math.round(size * 2) / 2;
-const SCAN_PLACEHOLDER = '_(tidak ada teks yang bisa dibaca di halaman ini — gambar/hasil scan?)_';
-const BROKEN_PLACEHOLDER = '_(halaman ini rusak dan tidak bisa dibaca)_';
 /** Pages with less text than this are checked for a full-page image (a scan with a stamped footer). */
 const LOW_TEXT_CHARS = 200;
 
@@ -173,15 +172,15 @@ export function renderPage(lines: Line[], bodySize: number, levelOf: (size: numb
   return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
-function listPages(pages: number[]): string {
-  return pages.length > 10 ? `${pages.slice(0, 10).join(', ')} dan ${pages.length - 10} lainnya` : pages.join(', ');
+function listPages(pages: number[], lang: Lang): string {
+  return pages.length > 10 ? t(lang, 'doc.pdf.morePages', { pages: pages.slice(0, 10).join(', '), more: pages.length - 10 }) : pages.join(', ');
 }
 
 /** Every permission a PDF can grant (pdf.js PermissionFlag values). */
 const ALL_PERMISSIONS = [4, 8, 16, 32, 256, 512, 1024, 2048];
 
 export async function extractPdf(ctx: ParseContext): Promise<ParsedDocument> {
-  const { bytes, limits, deadline, warnings, maxChars } = ctx;
+  const { bytes, limits, deadline, warnings, maxChars, lang } = ctx;
   const { getDocumentProxy, getResolvedPDFJS } = await import('unpdf');
   let pdf: Awaited<ReturnType<typeof getDocumentProxy>>;
   try {
@@ -199,13 +198,9 @@ export async function extractPdf(ctx: ParseContext): Promise<ParsedDocument> {
     if (err instanceof DocumentError) throw err;
     const name = (err as { name?: string } | null)?.name ?? '';
     const message = err instanceof Error ? err.message : String(err);
-    if (name === 'PasswordException') {
-      throw documentError('ENCRYPTED', 'PDF ini dilindungi kata sandi (terenkripsi). Lampirkan salinan tanpa kata sandi.');
-    }
-    if (/unknown encryption method|unsupported encryption algorithm/i.test(message)) {
-      throw documentError('ENCRYPTED', 'PDF ini dilindungi sertifikat/enkripsi khusus. Lampirkan salinan tanpa perlindungan.');
-    }
-    throw documentError('CORRUPT', `File rusak atau bukan PDF yang valid (${message.slice(0, 200)}).`);
+    if (name === 'PasswordException') throw documentError('ENCRYPTED', t(lang, 'doc.pdf.password'));
+    if (/unknown encryption method|unsupported encryption algorithm/i.test(message)) throw documentError('ENCRYPTED', t(lang, 'doc.pdf.certificate'));
+    throw documentError('CORRUPT', t(lang, 'doc.pdf.corrupt', { error: message.slice(0, 200) }));
   }
 
   try {
@@ -215,7 +210,7 @@ export async function extractPdf(ctx: ParseContext): Promise<ParsedDocument> {
     try {
       const perms = await pdf.getPermissions();
       if (perms && ALL_PERMISSIONS.some((flag) => !perms.includes(flag))) {
-        warnings.push('PDF ini memiliki pembatasan penggunaan (owner password); teksnya tetap dibaca untuk analisis.');
+        warnings.push(t(lang, 'doc.pdf.restricted'));
       }
     } catch {
       // permissions are informational only
@@ -258,7 +253,7 @@ export async function extractPdf(ctx: ParseContext): Promise<ParsedDocument> {
       if (i % 10 === 0) await yieldToLoop();
     }
     if (pageLines.length && brokenPages.size === pageLines.length) {
-      throw documentError('CORRUPT', 'File rusak: tidak ada halaman PDF yang bisa dibaca.');
+      throw documentError('CORRUPT', t(lang, 'doc.pdf.noPages'));
     }
 
     // the dominant text size (by characters) is the body size
@@ -278,6 +273,8 @@ export async function extractPdf(ctx: ParseContext): Promise<ParsedDocument> {
     const levelOf = headingLevels(pageLines, bodySize);
     // whole pages up to the character budget (room left for the truncation note), so every page named is complete
     const budget = maxChars - 100;
+    const scanNote = t(lang, 'doc.pdf.scanNote');
+    const brokenNote = t(lang, 'doc.pdf.brokenNote');
     const parts: string[] = [];
     const emptyPages: number[] = [];
     let rendered = 0;
@@ -286,9 +283,9 @@ export async function extractPdf(ctx: ParseContext): Promise<ParsedDocument> {
       const n = idx + 1;
       const lines = pageLines[idx]!;
       let body: string;
-      if (brokenPages.has(n)) body = BROKEN_PLACEHOLDER;
-      else if (!lines.length) body = SCAN_PLACEHOLDER;
-      else if (imagePages.has(n)) body = `${renderPage(lines, bodySize, levelOf)}\n\n${SCAN_PLACEHOLDER}`;
+      if (brokenPages.has(n)) body = brokenNote;
+      else if (!lines.length) body = scanNote;
+      else if (imagePages.has(n)) body = `${renderPage(lines, bodySize, levelOf)}\n\n${scanNote}`;
       else body = renderPage(lines, bodySize, levelOf);
       const block = `<!-- page ${n} -->\n\n${body}`;
       if (idx > 0 && rendered + 2 + block.length > budget) break;
@@ -299,18 +296,17 @@ export async function extractPdf(ctx: ParseContext): Promise<ParsedDocument> {
     }
 
     if (lastPage > 0 && emptyPages.length === lastPage) {
-      warnings.push('PDF tidak memiliki lapisan teks (hasil scan/gambar?); OCR belum didukung. Lampirkan PDF dengan teks atau versi Word-nya.');
+      warnings.push(t(lang, 'doc.pdf.noTextLayer'));
     } else if (emptyPages.length) {
-      warnings.push(`Halaman ${listPages(emptyPages)} tidak memiliki lapisan teks (gambar/hasil scan?); OCR belum didukung.`);
+      warnings.push(t(lang, 'doc.pdf.pagesWithoutText', { pages: listPages(emptyPages, lang), n: emptyPages.length }));
     }
     const broken = [...brokenPages].filter((p) => p <= lastPage);
-    if (broken.length) warnings.push(`Halaman ${listPages(broken)} rusak dan dilewati.`);
-    if (allChars > 50 && privateUseChars / allChars > 0.1) {
-      warnings.push('Sebagian teks mungkin tidak terbaca dengan benar: PDF memakai font tanpa pemetaan Unicode.');
-    }
+    if (broken.length) warnings.push(t(lang, 'doc.pdf.brokenPages', { pages: listPages(broken, lang), n: broken.length }));
+    if (allChars > 50 && privateUseChars / allChars > 0.1) warnings.push(t(lang, 'doc.pdf.noUnicode'));
     if (lastPage < numPages) {
-      const reason = lastPage < pageLimit ? `batas ${fmtInt(maxChars)} karakter` : `batas ${fmtInt(limits.maxPages)} halaman`;
-      warnings.push(`PDF dipotong setelah halaman ${lastPage} dari ${numPages} (${reason}).`);
+      const reason =
+        lastPage < pageLimit ? t(lang, 'doc.pdf.charLimit', { n: fmtInt(maxChars, lang) }) : t(lang, 'doc.pdf.pageLimit', { n: fmtInt(limits.maxPages, lang) });
+      warnings.push(t(lang, 'doc.pdf.cut', { last: lastPage, total: numPages, reason }));
       parts.push(`<!-- truncated: pages ${lastPage + 1}-${numPages} not included -->`);
     }
     return { kind: 'pdf', markdown: parts.join('\n\n'), parts: numPages };

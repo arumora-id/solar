@@ -11,9 +11,24 @@ export type Block =
   | { kind: 'code'; language: string; text: string }
   | { kind: 'mermaid'; text: string; summary: string };
 
+/** The document's control data as values (the Word cover page, sign-off table and file properties need them apart). */
+export interface DocumentInfo {
+  documentId: string | null;
+  version: string;
+  status: string;
+  /** YYYY-MM-DD */
+  date: string;
+  authors: string[];
+  reviewers: string[];
+  approvers: string[];
+  /** The executive summary (Markdown). */
+  summary: string;
+}
+
 export interface BuiltDocument {
   title: string;
   lang: Lang;
+  info: DocumentInfo;
   meta: Array<[string, string]>;
   revisionHeaders: string[];
   revisions: string[][];
@@ -290,11 +305,21 @@ export function buildDocument(spec: TechSpec, diagrams: Map<string, ResolvedDiag
 
   const revisions = spec.revisionHistory.length
     ? spec.revisionHistory.map((r) => [r.version, r.date, r.author, r.changes])
-    : [[spec.version, date, spec.authors.join(', '), lang === 'id' ? 'Versi awal' : 'Initial version']];
+    : [[spec.version, date, spec.authors.join(', '), L('initialVersion')]];
 
   return {
     title: spec.title,
     lang,
+    info: {
+      documentId: spec.documentId ?? null,
+      version: spec.version,
+      status: spec.status,
+      date,
+      authors: spec.authors,
+      reviewers: spec.reviewers,
+      approvers: spec.approvers,
+      summary: spec.executiveSummary,
+    },
     meta,
     revisionHeaders: [L('version'), L('date'), L('author'), L('changes')],
     revisions,

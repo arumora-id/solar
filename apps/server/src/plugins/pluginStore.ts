@@ -4,13 +4,15 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import type { PluginConfig } from '@solar/shared';
 import { SECRET_MASK } from '@solar/shared';
+import { both, LocalizedError } from '../i18n.js';
+import { schemaMessage } from '../i18n/zodIssues.js';
 import { writeFileAtomic } from '../util/fs.js';
 import { slugify } from '../util/ids.js';
 
 const stringRecord = z.record(z.string(), z.string());
 
 export const PluginConfigBaseSchema = z.object({
-    id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/, 'id must be lower-case letters, digits or dashes'),
+    id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/, schemaMessage('validation.idFormat')),
     name: z.string().min(1).max(80),
     description: z.string().max(500).default(''),
     preset: z.enum(['github', 'plane', 'visual-paradigm', 'custom']).default('custom'),
@@ -28,10 +30,10 @@ export const PluginConfigBaseSchema = z.object({
 
 export const PluginConfigSchema = PluginConfigBaseSchema.superRefine((p, ctx) => {
     if (p.transport === 'stdio' && !p.command?.trim()) {
-      ctx.addIssue({ code: 'custom', path: ['command'], message: 'command is required for stdio plugins' });
+      ctx.addIssue({ code: 'custom', path: ['command'], message: schemaMessage('validation.stdioCommand') });
     }
     if (p.transport !== 'stdio' && !p.url?.trim()) {
-      ctx.addIssue({ code: 'custom', path: ['url'], message: 'url is required for http/sse plugins' });
+      ctx.addIssue({ code: 'custom', path: ['url'], message: schemaMessage('validation.httpUrl') });
     }
   });
 
@@ -137,7 +139,7 @@ export class PluginStore {
     const derived = slugify(input.name ?? 'plugin', 'plugin').slice(0, 40).replace(/-+$/, '') || 'plugin';
     const candidate = { ...input, id: input.id?.trim() ? input.id : derived };
     const config = PluginConfigSchema.parse(candidate) as PluginConfig;
-    if (this.plugins.some((p) => p.id === config.id)) throw new Error(`Plugin "${config.id}" already exists`);
+    if (this.plugins.some((p) => p.id === config.id)) throw new LocalizedError(both('store.plugin.exists', { id: config.id }), 'en');
     this.plugins.push(config);
     await this.save();
     return config;
@@ -145,7 +147,7 @@ export class PluginStore {
 
   async update(id: string, input: Partial<PluginInput>): Promise<PluginConfig> {
     const index = this.plugins.findIndex((p) => p.id === id);
-    if (index < 0) throw new Error(`Plugin "${id}" not found`);
+    if (index < 0) throw new LocalizedError(both('store.plugin.notFound', { id }), 'en');
     const prev = this.plugins[index]!;
     const merged = {
       ...prev,
@@ -163,7 +165,7 @@ export class PluginStore {
   async remove(id: string): Promise<void> {
     const before = this.plugins.length;
     this.plugins = this.plugins.filter((p) => p.id !== id);
-    if (this.plugins.length === before) throw new Error(`Plugin "${id}" not found`);
+    if (this.plugins.length === before) throw new LocalizedError(both('store.plugin.notFound', { id }), 'en');
     await this.save();
   }
 }

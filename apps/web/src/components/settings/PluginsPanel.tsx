@@ -1,22 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { ConfirmPolicy, PluginConfig, PluginTransport, PluginView } from '@solar/shared';
 import { api } from '../../lib/api';
+import { useT } from '../../lib/i18n';
 import { useSolar } from '../../lib/store';
 import { PlusIcon, RefreshIcon, TrashIcon } from '../Icons';
+import { rich } from './richText';
 
-const POLICY_LABEL: Record<ConfirmPolicy, string> = {
-  never: 'Tanpa konfirmasi',
-  writes: 'Konfirmasi untuk operasi tulis',
-  always: 'Selalu konfirmasi setiap pemanggilan',
-};
-
-const STATE_LABEL: Record<string, string> = {
-  disabled: 'Nonaktif',
-  unconfigured: 'Belum dikonfigurasi',
-  connecting: 'Menghubungkan…',
-  connected: 'Terhubung',
-  error: 'Error',
-};
+/** Confirmation policies in the order the pickers list them (names in `t.settings.plugins.policy`). */
+const POLICIES: ConfirmPolicy[] = ['never', 'writes', 'always'];
 
 interface Draft {
   id: string;
@@ -67,6 +58,9 @@ function toDraft(p?: PluginConfig): Draft {
 
 export function PluginsPanel() {
   const { plugins: liveStatus } = useSolar();
+  const t = useT();
+  const words = t.settings.plugins;
+  const stateLabel = (state: string): string => (words.state as Record<string, string>)[state] ?? state;
   const [plugins, setPlugins] = useState<PluginView[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [error, setError] = useState('');
@@ -123,12 +117,11 @@ export function PluginsPanel() {
   return (
     <div>
       <p className="hint" style={{ marginTop: 0 }}>
-        Plugin MCP memberi SOLAR akses ke sistem lain. Nilai seperti <code>{'${GITHUB_TOKEN}'}</code> diambil dari file <code>.env</code> sehingga rahasia
-        tidak tersimpan di sini. Visual Paradigm diset <strong>selalu konfirmasi</strong>.
+        {rich(words.intro)}
       </p>
       <div className="row" style={{ marginBottom: 12 }}>
         <button type="button" className="btn primary small" onClick={() => setDraft(toDraft())}>
-          <PlusIcon size={16} /> Tambah plugin MCP
+          <PlusIcon size={16} /> {words.add}
         </button>
       </div>
       {error && (
@@ -139,78 +132,78 @@ export function PluginsPanel() {
 
       {draft && (
         <div className="card">
-          <h4 style={{ marginTop: 0 }}>{draft.isNew ? 'Plugin baru' : `Edit plugin: ${draft.id}`}</h4>
+          <h4 style={{ marginTop: 0 }}>{draft.isNew ? words.newPlugin : words.editPlugin(draft.id)}</h4>
           <div className="grid-2">
             <label className="field">
-              <span>Nama</span>
+              <span>{t.common.name}</span>
               <input className="input" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
             </label>
             {draft.isNew && (
               <label className="field">
-                <span>Id (huruf kecil, angka, -)</span>
-                <input className="input" value={draft.id} onChange={(e) => setDraft({ ...draft, id: e.target.value })} placeholder="otomatis dari nama" />
+                <span>{words.fields.id}</span>
+                <input className="input" value={draft.id} onChange={(e) => setDraft({ ...draft, id: e.target.value })} placeholder={words.fields.idPlaceholder} />
               </label>
             )}
             <label className="field">
-              <span>Transport</span>
+              <span>{words.fields.transport}</span>
               <select className="select" value={draft.transport} onChange={(e) => setDraft({ ...draft, transport: e.target.value as PluginTransport })}>
-                <option value="http">Streamable HTTP (remote)</option>
-                <option value="sse">SSE (remote, lama)</option>
-                <option value="stdio">stdio (proses lokal, mis. npx)</option>
+                <option value="http">{words.fields.transportHttp}</option>
+                <option value="sse">{words.fields.transportSse}</option>
+                <option value="stdio">{words.fields.transportStdio}</option>
               </select>
             </label>
             <label className="field">
-              <span>Kebijakan konfirmasi</span>
+              <span>{words.fields.policy}</span>
               <select className="select" value={draft.confirm} onChange={(e) => setDraft({ ...draft, confirm: e.target.value as ConfirmPolicy })}>
-                {(Object.keys(POLICY_LABEL) as ConfirmPolicy[]).map((p) => (
+                {POLICIES.map((p) => (
                   <option key={p} value={p}>
-                    {POLICY_LABEL[p]}
+                    {words.policy[p]}
                   </option>
                 ))}
               </select>
             </label>
           </div>
           <label className="field">
-            <span>Deskripsi</span>
+            <span>{t.common.description}</span>
             <input className="input" value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
           </label>
           {draft.transport === 'stdio' ? (
             <>
               <label className="field">
-                <span>Command</span>
+                <span>{words.fields.command}</span>
                 <input className="input" value={draft.command} onChange={(e) => setDraft({ ...draft, command: e.target.value })} placeholder="npx" />
               </label>
               <label className="field">
-                <span>Argumen (satu per baris)</span>
+                <span>{words.fields.args}</span>
                 <textarea className="textarea" rows={3} value={draft.args} onChange={(e) => setDraft({ ...draft, args: e.target.value })} placeholder={'-y\n@scope/mcp-server'} />
               </label>
               <label className="field">
-                <span>Environment (KEY=VALUE per baris, boleh {'${VAR}'})</span>
+                <span>{words.fields.env}</span>
                 <textarea className="textarea" rows={3} value={draft.env} onChange={(e) => setDraft({ ...draft, env: e.target.value })} />
               </label>
             </>
           ) : (
             <>
               <label className="field">
-                <span>URL endpoint MCP</span>
+                <span>{words.fields.url}</span>
                 <input className="input" value={draft.url} onChange={(e) => setDraft({ ...draft, url: e.target.value })} placeholder="https://example.com/mcp" />
               </label>
               <label className="field">
-                <span>Header (KEY=VALUE per baris, boleh {'${VAR}'})</span>
+                <span>{words.fields.headers}</span>
                 <textarea className="textarea" rows={3} value={draft.headers} onChange={(e) => setDraft({ ...draft, headers: e.target.value })} placeholder="Authorization=Bearer ${MY_TOKEN}" />
               </label>
             </>
           )}
           <label className="field">
-            <span>Batasi tool (opsional, pisahkan koma)</span>
-            <input className="input" value={draft.toolAllowlist} onChange={(e) => setDraft({ ...draft, toolAllowlist: e.target.value })} placeholder="kosong = semua tool" />
+            <span>{words.fields.allowlist}</span>
+            <input className="input" value={draft.toolAllowlist} onChange={(e) => setDraft({ ...draft, toolAllowlist: e.target.value })} placeholder={words.fields.allowlistPlaceholder} />
           </label>
           <div className="row">
             <button type="button" className="btn primary small" disabled={busy || !draft.name.trim()} onClick={() => void save()}>
-              Simpan &amp; hubungkan
+              {words.saveAndConnect}
             </button>
             <button type="button" className="btn small" onClick={() => setDraft(null)}>
-              Batal
+              {t.common.cancel}
             </button>
           </div>
         </div>
@@ -223,12 +216,12 @@ export function PluginsPanel() {
             <div className="card-head">
               <h4>{p.name}</h4>
               <span className="badge" data-status={status.state === 'connected' ? 'completed' : status.state === 'error' ? 'failed' : status.state === 'connecting' ? 'running' : 'cancelled'}>
-                {STATE_LABEL[status.state] ?? status.state}
-                {status.state === 'connected' ? ` · ${status.tools.length} tool` : ''}
+                {stateLabel(status.state)}
+                {status.state === 'connected' ? ` · ${words.toolCount(status.tools.length)}` : ''}
               </span>
               <label className="toggle">
                 <input type="checkbox" checked={p.enabled} disabled={busy} onChange={(e) => void run(() => api.updatePlugin(p.id, { enabled: e.target.checked }))} />
-                Aktif
+                {t.common.active}
               </label>
             </div>
             <p>{p.description}</p>
@@ -242,28 +235,28 @@ export function PluginsPanel() {
                 style={{ width: 'auto' }}
                 value={p.confirm}
                 disabled={busy}
-                aria-label="Kebijakan konfirmasi"
+                aria-label={words.fields.policy}
                 onChange={(e) => void run(() => api.updatePlugin(p.id, { confirm: e.target.value as ConfirmPolicy }))}
               >
-                {(Object.keys(POLICY_LABEL) as ConfirmPolicy[]).map((c) => (
+                {POLICIES.map((c) => (
                   <option key={c} value={c}>
-                    {POLICY_LABEL[c]}
+                    {words.policy[c]}
                   </option>
                 ))}
               </select>
               <button type="button" className="btn small" disabled={busy} onClick={() => void run(() => api.reconnectPlugin(p.id))}>
-                <RefreshIcon /> Hubungkan ulang
+                <RefreshIcon /> {words.reconnect}
               </button>
               <button type="button" className="btn small" onClick={() => setDraft(toDraft(p))}>
-                Edit
+                {t.common.edit}
               </button>
               <button
                 type="button"
                 className="btn small danger icon"
-                aria-label={`Hapus ${p.name}`}
+                aria-label={words.deleteLabel(p.name)}
                 disabled={busy}
                 onClick={() => {
-                  if (window.confirm(`Hapus plugin "${p.name}"?`)) void run(() => api.deletePlugin(p.id));
+                  if (window.confirm(words.confirmDelete(p.name))) void run(() => api.deletePlugin(p.id));
                 }}
               >
                 <TrashIcon />
@@ -271,11 +264,11 @@ export function PluginsPanel() {
             </div>
             {status.tools.length > 0 && (
               <details style={{ marginTop: 8 }}>
-                <summary className="hint">Daftar tool ({status.tools.length})</summary>
+                <summary className="hint">{words.toolList(status.tools.length)}</summary>
                 <ul style={{ margin: '6px 0 0', paddingLeft: 18, fontSize: 12.5 }}>
-                  {status.tools.map((t) => (
-                    <li key={t.name}>
-                      <code>{t.name}</code> <span className="hint">{t.description}</span>
+                  {status.tools.map((tool) => (
+                    <li key={tool.name}>
+                      <code>{tool.name}</code> <span className="hint">{tool.description}</span>
                     </li>
                   ))}
                 </ul>

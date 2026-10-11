@@ -106,6 +106,5 @@ export function buildRabbit(parent: THREE.Object3D): Rig {
     breath: { x: 0.99, y: 1.025 },
     frame: { height: 5.1, width: 3.8 },
     pickables: kit.pickables,
-    label: 'SOLAR AI AGENT sebagai kelinci 3D berkacamata',
   };
 }

@@ -5,6 +5,8 @@ import { z } from 'zod';
 import { SECRET_MASK, type LlmProviderConfig, type LlmProviderView, type LlmSettingsView } from '@solar/shared';
 import { REASONING_EFFORTS, type AppConfig } from '../config.js';
 import { interpolate } from '../plugins/pluginStore.js';
+import { both, LocalizedError } from '../i18n.js';
+import { schemaMessage } from '../i18n/zodIssues.js';
 import { writeFileAtomic } from '../util/fs.js';
 import { slugify } from '../util/ids.js';
 
@@ -28,8 +30,8 @@ export const LlmModelSchema = z.object({
 export const LlmProviderBaseSchema = z.object({
   id: z
     .string()
-    .regex(/^[a-z0-9][a-z0-9-]{0,39}$/, 'id must be lower-case letters, digits or dashes')
-    .refine((id) => id !== ENV_PROVIDER_ID, `"${ENV_PROVIDER_ID}" is reserved for the provider from .env`),
+    .regex(/^[a-z0-9][a-z0-9-]{0,39}$/, schemaMessage('validation.idFormat'))
+    .refine((id) => id !== ENV_PROVIDER_ID, schemaMessage('validation.reservedProviderId', { id: ENV_PROVIDER_ID })),
   name: z.string().trim().min(1).max(80),
   kind: z.enum(['openai-responses', 'openai-chat']),
   enabled: z.boolean().default(true),
@@ -37,7 +39,7 @@ export const LlmProviderBaseSchema = z.object({
     .string()
     .trim()
     .max(500)
-    .refine((v) => v === '' || /^https?:\/\//i.test(v) || /^\$\{[A-Za-z_][A-Za-z0-9_]*\}/.test(v), 'baseUrl must start with http:// or https://')
+    .refine((v) => v === '' || /^https?:\/\//i.test(v) || /^\$\{[A-Za-z_][A-Za-z0-9_]*\}/.test(v), schemaMessage('validation.baseUrl'))
     .optional(),
   apiKey: z.string().max(4000).optional(),
   headers: z.record(z.string(), z.string()).optional(),
@@ -46,8 +48,8 @@ export const LlmProviderBaseSchema = z.object({
   models: z.array(LlmModelSchema).max(100).default([]),
 });
 
-const RouteSchema = z.array(z.string().trim().regex(/^[a-z0-9][a-z0-9-]*\/.+$/, 'route entries look like "provider/model"')).max(10);
-export const RoutesSchema = z.record(z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/), RouteSchema);
+const RouteSchema = z.array(z.string().trim().regex(/^[a-z0-9][a-z0-9-]*\/.+$/, schemaMessage('validation.routeEntry'))).max(10);
+export const RoutesSchema = z.record(z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/, schemaMessage('validation.routeName')), RouteSchema);
 
 const FileSchema = z.object({
   providers: z.array(LlmProviderBaseSchema).default([]),
@@ -190,7 +192,7 @@ export class LlmProviderStore {
   async create(input: Omit<LlmProviderInput, 'id'> & { id?: string }): Promise<LlmProviderConfig> {
     const derived = slugify(input.name ?? 'provider', 'provider').slice(0, 40).replace(/-+$/, '') || 'provider';
     const config = LlmProviderBaseSchema.parse({ ...input, id: input.id?.trim() ? input.id : derived }) as LlmProviderConfig;
-    if (this.get(config.id)) throw new Error(`Provider "${config.id}" already exists`);
+    if (this.get(config.id)) throw new LocalizedError(both('store.provider.exists', { id: config.id }), 'en');
     this.providers.push(config);
     await this.save();
     return config;
@@ -198,7 +200,9 @@ export class LlmProviderStore {
 
   async update(id: string, input: Partial<LlmProviderInput>): Promise<LlmProviderConfig> {
     const index = this.providers.findIndex((p) => p.id === id);
-    if (index < 0) throw new Error(id === ENV_PROVIDER_ID ? 'The OpenAI provider from .env is edited in the .env file' : `Provider "${id}" not found`);
+    if (index < 0) {
+      throw new LocalizedError(id === ENV_PROVIDER_ID ? both('store.provider.envProvider') : both('store.provider.notFound', { id }), 'en');
+    }
     const prev = this.providers[index]!;
     const headers =
       input.headers === undefined
@@ -214,7 +218,7 @@ export class LlmProviderStore {
   async remove(id: string): Promise<void> {
     const before = this.providers.length;
     this.providers = this.providers.filter((p) => p.id !== id);
-    if (this.providers.length === before) throw new Error(`Provider "${id}" not found`);
+    if (this.providers.length === before) throw new LocalizedError(both('store.provider.notFound', { id }), 'en');
     // routes may keep naming it; they skip unknown providers with a warning
     await this.save();
   }
@@ -223,7 +227,7 @@ export class LlmProviderStore {
     const parsed = RoutesSchema.parse(routes);
     for (const [name, entries] of Object.entries(parsed)) {
       for (const entry of entries) {
-        if (!this.get(splitRouteEntry(entry).providerId)) throw new Error(`Route "${name}": unknown provider in "${entry}"`);
+        if (!this.get(splitRouteEntry(entry).providerId)) throw new LocalizedError(both('store.provider.unknownInRoute', { route: name, entry }), 'en');
       }
     }
     this.routes = Object.fromEntries(Object.entries(parsed).filter(([, entries]) => entries.length > 0));

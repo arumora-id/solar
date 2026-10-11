@@ -7,6 +7,7 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { PluginConfig, PluginStatus } from '@solar/shared';
 import type { ToolResultBlock } from '../agent/types.js';
 import { APP_SLUG, APP_VERSION } from '../config.js';
+import { both, DEFAULT_LANG, localize, LocalizedError, type Lang, type Localized, type LocalizedText } from '../i18n.js';
 import { createLogger } from '../logger.js';
 import type { EventBus } from '../tasks/eventBus.js';
 import { nowIso } from '../util/ids.js';
@@ -41,7 +42,9 @@ export interface McpCallResult {
 interface Connection {
   client: Client | null;
   transport: Transport | null;
+  /** The status without its error, which is kept in `error` (in both languages when SOLAR wrote it). */
   status: PluginStatus;
+  error: LocalizedText | null;
   tools: McpToolDescriptor[];
   connecting: Promise<void> | null;
   /** Bumped by every connect/disconnect: an attempt that sees a newer generation gives up. */
@@ -84,12 +87,13 @@ export function stdioEnvironment(extra: Record<string, string>, source: NodeJS.P
   return { ...env, ...extra };
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+/** Rejects after `ms` with `timeout` (in both languages: it is shown in the plugin status). */
+function withTimeout<T>(promise: Promise<T>, ms: number, timeout: (seconds: number) => Localized): Promise<T> {
   let timer: NodeJS.Timeout;
   return Promise.race([
     promise.finally(() => clearTimeout(timer)),
     new Promise<T>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`${what} timed out after ${Math.round(ms / 1000)}s`)), ms);
+      timer = setTimeout(() => reject(new LocalizedError(timeout(Math.round(ms / 1000)), 'en')), ms);
     }),
   ]);
 }
@@ -113,23 +117,32 @@ export class McpManager {
         gen: 0,
         pending: null,
         status: { id, state: 'disabled', error: null, tools: [], connectedAt: null },
+        error: null,
       };
       this.connections.set(id, c);
     }
     return c;
   }
 
-  statuses(): PluginStatus[] {
-    return this.store.list().map((p) => this.status(p.id));
+  /** Every plugin's status; the errors SOLAR writes itself are in `lang` (errors of a server are as it sent them). */
+  statuses(lang: Lang = DEFAULT_LANG): PluginStatus[] {
+    return this.store.list().map((p) => this.status(p.id, lang));
   }
 
-  status(id: string): PluginStatus {
-    return { ...this.conn(id).status };
-  }
-
-  private setStatus(id: string, patch: Partial<PluginStatus>): void {
+  status(id: string, lang: Lang = DEFAULT_LANG): PluginStatus {
     const c = this.conn(id);
-    c.status = { ...c.status, ...patch };
+    return { ...c.status, error: c.error === null ? null : localize(c.error, lang) };
+  }
+
+  /**
+   * Updates a status and announces every status on the event stream (in Indonesian; the stream route sends each
+   * client the statuses in its own language).
+   */
+  private setStatus(id: string, patch: Omit<Partial<PluginStatus>, 'error'> & { error?: LocalizedText | null }): void {
+    const c = this.conn(id);
+    const { error, ...rest } = patch;
+    if (error !== undefined) c.error = error;
+    c.status = { ...c.status, ...rest };
     this.bus.publish({ kind: 'plugins', plugins: this.statuses() });
   }
 
@@ -188,7 +201,7 @@ export class McpManager {
     if (resolved.missingVars.length > 0) {
       this.setStatus(id, {
         state: 'unconfigured',
-        error: `Isi ${resolved.missingVars.join(', ')} di file .env (atau edit plugin) untuk mengaktifkan.`,
+        error: both('mcp.missingVars', { vars: resolved.missingVars.join(', ') }),
         tools: [],
         connectedAt: null,
       });
@@ -203,9 +216,9 @@ export class McpManager {
         endpoint = new URL(resolved.url ?? '');
         if (endpoint.protocol !== 'http:' && endpoint.protocol !== 'https:') throw new Error('unsupported protocol');
       } catch {
-        const message = `URL tidak valid: "${resolved.url ?? ''}" (harus diawali http:// atau https://)`;
+        const message = both('mcp.invalidUrl', { url: resolved.url ?? '' });
         this.setStatus(id, { state: 'error', error: message, tools: [], connectedAt: null });
-        throw new Error(message);
+        throw new LocalizedError(message);
       }
     }
     if (config.transport === 'stdio') {
@@ -236,12 +249,14 @@ export class McpManager {
     try {
       const timeoutMs = config.transport === 'stdio' ? 180_000 : 45_000;
       // first start of an `npx` server downloads the package: allow the same time for the MCP handshake
-      await withTimeout(client.connect(transport, { timeout: timeoutMs }), timeoutMs, `Connecting to ${config.name}`);
+      await withTimeout(client.connect(transport, { timeout: timeoutMs }), timeoutMs, (seconds) => both('mcp.connectTimeout', { plugin: config.name, seconds }));
       if (superseded()) throw new Superseded();
       const tools: McpToolDescriptor[] = [];
       let cursor: string | undefined;
       do {
-        const page = await withTimeout(client.listTools(cursor ? { cursor } : undefined), 45_000, 'Listing tools');
+        const page = await withTimeout(client.listTools(cursor ? { cursor } : undefined), 45_000, (seconds) =>
+          both('mcp.listToolsTimeout', { plugin: config.name, seconds }),
+        );
         for (const t of page.tools) {
           tools.push({
             name: t.name,
@@ -261,7 +276,7 @@ export class McpManager {
       client.onclose = () => {
         if (c.client === client) {
           c.client = null;
-          this.setStatus(id, { state: 'error', error: 'Koneksi terputus', connectedAt: null });
+          this.setStatus(id, { state: 'error', error: both('mcp.disconnected'), connectedAt: null });
         }
       };
       this.setStatus(id, {
@@ -278,7 +293,9 @@ export class McpManager {
       if (err instanceof Superseded || superseded()) return;
       const message = err instanceof Error ? err.message : String(err);
       log.warn(`Could not connect to ${config.name}: ${message}`);
-      this.setStatus(id, { state: 'error', error: message, tools: [], connectedAt: null });
+      // SOLAR's own errors in both languages; a server's or library's text (e.g. "fetch failed") after a translated prefix
+      const error = err instanceof LocalizedError ? err.text : both('mcp.connectFailed', { plugin: config.name, error: message });
+      this.setStatus(id, { state: 'error', error, tools: [], connectedAt: null });
       throw err;
     }
   }
@@ -318,7 +335,8 @@ export class McpManager {
       await this.connect(pluginId);
       c = this.connections.get(pluginId);
     }
-    if (!c?.client) throw new Error(`Plugin "${pluginId}" is not connected`);
+    // English for the model (the tool error it reads), the task's language in the timeline (see the agent loop)
+    if (!c?.client) throw new LocalizedError(both('mcp.notConnected', { plugin: this.store.get(pluginId)?.name ?? pluginId }), 'en');
     const result = await c.client.callTool({ name: toolName, arguments: args }, undefined, {
       signal,
       timeout: 300_000,

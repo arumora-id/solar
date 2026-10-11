@@ -81,3 +81,56 @@ export function sampleTechSpec(diagramArtifactId: string) {
     risks: [{ id: 'RSK-01', description: 'Lonjakan trafik | promo', impact: 'High', likelihood: 'Medium', mitigation: 'Autoscaling' }],
   };
 }
+
+/**
+ * The sample specification with everything the Word document renders: two ArchiMate views, a sequence diagram,
+ * reviewers/approvers, rich Markdown (lists, table, code, quote, links, raw HTML) and characters XML cannot carry.
+ */
+export function richTechSpec(ids: { view: string; view2?: string; sequence: string }, language: 'id' | 'en' = 'id') {
+  const base = sampleTechSpec(ids.view);
+  return {
+    ...base,
+    language,
+    reviewers: ['Budi Santoso', 'Lead Architect, Corp'],
+    approvers: ['Siti Rahma'],
+    background: [
+      'Platform **lama** sulit diskalakan\u0001. Lihat [ruang lingkup](#3-ruang-lingkup), <b>tag HTML</b> dan [situs](https://example.com/docs?a=1&b=2).',
+      '',
+      '1. Langkah satu',
+      '2. Langkah dua',
+      '   - sub poin *miring*',
+      '   - `kode` inline',
+      '3. Langkah tiga',
+      '',
+      'Paragraf di antara daftar.',
+      '',
+      '1. Daftar kedua mulai dari satu',
+      '2. Item kedua',
+      '',
+      '> Catatan penting: ~~lama~~ baru.',
+      '',
+      '| Kolom A | Kolom B |',
+      '|:--|--:|',
+      '| a1 | 12 |',
+      '',
+      '```yaml',
+      'key: value',
+      '```',
+      '',
+      '#### Subjudul dalam markdown',
+      '<div onclick="x()">blok HTML</div>',
+    ].join('\n'),
+    architecture: {
+      ...base.architecture,
+      diagrams: [
+        { artifactId: ids.view, caption: 'Layered view' },
+        ...(ids.view2 ? [{ artifactId: ids.view2, caption: 'Application cooperation view' }] : []),
+      ],
+    },
+    stakeholders: [{ name: 'Product Owner', role: 'Business', responsibility: 'Prioritas backlog' }],
+    components: [{ name: 'Order Service', type: 'Microservice', responsibility: 'Mengelola pesanan', technology: 'Node.js 22', owner: 'Tim Order' }],
+    processFlows: [{ title: 'Place order', description: 'Alur pemesanan.', diagram: { artifactId: ids.sequence, caption: 'Sequence: place order' } }],
+    dataModel: [{ entity: 'Order', attributes: [{ name: 'id', type: 'uuid', required: true, description: 'Primary key' }] }],
+    glossary: [{ term: 'TSD\uFFFF', definition: 'Technical Specification Document \uD800' }],
+  };
+}

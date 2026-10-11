@@ -2,7 +2,7 @@
   "name": "solar",
   "version": "1.0.0",
   "private": true,
-  "description": "SOLAR - SOLution ARchitect rabbit agent: 3D AI assistant for delivering ArchiMate diagrams, sequence diagrams and Technical Specification Documents.",
+  "description": "SOLAR AI AGENT - SOLution ARchitect assistant with a selectable 3D character, for delivering ArchiMate diagrams, sequence diagrams and Technical Specification Documents.",
   "license": "UNLICENSED",
   "type": "module",
   "engines": {

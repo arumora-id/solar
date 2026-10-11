@@ -1,20 +1,21 @@
 # SOLAR AI AGENT 🍡
 
 **SOLAR AI AGENT** (*SOLution ARchitect*, singkatnya SOLAR) adalah AI agent dengan **karakter 3D beranimasi yang bisa
-dipilih** - **Mochi** (default), **Cocoa Kelapa**, atau **Kelinci** klasik - yang membantu seorang Solution Architect
-men-deliver pekerjaan lebih cepat dan konsisten:
+dipilih** - **Robo** si robot (default), **Mochi**, **Cocoa Kelapa**, atau **Kelinci** klasik - yang membantu seorang
+Solution Architect men-deliver pekerjaan lebih cepat dan konsisten:
 
 - **Diagram ArchiMate 3.2** - divalidasi terhadap tabel relasi resmi ArchiMate, diekspor ke
   *Open Group ArchiMate Exchange Format* (bisa di-import ke Archi, Visual Paradigm, BiZZdesign, Sparx EA) + SVG per view.
 - **Sequence diagram UML** - SVG siap pakai + sumber **Mermaid** (langsung tampil di GitHub) + **PlantUML**.
-- **Technical Specification Document (TSD)** - Markdown (GitHub-ready) dan HTML siap cetak/PDF, lengkap dengan
-  diagram tertanam, requirement, NFR, integrasi, API, data model, risiko.
+- **Technical Specification Document (TSD)** - dokumen **Word (.docx)** siap diserahkan ke klien (sampul, lembar
+  persetujuan, daftar isi, nomor halaman), Markdown (GitHub-ready) dan HTML siap cetak/PDF, lengkap dengan diagram
+  tertanam, requirement, NFR, integrasi, API, data model, risiko.
 
 Perintah diberikan dengan **mengetik atau suara**, berjalan di **browser** maupun sebagai **aplikasi desktop Windows**,
 bisa ditambah **skills** dan **plugin MCP** (GitHub, Plane `plane.mesthi.com` sebagai backlog, Visual Paradigm dengan
 konfirmasi wajib), dan setiap pekerjaan bisa dipantau di **web monitoring task**.
 
-![Halaman agent dengan karakter Mochi dan dokumen terlampir](docs/images/agent-light.png)
+![Halaman agent dengan karakter 3D dan dokumen terlampir](docs/images/agent-light.png)
 
 | Hasil & artefak (tema gelap, karakter Cocoa Kelapa) | Konfirmasi sebelum aksi eksternal | Monitor task |
 |---|---|---|
@@ -34,19 +35,20 @@ konfirmasi wajib), dan setiap pekerjaan bisa dipantau di **web monitoring task**
 6. [Web app (PWA)](#web-app-pwa)
 7. [Konfigurasi kredensial (.env)](#konfigurasi-kredensial-env)
 8. [Cara pakai](#cara-pakai)
-9. [Lampiran dokumen proyek](#lampiran-dokumen-proyek)
-10. [Deliverable yang dihasilkan](#deliverable-yang-dihasilkan)
-11. [Model AI: multi-provider & cadangan](#model-ai-multi-provider--cadangan)
-12. [Knowledge base](#knowledge-base)
-13. [Skills](#skills)
-14. [Plugin MCP: GitHub, Plane, Visual Paradigm](#plugin-mcp-github-plane-visual-paradigm)
-15. [Web monitoring task](#web-monitoring-task)
-16. [Bagaimana SOLAR mencegah kesalahan](#bagaimana-solar-mencegah-kesalahan)
-17. [Keamanan](#keamanan)
-18. [Struktur repository](#struktur-repository)
-19. [Pengembangan & pengujian](#pengembangan--pengujian)
-20. [Troubleshooting](#troubleshooting)
-21. [Lisensi pihak ketiga](#lisensi-pihak-ketiga)
+9. [Bahasa antarmuka: Indonesia / English](#bahasa-antarmuka-indonesia--english)
+10. [Lampiran dokumen proyek](#lampiran-dokumen-proyek)
+11. [Deliverable yang dihasilkan](#deliverable-yang-dihasilkan)
+12. [Model AI: multi-provider & cadangan](#model-ai-multi-provider--cadangan)
+13. [Knowledge base](#knowledge-base)
+14. [Skills](#skills)
+15. [Plugin MCP: GitHub, Plane, Visual Paradigm](#plugin-mcp-github-plane-visual-paradigm)
+16. [Web monitoring task](#web-monitoring-task)
+17. [Bagaimana SOLAR mencegah kesalahan](#bagaimana-solar-mencegah-kesalahan)
+18. [Keamanan](#keamanan)
+19. [Struktur repository](#struktur-repository)
+20. [Pengembangan & pengujian](#pengembangan--pengujian)
+21. [Troubleshooting](#troubleshooting)
+22. [Lisensi pihak ketiga](#lisensi-pihak-ketiga)
 
 ---
 
@@ -54,13 +56,14 @@ konfirmasi wajib), dan setiap pekerjaan bisa dipantau di **web monitoring task**
 
 | Area | Kemampuan |
 |---|---|
-| Karakter 3D | **Bisa dipilih**: **Mochi** (kue mochi merah muda, default), **Cocoa Kelapa** (kelapa cokelat bersedotan & payung kecil), atau **Kelinci** klasik - lewat tombol karakter di pojok panggung atau *Pengaturan → Karakter* (tersimpan di perangkat). Dibangun prosedural (three.js, tanpa aset) dengan animasi **GSAP**: idle, mendengarkan, berpikir, bekerja (membawa tablet), berbicara, bertanya (menunggu persetujuan), senang, sedih. Mata mengikuti kursor; klik karakter untuk mulai bicara. |
+| Karakter 3D | **Bisa dipilih**: **Robo** (robot putih-biru dengan wajah layar bercahaya dan dua antena, default), **Mochi** (kue mochi merah muda), **Cocoa Kelapa** (kelapa cokelat bersedotan & payung kecil), atau **Kelinci** klasik - lewat tombol karakter di pojok panggung atau *Pengaturan → Karakter* (tersimpan di perangkat). Dibangun prosedural (three.js, tanpa aset) dengan animasi **GSAP**: idle, mendengarkan, berpikir, bekerja (membawa tablet), berbicara, bertanya (menunggu persetujuan), senang, sedih. Mata mengikuti kursor; klik karakter untuk mulai bicara. |
 | Dokumen proyek | **Lampirkan** PDF, Word (.docx), Excel (.xlsx/.xlsm/.csv), PowerPoint (.pptx), Markdown atau teks (klip kertas, seret & lepas, atau tempel). SOLAR membaca isinya (judul, tabel, sheet, slide, catatan pembicara) sebelum merancang, lalu menyebut sumbernya. |
 | Input | Ketik (Enter kirim) atau **suara**: Web Speech API di Chrome/Edge, atau **Whisper lokal** (transformers.js, offline setelah model diunduh) - otomatis dipakai di aplikasi desktop. Berhenti otomatis saat hening. |
-| Output suara | Karakter membacakan ringkasan hasil (text-to-speech suara sistem, Bahasa Indonesia/English). |
+| Bahasa | Seluruh aplikasi dalam **Bahasa Indonesia atau English**: tombol **ID \| EN** di bilah atas atau *Pengaturan → Sistem*, langsung berlaku tanpa memuat ulang. Default mengikuti bahasa browser. Agent menjawab dalam bahasa permintaan Anda. Lihat [Bahasa antarmuka](#bahasa-antarmuka-indonesia--english). |
+| Output suara | Karakter membacakan ringkasan hasil (text-to-speech suara sistem, mengikuti bahasa antarmuka atau bahasa yang dipilih di *Pengaturan → Suara*). |
 | Agent | **Multi-provider**: OpenAI Responses API (default **GPT-6.1 Sol**, `gpt-6.1-sol`) atau API **Chat Completions** yang kompatibel OpenAI - OmniRoute, OpenRouter, LiteLLM, Claude, Gemini, Ollama/vLLM lokal. **Rute model** utama → cadangan dengan fallback otomatis bila provider gagal; diatur di *Pengaturan → Model AI* tanpa restart. Streaming, tool call paralel; satu task = satu proses end-to-end ("sekali proses"). |
 | Knowledge base | Aturan & fakta Anda sebagai file Markdown (sistem, integrasi, standar ArchiMate/PlantUML/API, prinsip, status lifecycle). Agent membacanya sebelum mendesain dan mengutamakannya di atas aturan bawaan. Impor registry **Excel/CSV** (satu file per baris) dan dokumen **Word/PDF/PowerPoint** (dipecah per bab). |
-| Deliverable | ArchiMate (Exchange XML + SVG + JSON), sequence diagram (SVG + Mermaid + PlantUML + JSON), TSD (Markdown + HTML + JSON), unduh semua sebagai ZIP. |
+| Deliverable | ArchiMate (Exchange XML + SVG + JSON), sequence diagram (SVG + Mermaid + PlantUML + JSON), TSD (Word .docx + Markdown + HTML + JSON), unduh semua sebagai ZIP. |
 | Skills | 6 skill bawaan (delivery package, ArchiMate, sequence, TSD, backlog Plane, publish GitHub); tambah/impor/edit/nonaktifkan dari UI. |
 | Plugin MCP | GitHub (remote MCP resmi), Plane `plane.mesthi.com` (MCP resmi Plane), Visual Paradigm (selalu konfirmasi), plugin custom (HTTP/SSE/stdio). |
 | Integrasi bawaan | Publish artefak ke GitHub dalam **satu commit**; buat backlog Plane secara **bulk** (epic → story, label, prioritas, anti-duplikat). |
@@ -167,6 +170,9 @@ Catatan aplikasi desktop:
   "asisten di samping" saat bekerja.
 - Input suara di desktop memakai **Whisper lokal** (Chromium di Electron tidak menyertakan layanan pengenalan suara Google).
   Model diunduh sekali (pilih ukurannya di *Pengaturan → Suara*).
+- Menu dan dialog aplikasi desktop berbahasa Indonesia atau English, mengikuti tombol **ID | EN** di UI (lihat
+  [Bahasa antarmuka](#bahasa-antarmuka-indonesia--english)); installer Windows tampil dalam Bahasa Indonesia atau
+  English sesuai bahasa Windows.
 
 ## Web app (PWA)
 
@@ -183,6 +189,9 @@ macOS, Linux, Android dan iPhone/iPad.
   di-cache. Saat versi baru tersedia, SOLAR menampilkan **Versi baru tersedia → Muat ulang**.
 - Paket **SOLAR-AI-AGENT-server-<versi>.zip** di halaman Releases berisi server yang sudah di-bundle + web app untuk
   dijalankan sendiri dengan Node.js 22 (tanpa `npm install`).
+- Ikon aplikasi (PWA, ikon Apple, ikon *maskable* Android, ikon installer Windows) bergambar Robo dan semuanya dibuat
+  dari satu file, `apps/web/public/favicon.svg`: ubah SVG itu lalu jalankan `node scripts/generate-icons.mjs`
+  (butuh Playwright + Chromium, bukan dependensi proyek).
 
 ## Konfigurasi kredensial (.env)
 
@@ -217,13 +226,15 @@ dan object storage diisi, data baru otomatis disimpan di sana.
 
 1. Buka SOLAR (browser atau desktop). Status **Terhubung** tampil di kanan atas.
 2. Ketik perintah atau klik **karakter / tombol mikrofon** lalu bicara. Tombol cepat di bawah karakter mengisi template perintah.
-   Ganti karakter (Mochi, Cocoa Kelapa, Kelinci) lewat tombol bernama karakter di pojok kiri bawah panggung.
+   Ganti karakter (Robo, Mochi, Cocoa Kelapa, Kelinci) lewat tombol bernama karakter di pojok kiri bawah panggung.
 3. SOLAR mengerjakan **seluruh permintaan dalam satu proses**: membuat rencana, memuat skill yang relevan,
    membuat & memvalidasi diagram, menyusun dokumen, lalu memberi ringkasan + daftar artefak. Asumsi dicatat eksplisit
    (tidak berhenti untuk bertanya kecuali benar-benar menghalangi).
 4. Bila aksi butuh persetujuan (mis. Visual Paradigm), karakter mengangkat tangan dan dialog **Perlu persetujuan Anda**
    muncul berisi data yang akan dikirim. Setujui atau tolak (bisa dengan catatan).
-5. Pratinjau, unduh per file, atau **Unduh semua (ZIP)**. Progres rinci ada di **Monitor**.
+5. Pratinjau, unduh per file, atau **Unduh semua (ZIP)**. Dokumen Word TSD (dokumen untuk klien) diunduh lewat tombol
+   **Unduh Word (.docx)** di judul kelompok TSD; TSD lama yang belum punya file Word mendapat tombol **Buat Word (.docx)**.
+   Progres rinci ada di **Monitor**.
 
 Contoh perintah:
 
@@ -242,6 +253,42 @@ Buat sequence diagram login SSO dengan Keycloak termasuk alur token kedaluwarsa.
 
 Percakapan dalam satu sesi saling terhubung: permintaan berikutnya (mis. "tambahkan NFR keamanan ke TSD tadi")
 mendapat konteks task sebelumnya. Tombol **Percakapan baru** memulai konteks kosong.
+
+## Bahasa antarmuka: Indonesia / English
+
+SOLAR bisa dipakai sepenuhnya dalam **Bahasa Indonesia** atau **English**, dan bahasanya bisa diganti kapan saja.
+
+- **Mengganti bahasa:** tombol **ID | EN** di bilah atas, atau *Pengaturan → Sistem → Bahasa / Language*. Perubahan
+  langsung berlaku di seluruh aplikasi tanpa memuat ulang halaman, tersimpan di perangkat (`localStorage`
+  `solar.lang`), dan diikuti semua jendela/tab SOLAR lain yang terbuka di browser yang sama.
+- **Bahasa awal** (selama Anda belum pernah memilih): bahasa pertama dari daftar bahasa browser/sistem
+  (`navigator.languages`) yang dikenali - `id…` atau `ms…` → Bahasa Indonesia, `en…` → English; selain itu Bahasa
+  Indonesia. `<html lang>` dan manifest PWA (`manifest.webmanifest` / `manifest.en.webmanifest`) sudah diatur sebelum
+  tampilan pertama, jadi tidak ada kedipan bahasa lain saat halaman dibuka.
+- **Yang ikut berganti:** semua teks antarmuka; tombol cepat di bawah karakter (label **dan** template perintahnya, jadi
+  agent ikut menjawab dalam bahasa itu); format tanggal, angka dan durasi (`11 Okt, 04.29` · `$0,174` /
+  `Oct 11, 4:29 AM` · `$0.174`); serta teks dari server: langkah dan status task, alasan persetujuan, nama tool di
+  langkah kerja dan timeline, error task, pesan error API, error/peringatan unggah lampiran, hasil impor knowledge,
+  tes koneksi provider, dan status plugin MCP.
+- **Bahasa task:** teks milik sebuah task (langkah aktif, pesan status, alasan persetujuan, nama tool, error) ditulis
+  dalam bahasa antarmuka saat task itu dibuat (`Task.language`), karena semua UI yang terbuka melihat task yang sama.
+  Mengganti bahasa tidak menerjemahkan ulang task yang sudah ada; task berikutnya memakai bahasa yang baru. Task dari
+  versi sebelum fitur ini dianggap Bahasa Indonesia.
+- **Jawaban agent:** dalam bahasa yang Anda pakai di permintaan; bila tidak jelas (mis. hanya nama sistem, file, atau
+  kode) agent memakai bahasa task. TSD ditulis dalam bahasa task kecuali Anda meminta lain (mis. *"TSD dalam bahasa
+  Inggris"*).
+- **Tidak diterjemahkan** karena merupakan data: isi knowledge base (termasuk panduan & template bawaan di
+  `knowledge/`, yang berbahasa Indonesia), isi skill, deskripsi plugin dari konfigurasi, isi artefak, dan teks Anda
+  sendiri.
+- **Suara:** di *Pengaturan → Suara* bahasa **Otomatis** (default) memakai `id-ID` atau `en-US` sesuai bahasa
+  antarmuka; pilihan bahasa tertentu tetap dipakai walau antarmuka diganti. Pengaturan suara lama yang masih berisi
+  default lama (`id-ID`) otomatis menjadi **Otomatis**.
+- **Aplikasi desktop:** menu dan dialog mengikuti bahasa yang dipilih di UI (diingat di `%APPDATA%\SOLAR\language.json`);
+  sebelum itu mengikuti bahasa Windows. Installer Windows tampil dalam Bahasa Indonesia atau English sesuai bahasa
+  Windows.
+- **Klien API lain** (skrip, integrasi): kirim header `X-Solar-Language: en` (atau `Accept-Language`) dan
+  `"language": "en"` saat membuat task; tanpa keduanya server menjawab dalam Bahasa Indonesia. Lihat
+  [docs/API.md](docs/API.md#bahasa).
 
 ## Lampiran dokumen proyek
 
@@ -302,6 +349,7 @@ tidak pernah dikirim dihapus otomatis setelah 24 jam.
 | | `<nama>.puml` | PlantUML. |
 | TSD | `<nama>.md` | Markdown GitHub-ready: kontrol dokumen, daftar isi, diagram tertaut sebagai file SVG di folder yang sama, sumber Mermaid. |
 | | `<nama>.html` | HTML mandiri siap cetak (Print → PDF) dengan diagram tertanam; bisa dibuka di Microsoft Word. |
+| | `<nama>.docx` | **Dokumen Word untuk diserahkan ke klien** (A4): halaman sampul, kontrol dokumen, riwayat revisi, lembar persetujuan (tanda tangan reviewer/penyetuju, bila diisi), daftar isi bernomor halaman, header/footer "Halaman X dari Y", tabel, dan diagram sebagai gambar bernomor - vektor (SVG) dengan cadangan PNG untuk aplikasi yang belum mendukung SVG (mis. Word 2013 ke bawah); diagram dan tabel yang lebar mendapat halaman lanskap sendiri agar teksnya tetap terbaca. Nomor halaman daftar isi sudah terisi saat dibuka tetapi berupa perkiraan (pada dokumen panjang bisa meleset satu halaman; *Update Table* di Word memberi nomor pasti). Dokumen dibuat di *worker thread* terpisah dengan batas waktu dan memori, sehingga TSD yang panjang tidak membuat server atau aplikasi desktop macet. Format memakai style bernama Word (Title, Heading 1-3, Caption, TOC, Table Grid, ...) sehingga bisa diganti dengan template perusahaan. TSD yang dibuat sebelum ada file Word: tombol **Buat Word (.docx)** di daftar artefak atau `POST /api/artifacts/<id>/docx` (id artefak mana pun dari paket TSD, lihat [docs/API.md](docs/API.md#artefak)). |
 
 Contoh output generator:
 
@@ -340,11 +388,16 @@ Cara agent memakainya:
 - Daftar file (path, jenis, judul, alias, status) ada di system prompt; file sistem/integrasi yang namanya atau aliasnya
   muncul di permintaan atau nama dokumen disodorkan otomatis (`<knowledge_matches>`).
 - Tool `list_knowledge`, `search_knowledge`, `read_knowledge` - agent hanya membaca file yang relevan.
+- Tool `save_knowledge` (buat/ubah file) dan `import_artifact_to_knowledge` (simpan artefak Markdown, mis. `.md` dari TSD,
+  sebagai knowledge) - dipakai hanya bila Anda memintanya, dan **setiap penulisan menunggu persetujuan Anda**. File yang
+  sudah ada tidak pernah ditimpa tanpa diminta. Artefak hasil task bukan knowledge sampai disimpan dengan cara ini.
 - Isi knowledge mengalahkan aturan bawaan dan skill. Sistem tanpa file tidak dikarang: dicatat sebagai asumsi/open issue,
   dan di akhir jawaban agent menyebut sistem/API yang belum terdaftar.
 - Item berstatus `sunset`/`retired`/`deprecated` hanya muncul di kondisi as-is dan migrasi, tidak dipakai untuk solusi baru.
 
 Impor:
+- **Artefak Markdown** - tombol buku di samping file `.md` pada daftar artefak (chat atau Monitor) → pilih jenis
+  (mis. *Sistem* → `systems/AD1GATE.md`), ID, judul dan alias → **Simpan**. ID artefak dicatat sebagai `source`.
 - **File .md / folder** - struktur folder dipertahankan.
 - **Excel/CSV registry** (daftar sistem, API, kontrak) - pilih sheet, kolom ID, nama, status dan alias; setiap baris menjadi
   satu file plus `INDEX.md`. Impor ulang memperbarui baris yang berubah dan (opsional) menghapus file baris yang sudah tidak ada.
@@ -421,7 +474,7 @@ header/env (boleh `${VAR}`), kebijakan konfirmasi, dan opsional daftar tool yang
 
 Buka `/monitor` (mis. <http://localhost:8790/monitor>):
 
-- **KPI**: total task, sedang berjalan, menunggu konfirmasi, selesai, gagal/batal, estimasi biaya API.
+- **KPI**: total task, sedang berjalan, menunggu persetujuan, selesai, gagal/batal, estimasi biaya API.
 - **Tabel task** dengan status (ikon + label), progres realtime, waktu mulai, durasi, biaya; filter & pencarian.
 - **Detail task**: langkah aktif, model, jumlah API call, token (input/output/cache), permintaan, hasil, artefak, dan
   **timeline** setiap event (penalaran ringkas, pemanggilan tool beserta input, hasil validasi, persetujuan, error).
@@ -462,18 +515,23 @@ solar/
 ├─ apps/
 │  ├─ server/        Node.js + Express: agent loop, lapisan LLM multi-provider (src/llm), knowledge base
 │  │                 (src/knowledge), task manager, generator & validator, pembaca dokumen (src/documents),
-│  │                 skills, plugin MCP, storage Neon/S3/lokal,
+│  │                 skills, plugin MCP, storage Neon/S3/lokal, pesan ID/EN (src/i18n.ts + src/i18n/),
 │  │                 REST + SSE  (test: vitest)
 │  ├─ web/           React + Vite + TypeScript + GSAP + three.js: karakter 3D, chat, suara, monitor, pengaturan;
-│  │                 PWA: public/manifest.webmanifest, pwa/ (service worker + plugin build)
-│  └─ desktop/       Electron: menjalankan server + UI sebagai aplikasi Windows (installer NSIS)
+│  │                 teks antarmuka ID/EN (src/i18n/{id,en}/, src/lib/i18n.ts);
+│  │                 PWA: public/manifest.webmanifest (+ manifest.en.webmanifest), pwa/ (service worker +
+│  │                 plugin build), public/favicon.svg (sumber semua ikon aplikasi)
+│  └─ desktop/       Electron: menjalankan server + UI sebagai aplikasi Windows (installer NSIS);
+│                    menu & dialog ID/EN (src/i18n.ts)
 ├─ packages/shared/  Tipe TypeScript bersama (Task, Event, Artifact, Plugin, Skill, ...)
 ├─ skills/           Skill bawaan (SKILL.md)
 ├─ knowledge/        Panduan & template knowledge base (README, _templates/)
 ├─ config/           plugins.default.json (preset GitHub, Plane, Visual Paradigm)
 ├─ docs/             ARCHITECTURE.md, API.md, SELF-HOSTING.md, gambar
 ├─ scripts/          generate-archimate-relationships.mjs (regenerasi tabel relasi dari Archi),
-│                    pack-server.mjs (paket server + web app untuk rilis)
+│                    generate-icons.mjs (ikon PNG aplikasi/PWA/installer dari apps/web/public/favicon.svg),
+│                    pack-server.mjs (paket server + web app untuk rilis),
+│                    third-party-licenses.mjs (teks lisensi paket yang ikut di-bundle, untuk rilis)
 └─ .env.example      Template konfigurasi
 ```
 
@@ -496,10 +554,11 @@ ARCHIMATE_XSD_DIR=/path/ke/xsd npm test
 SOLAR_TEST_DATABASE_URL="postgresql://user:pass@host/db_test?sslmode=require" npm test
 ```
 
-Yang sudah diuji otomatis: validator & renderer ArchiMate/sequence/TSD, store skill & plugin (termasuk penyamaran
-rahasia), round-trip object storage S3-compatible, skenario agent end-to-end (model tiruan) dengan konfirmasi,
-pembuatan 11 artefak, ZIP, header keamanan, dan riwayat percakapan append-only, serta pembacaan lampiran dari dokumen
-nyata (`apps/server/test/fixtures/documents`: Word, PowerPoint, Excel, PDF, file terenkripsi & format lama) termasuk
+Yang sudah diuji otomatis: validator & renderer ArchiMate/sequence/TSD (termasuk dokumen Word TSD yang dibaca ulang,
+rasterisasi diagram ke PNG dan `POST /api/artifacts/:id/docx`), store skill & plugin (termasuk penyamaran rahasia),
+round-trip object storage S3-compatible, skenario agent end-to-end (model tiruan) dengan konfirmasi, pembuatan
+12 artefak (termasuk `.docx`), ZIP, header keamanan, dan riwayat percakapan append-only, serta pembacaan lampiran dari
+dokumen nyata (`apps/server/test/fixtures/documents`: Word, PowerPoint, Excel, PDF, file terenkripsi & format lama) termasuk
 zip bomb, PDF hasil scan, file rusak, ekstensi yang salah, API unggah dan tool dokumen agent.
 
 ### Rilis
@@ -529,6 +588,8 @@ Tanpa tag/centang, workflow hanya menyimpan installer dan zip sebagai artifact (
 | Plugin Plane error saat terhubung | Pastikan Node.js/npx terpasang dan bisa mengakses npm registry; cek `PLANE_API_HOST_URL=https://plane.mesthi.com`. |
 | Mikrofon tidak bekerja di browser | Izinkan mikrofon; Web Speech API butuh Chrome/Edge + internet. Pilih *Whisper lokal* di Pengaturan → Suara. |
 | Karakter tampil sebagai gambar statis | WebGL tidak tersedia (driver/GPU). Fitur lain tetap berjalan normal. |
+| Langkah/status task lama tetap dalam bahasa sebelumnya | Disengaja: teks sebuah task ditulis dalam bahasa antarmuka saat task dibuat. Task baru memakai bahasa yang sedang dipilih. |
+| Agent menjawab dalam bahasa yang tidak diharapkan | Agent mengikuti bahasa tulisan permintaan Anda (bahasa antarmuka hanya bila tidak jelas). Sebutkan bahasanya di permintaan, mis. *"jawab dalam bahasa Inggris"*. |
 | Port 8790 dipakai | Ubah `PORT` di `.env` (desktop otomatis memilih port lain). |
 | Lampiran ditolak "dilindungi kata sandi" | Buka file di Office → *File → Info → Protect → Encrypt with Password*, kosongkan kata sandi, simpan, lampirkan lagi (PDF: simpan salinan tanpa kata sandi). |
 | Lampiran ditolak "Format Word 97-2003 (.doc)" dsb. | Simpan ulang sebagai .docx/.xlsx/.pptx (*File → Save As*) atau ekspor ke PDF. |

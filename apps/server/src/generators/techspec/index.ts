@@ -1,10 +1,12 @@
 import type { ValidationIssue } from '../validation.js';
-import { buildDocument } from './document.js';
+import { buildDocument, type BuiltDocument } from './document.js';
 import { TechSpecSchema, type ResolvedDiagram, type TechSpec } from './model.js';
 import { renderTechSpecHtml, renderTechSpecMarkdown } from './render.js';
 
 export interface TechSpecBuildOutput {
   spec: TechSpec;
+  /** The format-neutral document the Markdown, HTML and Word (renderTechSpecDocx) files are rendered from. */
+  document: BuiltDocument;
   markdown: string;
   html: string;
   warnings: ValidationIssue[];
@@ -78,9 +80,12 @@ export function buildTechSpec(input: unknown, diagrams: Map<string, ResolvedDiag
   const doc = buildDocument(spec, diagrams, today);
   return {
     ok: true,
-    output: { spec, markdown: renderTechSpecMarkdown(doc), html: renderTechSpecHtml(doc), warnings },
+    output: { spec, document: doc, markdown: renderTechSpecMarkdown(doc), html: renderTechSpecHtml(doc), warnings },
   };
 }
 
 export { TechSpecSchema } from './model.js';
 export type { ResolvedDiagram } from './model.js';
+export type { BuiltDocument } from './document.js';
+// The Word renderer (./docx.js) is not re-exported: the server runs it in a worker thread (tasks/techSpecDocxIsolated.ts),
+// and importing it here would load the docx library and the rasterizer into the server bundles.

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { Attachment } from '@solar/shared';
 import { charBoundary, neutralizeFraming } from '../documents/safe.js';
+import { t, taskLang } from '../i18n.js';
 import type { AttachmentService } from '../tasks/attachmentService.js';
 import type { TaskRunContext } from '../tasks/taskManager.js';
 import { json, zodTool } from './zodTool.js';
@@ -97,7 +98,7 @@ export function createDocumentTools(attachments: AttachmentService): AgentTool[]
   return [
     zodTool({
       name: 'list_documents',
-      displayName: 'Daftar dokumen lampiran',
+      displayName: { id: 'Daftar dokumen lampiran', en: 'Listing attached documents' },
       description:
         'List the documents the user attached (to this request and to earlier requests of the conversation): id, file name, type, pages/slides/sheets, length, outline and warnings. Read them with read_document or search_documents.',
       schema: z.object({}),
@@ -105,7 +106,7 @@ export function createDocumentTools(attachments: AttachmentService): AgentTool[]
         const docs = await visible(ctx);
         const own = new Set(ctx.task.attachmentIds ?? []);
         return {
-          summary: `${docs.length} document(s)`,
+          summary: t(taskLang(ctx), 'tool.documents', { n: docs.length }),
           content: neutralizeFraming(
             json(
               docs.map((a) => ({
@@ -125,7 +126,7 @@ export function createDocumentTools(attachments: AttachmentService): AgentTool[]
     }),
     zodTool({
       name: 'read_document',
-      displayName: 'Membaca dokumen lampiran',
+      displayName: { id: 'Membaca dokumen lampiran', en: 'Reading attached document' },
       description: [
         'Read the text of an attached document, converted to Markdown (headings, lists and tables kept; PDF pages marked "<!-- page N -->", slides "## Slide N: title" with speaker notes, Excel sheets "## Sheet: name"; a CSV is one table).',
         `Returns up to max_chars characters (default ${READ_DEFAULT_CHARS}) from offset, plus next_offset while more text remains.`,
@@ -138,11 +139,18 @@ export function createDocumentTools(attachments: AttachmentService): AgentTool[]
         max_chars: z.number().int().min(1000).max(READ_MAX_CHARS).default(READ_DEFAULT_CHARS),
       }),
       async execute(input, ctx) {
+        const lang = taskLang(ctx);
         const a = await resolve(ctx, input.document_id);
-        if (!a) return { isError: true, content: `Document ${input.document_id} is not attached to this conversation's requests. Call list_documents.`, summary: 'not found' };
+        if (!a) {
+          return {
+            isError: true,
+            content: `Document ${input.document_id} is not attached to this conversation's requests. Call list_documents.`,
+            summary: t(lang, 'tool.notFound'),
+          };
+        }
         const text = await attachments.readText(a);
         if (input.offset >= text.length && text.length > 0) {
-          return { isError: true, content: `offset ${input.offset} is past the end (${text.length} characters).`, summary: 'offset past end' };
+          return { isError: true, content: `offset ${input.offset} is past the end (${text.length} characters).`, summary: t(lang, 'tool.documents.offsetPastEnd') };
         }
         const used = readSoFar.get(ctx) ?? 0;
         const allowance = Math.min(input.max_chars, READ_BUDGET_CHARS - used);
@@ -150,7 +158,7 @@ export function createDocumentTools(attachments: AttachmentService): AgentTool[]
           return {
             isError: true,
             content: `Reading budget of this task used up (${used} characters read). Use search_documents to find the remaining facts you need and work with what you have read.`,
-            summary: 'read budget used up',
+            summary: t(lang, 'tool.documents.budgetUsed'),
           };
         }
         const start = charBoundary(text, input.offset);
@@ -172,7 +180,7 @@ export function createDocumentTools(attachments: AttachmentService): AgentTool[]
     }),
     zodTool({
       name: 'search_documents',
-      displayName: 'Mencari di dokumen lampiran',
+      displayName: { id: 'Mencari di dokumen lampiran', en: 'Searching attached documents' },
       description:
         'Search the attached documents for a phrase (case-insensitive; falls back to lines containing all words). Every document is searched; returns matches with document id, offset, location (nearest heading/page/slide/sheet) and a snippet, plus the number of matches per document. Use read_document with a nearby offset to read the context.',
       schema: z.object({
@@ -200,7 +208,12 @@ export function createDocumentTools(attachments: AttachmentService): AgentTool[]
         const counts = Object.fromEntries(perDoc.map(({ doc, hits: list }) => [doc.id, list.length >= input.max_results ? `${list.length}+` : String(list.length)]));
         const total = perDoc.reduce((n, p) => n + p.hits.length, 0);
         return {
-          summary: `${hits.length}${total > hits.length ? ` of ${total}+` : ''} match(es) for "${input.query.slice(0, 60)}" in ${docs.length} document(s)`,
+          summary: t(taskLang(ctx), 'tool.documents.matches', {
+            shown: hits.length,
+            total: total > hits.length ? total : null,
+            query: input.query.slice(0, 60),
+            documents: docs.length,
+          }),
           content: hits.length
             ? json({ matches_per_document: counts, truncated: total > hits.length, matches: hits })
             : `No match for "${neutralizeFraming(input.query)}" in ${docs.length} document(s).`,

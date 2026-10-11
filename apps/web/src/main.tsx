@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { setupI18n } from './lib/i18n';
 import { setupPwa, syncThemeColor } from './lib/pwa';
 import './styles/global.css';
 
@@ -13,6 +14,7 @@ window.addEventListener('drop', (e) => {
   if (isFileDrag(e)) e.preventDefault();
 });
 
+setupI18n();
 setupPwa();
 syncThemeColor();
 // "Ikuti sistem" follows the operating system's light/dark switch

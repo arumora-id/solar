@@ -4,6 +4,7 @@
  * bombs, including ones with lying headers, never materialise.
  */
 import { Inflate } from 'fflate';
+import { DEFAULT_LANG, t, type Lang } from '../i18n.js';
 import { fmtInt, fmtMB, MB, parseAttrs, type Deadline, type Limits } from './limits.js';
 import { DocumentError, documentError } from './types.js';
 
@@ -34,15 +35,17 @@ export class ZipArchive {
     private readonly buf: Uint8Array,
     private readonly limits: Limits,
     private readonly deadline: Deadline,
-    /** e.g. "dokumen Word (.docx)", used in error messages. */
+    /** e.g. "Word document (.docx)", used in error messages. */
     private readonly label: string,
+    /** Language of the error messages (and of classifyOoxml's reasons). */
+    readonly lang: Lang = DEFAULT_LANG,
   ) {
     this.view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
     this.readDirectory();
   }
 
   private corrupt(detail: string): DocumentError {
-    return documentError('CORRUPT', `File rusak atau bukan ${this.label} yang valid (${detail}).`);
+    return documentError('CORRUPT', t(this.lang, 'doc.corrupt', { label: this.label, detail }));
   }
 
   private readDirectory(): void {
@@ -55,7 +58,7 @@ export class ZipArchive {
         break;
       }
     }
-    if (eocd < 0) throw this.corrupt('akhir direktori ZIP tidak ditemukan');
+    if (eocd < 0) throw this.corrupt(t(this.lang, 'doc.zip.noEnd'));
     let count = dv.getUint16(eocd + 10, true);
     let cdSize = dv.getUint32(eocd + 12, true);
     let cdOff = dv.getUint32(eocd + 16, true);
@@ -71,13 +74,13 @@ export class ZipArchive {
       }
     }
     if (count > this.limits.maxEntries) {
-      throw documentError('TOO_LARGE', `File berisi ${fmtInt(count)} entri ZIP (batas ${fmtInt(this.limits.maxEntries)}).`);
+      throw documentError('TOO_LARGE', t(this.lang, 'doc.zip.tooManyEntries', { n: fmtInt(count, this.lang), max: fmtInt(this.limits.maxEntries, this.lang) }));
     }
-    if (cdOff + cdSize > b.length) throw this.corrupt('direktori ZIP berada di luar file');
+    if (cdOff + cdSize > b.length) throw this.corrupt(t(this.lang, 'doc.zip.directoryOutside'));
     const utf8 = new TextDecoder('utf-8');
     let p = cdOff;
     for (let i = 0; i < count; i++) {
-      if (p + 46 > b.length || dv.getUint32(p, true) !== 0x02014b50) throw this.corrupt('entri direktori ZIP tidak valid');
+      if (p + 46 > b.length || dv.getUint32(p, true) !== 0x02014b50) throw this.corrupt(t(this.lang, 'doc.zip.badEntry'));
       const flags = dv.getUint16(p + 8, true);
       const method = dv.getUint16(p + 10, true);
       let csize = dv.getUint32(p + 20, true);
@@ -86,7 +89,7 @@ export class ZipArchive {
       const xlen = dv.getUint16(p + 30, true);
       const clen = dv.getUint16(p + 32, true);
       let lho = dv.getUint32(p + 42, true);
-      if (p + 46 + nlen + xlen > b.length) throw this.corrupt('entri direktori ZIP terpotong');
+      if (p + 46 + nlen + xlen > b.length) throw this.corrupt(t(this.lang, 'doc.zip.entryCut'));
       const name = utf8
         .decode(b.subarray(p + 46, p + 46 + nlen))
         .replace(/\\/g, '/')
@@ -101,7 +104,7 @@ export class ZipArchive {
           if (id === 0x0001) {
             let q = x + 4;
             const next = () => {
-              if (q + 8 > xend) throw this.corrupt('data ZIP64 tidak lengkap');
+              if (q + 8 > xend) throw this.corrupt(t(this.lang, 'doc.zip.zip64'));
               const v = Number(dv.getBigUint64(q, true));
               q += 8;
               return v;
@@ -137,40 +140,41 @@ export class ZipArchive {
   }
 
   private tooLarge(detail: string): DocumentError {
-    return documentError('TOO_LARGE', `File terlalu besar: ${detail}. Pecah dokumen menjadi beberapa file.`);
+    return documentError('TOO_LARGE', t(this.lang, 'doc.zip.tooLarge', { detail }));
   }
 
   private bomb(detail: string): DocumentError {
-    return documentError('ZIP_BOMB', `File ditolak karena terindikasi zip bomb: ${detail}.`);
+    return documentError('ZIP_BOMB', t(this.lang, 'doc.zip.bomb', { detail }));
   }
 
   /** Validates an entry before inflating it and returns where its data starts. */
   private check(e: ZipEntry, maxBytes: number, streaming: boolean): number {
-    if (e.flags & 1) throw documentError('ENCRYPTED', `${capitalize(this.label)} ini dilindungi kata sandi (entri ZIP terenkripsi). Hapus kata sandinya lalu lampirkan lagi.`);
-    if (e.method !== 0 && e.method !== 8) throw this.corrupt(`metode kompresi ZIP ${e.method} tidak didukung untuk "${e.name}"`);
+    const lang = this.lang;
+    if (e.flags & 1) throw documentError('ENCRYPTED', t(lang, 'doc.zip.encrypted', { label: this.label }));
+    if (e.method !== 0 && e.method !== 8) throw this.corrupt(t(lang, 'doc.zip.method', { method: e.method, name: e.name }));
     const ratio = e.csize > 0 ? e.usize / e.csize : Infinity;
-    const expands = `"${e.name}" mengembang menjadi ${fmtMB(e.usize)} dari ${fmtMB(e.csize)} (rasio ${Math.round(ratio)}:1)`;
+    const expands = t(lang, 'doc.zip.expands', { name: e.name, size: fmtMB(e.usize), compressed: fmtMB(e.csize), ratio: Math.round(ratio) });
     if (streaming && ratio > this.limits.maxCompressionRatio && e.usize > this.limits.maxEntryBytes) throw this.bomb(expands);
     // Streamed parts (worksheets, shared strings) are consumed incrementally and may stop early, so their declared
     // size is no reason to reject them; the bytes actually inflated stay capped.
     if (!streaming && ratio > this.limits.maxCompressionRatio && e.usize > BOMB_MIN_BYTES) throw this.bomb(expands);
     if (!streaming && e.usize > maxBytes) {
-      throw this.tooLarge(`bagian "${e.name}" mengembang menjadi ${fmtMB(e.usize)} (batas ${fmtMB(maxBytes)} per bagian)`);
+      throw this.tooLarge(t(lang, 'doc.zip.partExpands', { name: e.name, size: fmtMB(e.usize), max: fmtMB(maxBytes) }));
     }
     if (!streaming && this.inflatedTotal + e.usize > this.limits.maxTotalInflatedBytes) {
-      throw this.tooLarge(`isinya mengembang lebih dari ${fmtMB(this.limits.maxTotalInflatedBytes)}`);
+      throw this.tooLarge(t(lang, 'doc.zip.totalExpands', { max: fmtMB(this.limits.maxTotalInflatedBytes) }));
     }
     const dv = this.view;
-    if (e.lho + 30 > this.buf.length || dv.getUint32(e.lho, true) !== 0x04034b50) throw this.corrupt(`header lokal "${e.name}" tidak valid`);
+    if (e.lho + 30 > this.buf.length || dv.getUint32(e.lho, true) !== 0x04034b50) throw this.corrupt(t(lang, 'doc.zip.localHeader', { name: e.name }));
     const start = e.lho + 30 + dv.getUint16(e.lho + 26, true) + dv.getUint16(e.lho + 28, true);
-    if (start + e.csize > this.buf.length) throw this.corrupt(`entri "${e.name}" terpotong`);
+    if (start + e.csize > this.buf.length) throw this.corrupt(t(lang, 'doc.zip.entryTruncated', { name: e.name }));
     return start;
   }
 
   private account(n: number): void {
     this.inflatedTotal += n;
     if (this.inflatedTotal > this.limits.maxTotalInflatedBytes) {
-      throw this.tooLarge(`isinya mengembang lebih dari ${fmtMB(this.limits.maxTotalInflatedBytes)}`);
+      throw this.tooLarge(t(this.lang, 'doc.zip.totalExpands', { max: fmtMB(this.limits.maxTotalInflatedBytes) }));
     }
   }
 
@@ -181,12 +185,13 @@ export class ZipArchive {
    */
   stream(name: string | ZipEntry, onChunk: (chunk: Uint8Array) => boolean | void, maxBytes = this.limits.maxEntryBytes, streaming = false): void {
     const e = typeof name === 'string' ? this.get(name) : name;
-    if (!e) throw this.corrupt(`bagian "${String(name)}" tidak ada`);
+    const lang = this.lang;
+    if (!e) throw this.corrupt(t(lang, 'doc.zip.partMissing', { name: String(name) }));
     const start = this.check(e, maxBytes, streaming);
     const data = this.buf.subarray(start, start + e.csize);
     if (e.method === 0) {
-      if (e.csize !== e.usize) throw this.corrupt(`ukuran entri "${e.name}" tidak konsisten`);
-      if (e.usize > maxBytes) throw this.tooLarge(`bagian "${e.name}" lebih dari ${fmtMB(maxBytes)}`);
+      if (e.csize !== e.usize) throw this.corrupt(t(lang, 'doc.zip.sizeInconsistent', { name: e.name }));
+      if (e.usize > maxBytes) throw this.tooLarge(t(lang, 'doc.zip.partTooLarge', { name: e.name, max: fmtMB(maxBytes) }));
       this.account(e.usize);
       onChunk(data);
       return;
@@ -196,8 +201,8 @@ export class ZipArchive {
     const inflate = new Inflate((chunk) => {
       if (stop || !chunk.length) return;
       produced += chunk.length;
-      if (produced > e.usize) throw this.bomb(`"${e.name}" mengembang melebihi ukuran yang dinyatakan (${fmtInt(e.usize)} byte)`);
-      if (produced > maxBytes) throw this.tooLarge(`bagian "${e.name}" mengembang lebih dari ${fmtMB(maxBytes)}`);
+      if (produced > e.usize) throw this.bomb(t(lang, 'doc.zip.beyondDeclared', { name: e.name, n: fmtInt(e.usize, lang) }));
+      if (produced > maxBytes) throw this.tooLarge(t(lang, 'doc.zip.partExpandsBeyond', { name: e.name, max: fmtMB(maxBytes) }));
       this.account(chunk.length);
       if (onChunk(chunk) === false) {
         stop = true;
@@ -213,9 +218,9 @@ export class ZipArchive {
     } catch (err) {
       if (err === STOP) return;
       if (err instanceof DocumentError) throw err;
-      throw this.corrupt(`"${e.name}" tidak bisa didekompresi: ${err instanceof Error ? err.message : String(err)}`);
+      throw this.corrupt(t(lang, 'doc.zip.inflate', { name: e.name, error: err instanceof Error ? err.message : String(err) }));
     }
-    if (!stop && produced !== e.usize) throw this.corrupt(`ukuran "${e.name}" tidak cocok (dinyatakan ${e.usize}, hasil ${produced})`);
+    if (!stop && produced !== e.usize) throw this.corrupt(t(lang, 'doc.zip.sizeMismatch', { name: e.name, declared: e.usize, actual: produced }));
   }
 
   /** Inflates a whole part (null when it does not exist). */
@@ -276,7 +281,6 @@ export class ZipArchive {
   }
 }
 
-const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 // --- OPC (Open Packaging Conventions) helpers --------------------------------------------------
 
@@ -320,7 +324,7 @@ export interface OoxmlPackage {
   /** Path of the main part (word/document.xml, xl/workbook.xml, ppt/presentation.xml). */
   mainPart: string;
   mainType: string;
-  /** Why the package is not supported (Visio, OpenDocument, .xlsb), Indonesian. */
+  /** Why the package is not supported (Visio, OpenDocument, .xlsb), in the archive's language. */
   unsupported: string | null;
 }
 
@@ -337,21 +341,21 @@ export function classifyOoxml(zip: ZipArchive): OoxmlPackage {
   const officeRel = parseRels(zip.text('_rels/.rels', 4 * MB)).find((r) => /\/officeDocument$/.test(r.type) && !r.external);
   let mainPart = officeRel ? resolvePart('', officeRel.target) : '';
   const mainType = mainPart ? (overrides.get(mainPart.toLowerCase()) ?? '') : '';
-  const t = mainType.toLowerCase();
+  const type = mainType.toLowerCase();
   let kind: OoxmlKind | null = null;
   let unsupported: string | null = null;
-  if (/wordprocessingml\.(document|template)\.main|ms-word\.(document|template)\.macroenabled/.test(t)) kind = 'docx';
-  else if (/spreadsheetml\.(sheet|template)\.main|ms-excel\.(sheet|template)\.macroenabled\.main/.test(t)) kind = 'xlsx';
-  else if (/presentationml\.(presentation|slideshow|template)\.main|ms-powerpoint\.(presentation|slideshow|template)\.macroenabled\.main/.test(t)) kind = 'pptx';
-  else if (/ms-excel\.sheet\.binary/.test(t)) unsupported = 'Excel Binary Workbook (.xlsb) belum didukung; simpan sebagai .xlsx atau .csv';
-  else if (/ms-visio/.test(t) || zip.has('visio/document.xml')) unsupported = 'gambar Visio (.vsdx) belum didukung; ekspor ke PDF';
-  else if (!t) {
+  if (/wordprocessingml\.(document|template)\.main|ms-word\.(document|template)\.macroenabled/.test(type)) kind = 'docx';
+  else if (/spreadsheetml\.(sheet|template)\.main|ms-excel\.(sheet|template)\.macroenabled\.main/.test(type)) kind = 'xlsx';
+  else if (/presentationml\.(presentation|slideshow|template)\.main|ms-powerpoint\.(presentation|slideshow|template)\.macroenabled\.main/.test(type)) kind = 'pptx';
+  else if (/ms-excel\.sheet\.binary/.test(type)) unsupported = t(zip.lang, 'doc.unsupported.xlsb');
+  else if (/ms-visio/.test(type) || zip.has('visio/document.xml')) unsupported = t(zip.lang, 'doc.unsupported.visio');
+  else if (!type) {
     // no content type for the main part: fall back on well-known part names (some producers are sloppy)
     if (zip.has('word/document.xml')) [kind, mainPart] = ['docx', 'word/document.xml'];
     else if (zip.has('xl/workbook.xml')) [kind, mainPart] = ['xlsx', 'xl/workbook.xml'];
     else if (zip.has('ppt/presentation.xml')) [kind, mainPart] = ['pptx', 'ppt/presentation.xml'];
     else if ((zip.text('mimetype', 4096) ?? '').includes('opendocument')) {
-      unsupported = 'file OpenDocument (.odt/.ods/.odp) belum didukung; simpan sebagai .docx, .xlsx atau .pptx';
+      unsupported = t(zip.lang, 'doc.unsupported.openDocument');
     }
   }
   if (kind && !zip.has(mainPart)) kind = null;

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { getToken } from '../../lib/api';
+import { LANGUAGE_NATIVE_NAME, LANGUAGES, setLang, useLang, useT } from '../../lib/i18n';
 import { installApp, isElectron, syncThemeColor, usePwa } from '../../lib/pwa';
 import { readPref, writePref } from '../../lib/session';
 import { useSolar } from '../../lib/store';
@@ -25,45 +26,49 @@ export function currentTheme(): ThemePref {
 
 export function SystemPanel() {
   const { config, submitToken } = useSolar();
+  const t = useT();
   const [theme, setTheme] = useState<ThemePref>(currentTheme);
   const [token, setTokenValue] = useState(getToken());
   const [compact, setCompact] = useState(readPref('compactStage', false));
 
+  const words = t.settings.system;
+  const row = words.rows;
   const rows: Array<[string, string]> = config
     ? [
-        ['Versi', `${config.appName} ${config.version}`],
-        ['Model utama', `${config.provider} · ${config.model} (reasoning effort ${config.effort})`],
-        ['Rute model', config.modelRoute.join(' → ')],
-        ['Status model', config.llmConfigured ? 'Siap' : 'BELUM ada API key (OPENAI_API_KEY atau Pengaturan → Model AI)'],
-        ['Knowledge base', `${config.knowledgeFiles} file`],
-        ['Database', config.storage.database === 'neon-postgres' ? 'Neon Postgres (DATABASE_URL)' : 'File lokal (data/)'],
-        ['Penyimpanan artefak', config.storage.objects === 's3' ? 'Object storage S3 (Neon/S3)' : 'File lokal (data/artifacts)'],
-        ['GitHub', config.github.configured ? `Terhubung · repo default: ${config.github.defaultRepo ?? '-'} (${config.github.defaultBranch})` : 'Belum (GITHUB_TOKEN)'],
-        ['Plane', config.plane.hostUrl],
-        ['Akses token', config.authRequired ? 'Wajib' : 'Tidak wajib (hanya localhost)'],
+        [row.version, `${config.appName} ${config.version}`],
+        [row.primaryModel, row.primaryModelValue(config.provider, config.model, config.effort)],
+        [row.modelRoute, config.modelRoute.join(' → ')],
+        [row.modelStatus, config.llmConfigured ? row.modelReady : row.modelMissingKey],
+        [row.knowledgeBase, t.common.files(config.knowledgeFiles)],
+        [row.database, config.storage.database === 'neon-postgres' ? row.databaseNeon : row.databaseLocal],
+        [row.artifactStorage, config.storage.objects === 's3' ? row.storageS3 : row.storageLocal],
+        [row.github, config.github.configured ? row.githubConnected(config.github.defaultRepo ?? '-', config.github.defaultBranch) : row.githubMissing],
+        [row.plane, config.plane.hostUrl],
+        [row.accessToken, config.authRequired ? row.tokenRequired : row.tokenNotRequired],
       ]
     : [];
 
   return (
     <div>
       <div className="field">
-        <span>Tema</span>
-        <div className="seg" role="group" aria-label="Tema">
-          {(['system', 'light', 'dark'] as ThemePref[]).map((t) => (
+        <span id="theme-field-label">{words.theme}</span>
+        <div className="seg" role="group" aria-labelledby="theme-field-label">
+          {(['system', 'light', 'dark'] as ThemePref[]).map((option) => (
             <button
-              key={t}
+              key={option}
               type="button"
-              aria-pressed={theme === t}
+              aria-pressed={theme === option}
               onClick={() => {
-                setTheme(t);
-                applyTheme(t);
+                setTheme(option);
+                applyTheme(option);
               }}
             >
-              {t === 'system' ? 'Ikuti sistem' : t === 'light' ? 'Terang' : 'Gelap'}
+              {words.themes[option]}
             </button>
           ))}
         </div>
       </div>
+      <LanguageField />
       <label className="toggle" style={{ display: 'flex', marginBottom: 14 }}>
         <input
           type="checkbox"
@@ -74,12 +79,12 @@ export function SystemPanel() {
             window.dispatchEvent(new CustomEvent('solar:layout'));
           }}
         />
-        Mode ringkas (sembunyikan tombol cepat di bawah karakter)
+        {words.compactMode}
       </label>
 
       {!isElectron && <AppInstall />}
 
-      <h4>Konfigurasi server</h4>
+      <h4>{words.serverConfig}</h4>
       <table className="task-table" style={{ marginBottom: 14 }}>
         <tbody>
           {rows.map(([k, v]) => (
@@ -90,15 +95,36 @@ export function SystemPanel() {
           ))}
         </tbody>
       </table>
-      <p className="hint">Provider LLM diatur di tab Model AI; kredensial lain (Neon, S3, GitHub, Plane, Visual Paradigm) di file .env - lihat README.</p>
+      <p className="hint">{words.credentialsHint}</p>
 
       <label className="field">
-        <span>Token akses SOLAR (SOLAR_ACCESS_TOKEN)</span>
+        <span>{words.tokenLabel}</span>
         <input className="input" type="password" value={token} onChange={(e) => setTokenValue(e.target.value)} autoComplete="off" />
       </label>
       <button type="button" className="btn small" onClick={() => submitToken(token)}>
-        Simpan token
+        {words.saveToken}
       </button>
+    </div>
+  );
+}
+
+/** Interface language: each option in its own language, so it can be found whatever the current one is. */
+function LanguageField() {
+  const t = useT();
+  const lang = useLang();
+  return (
+    <div className="field">
+      <span id="language-field-label">{t.app.language.label}</span>
+      <div className="seg" role="group" aria-labelledby="language-field-label">
+        {LANGUAGES.map((l) => (
+          <button key={l} type="button" lang={l} aria-pressed={lang === l} onClick={() => setLang(l)}>
+            {LANGUAGE_NATIVE_NAME[l]}
+          </button>
+        ))}
+      </div>
+      <p className="hint" style={{ margin: 0 }}>
+        {t.app.language.hint}
+      </p>
     </div>
   );
 }
@@ -106,24 +132,23 @@ export function SystemPanel() {
 /** Installing the web UI as an app (PWA): its own window, start menu / home screen icon, opens offline. */
 function AppInstall() {
   const { canInstall, standalone, iosManualInstall } = usePwa();
+  const words = useT().settings.system.app;
   return (
     <div className="field">
-      <span>Aplikasi</span>
+      <span>{words.label}</span>
       {standalone ? (
-        <p className="hint">SOLAR berjalan sebagai aplikasi terpasang.</p>
+        <p className="hint">{words.standalone}</p>
       ) : canInstall ? (
         <div>
           <button type="button" className="btn small" onClick={() => void installApp()}>
-            Pasang SOLAR sebagai aplikasi
+            {words.install}
           </button>
-          <p className="hint">Jendela sendiri dan ikon di Start menu / layar utama; tampilan tetap terbuka saat server tidak terjangkau.</p>
+          <p className="hint">{words.installHint}</p>
         </div>
       ) : iosManualInstall ? (
-        <p className="hint">Di iPhone/iPad: ketuk Bagikan lalu Tambahkan ke Layar Utama.</p>
+        <p className="hint">{words.iosHint}</p>
       ) : (
-        <p className="hint">
-          Pasang lewat menu browser (Chrome/Edge: Instal SOLAR AI AGENT). Butuh HTTPS, atau localhost di komputer yang menjalankan server.
-        </p>
+        <p className="hint">{words.browserHint}</p>
       )}
     </div>
   );

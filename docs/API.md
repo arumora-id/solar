@@ -2,6 +2,31 @@
 
 Base URL: `http://127.0.0.1:8790/api`. Semua body JSON, kecuali unggah lampiran (isi file mentah). Bila `SOLAR_ACCESS_TOKEN` diisi, kirim header
 `Authorization: Bearer <token>` (atau query `?token=<token>` untuk SSE/unduhan). `GET /api/health` tidak memerlukan token.
+Pesan untuk manusia (`error`, peringatan, status) ditulis dalam Bahasa Indonesia atau English - lihat [Bahasa](#bahasa).
+
+## Bahasa
+
+SOLAR menjawab dalam Bahasa Indonesia (`id`) atau English (`en`). Tanpa bahasa yang disebut, server memakai `id`.
+
+**Bahasa sebuah permintaan** (pesan `error` API termasuk error validasi, error dan `warnings` unggah lampiran, hasil
+impor knowledge, hasil tes koneksi provider, status plugin MCP, README di dalam ZIP), urutan prioritas:
+
+1. header `X-Solar-Language: id | en` - web UI mengirimnya di setiap request, sesuai bahasa antarmuka;
+2. query `?lang=id | en` - untuk yang tidak bisa mengirim header: `GET /stream` (EventSource) dan link unduhan
+   (`/tasks/:id/artifacts.zip`, `/artifacts/:id/content?download=1`, `/attachments/:id/content`);
+3. header `Accept-Language` (bahasa pertama yang dikenali menurut nilai `q`: `en…` → `en`; `id…`, `in…`, `ms…` → `id`);
+4. selain itu `id`.
+
+`warnings` sebuah lampiran ditulis sekali saat diunggah, dalam bahasa unggahan itu, dan disimpan bersama lampirannya.
+
+**Bahasa sebuah task** (`Task.language`): dikirim di body `POST /tasks` (`"language": "en"`); bila tidak ada, bahasa
+permintaannya (urutan di atas). Semua teks milik task ditulis dalam bahasa ini - `currentStep`, pesan event `status`,
+`displayName` event `tool_call`, `summary` event `tool_result`, `displayName` dan `reason` sebuah `Confirmation`,
+`error` task - karena `/stream` mengirim task yang sama ke semua klien, apa pun bahasa mereka. Task lama tanpa
+`language` dianggap `id`. Agent menjawab dalam bahasa tulisan permintaan dan memakai `Task.language` bila itu tidak
+jelas; TSD tanpa `language` eksplisit ditulis dalam `Task.language`.
+
+Tidak diterjemahkan (data): isi knowledge base, skill, deskripsi plugin dari konfigurasi, isi artefak, teks pengguna.
 
 ## Sistem
 
@@ -9,18 +34,18 @@ Base URL: `http://127.0.0.1:8790/api`. Semua body JSON, kecuali unggah lampiran 
 |---|---|---|
 | GET | `/health` | `{ ok, name, version }` |
 | GET | `/config` | Konfigurasi publik: provider (OpenAI), model, reasoning effort, `openaiConfigured`, mode penyimpanan, status GitHub/Plane, apakah token wajib. |
-| GET | `/stream` | Server-Sent Events: `hello`, `task`, `event`, `delta`, `plugins` (lihat `StreamMessage` di `packages/shared`). |
+| GET | `/stream` | Server-Sent Events: `hello`, `task`, `event`, `delta`, `plugins` (lihat `StreamMessage` di `packages/shared`). Query `?lang=id\|en`: bahasa status plugin di pesan `plugins` (teks task mengikuti `Task.language`). Web UI membuka ulang stream saat bahasa antarmuka diganti. |
 
 ## Task
 
 | Method | Path | Body / Query | Keterangan |
 |---|---|---|---|
-| POST | `/tasks` | `{ prompt, sessionId, attachmentIds? }` | Membuat task (status `queued`). `attachmentIds` (maks. 10) harus lampiran milik `sessionId` yang sama. Respons `201` berisi `Task`. |
+| POST | `/tasks` | `{ prompt, sessionId, attachmentIds?, language? }` | Membuat task (status `queued`). `attachmentIds` (maks. 10) harus lampiran milik `sessionId` yang sama. `language` (`"id"` \| `"en"`, opsional): bahasa antarmuka klien, disimpan sebagai `Task.language` (default: bahasa permintaan, lihat [Bahasa](#bahasa)). Respons `201` berisi `Task`. |
 | GET | `/tasks` | `limit`, `offset`, `sessionId`, `status` | Daftar task terbaru. |
 | GET | `/tasks/stats` | | Total per status dan estimasi biaya. |
 | GET | `/tasks/:id` | | `TaskDetail`: task, events, artifacts, confirmations, attachments. |
 | POST | `/tasks/:id/cancel` | | Membatalkan task yang antre/berjalan (`409` bila sudah selesai). |
-| GET | `/tasks/:id/artifacts.zip` | | Semua artefak task dalam ZIP. |
+| GET | `/tasks/:id/artifacts.zip` | `lang?` | Semua artefak task dalam ZIP; `README.md` di dalamnya dalam bahasa permintaan (`?lang=` karena berupa link unduhan). |
 
 Contoh:
 
@@ -28,6 +53,11 @@ Contoh:
 curl -s -X POST http://127.0.0.1:8790/api/tasks \
   -H "Content-Type: application/json" \
   -d '{"prompt":"Buatkan sequence diagram reset password via email","sessionId":"cli"}'
+
+# task berbahasa Inggris (langkah, status, error dalam English; error API juga)
+curl -s -X POST http://127.0.0.1:8790/api/tasks \
+  -H "Content-Type: application/json" -H "X-Solar-Language: en" \
+  -d '{"prompt":"Create a sequence diagram for password reset by email","sessionId":"cli","language":"en"}'
 ```
 
 ## Konfirmasi
@@ -43,6 +73,14 @@ curl -s -X POST http://127.0.0.1:8790/api/tasks \
 |---|---|---|
 | GET | `/artifacts/:id` | Metadata artefak. |
 | GET | `/artifacts/:id/content` | Isi file (`?download=1` untuk unduh). Disajikan dengan `Content-Security-Policy: sandbox`. |
+| POST | `/artifacts/:id/docx` | Membuat dokumen **Word (.docx)** sebuah TSD yang dibuat sebelum ada file Word. `:id` = artefak mana pun dari paket TSD (`.md`, `.html`, `.tsd.json`). Dokumen dibangun ulang dari `.tsd.json` paket itu dengan diagram SVG task yang sama, tanggal dokumen = tanggal TSD dibuat, lalu disimpan di task & paket yang sama sebagai `<nama>.docx` (`kind: "tsd-docx"`, judul "<judul> (Word)") dan diumumkan lewat event `artifact` di `/stream` seperti artefak buatan agent. `201` `{ artifact, created: true, warnings }`; `200` `{ artifact, created: false, warnings: [] }` bila paket sudah punya file Word (file itu yang dikembalikan, tidak dibuat ulang); `404` artefak tidak ada; `400` paket tidak punya `.tsd.json` atau isinya bukan spesifikasi yang valid (pesan `error` menyebut kesalahannya); `500` dokumen gagal dirender (pesan `error` menyebut sebabnya, mis. waktu habis atau batas memori). Dokumen dirender di *worker thread* terpisah (`docx-worker.mjs`), jadi server tetap melayani permintaan lain: biasanya 1-3 detik; bila menata halaman melewati 30 detik, dokumen dibuat ulang tanpa nomor halaman daftar isi (Word mengisinya saat dibuka, ada di `warnings`), dan bila itu juga melewati 30 detik hasilnya `500`. Permintaan untuk paket yang sama (juga file Word yang sedang dibuat agent untuk paket itu) diproses satu per satu, jadi klik ganda tidak membuat dua file. |
+
+File Word disajikan dengan `Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document`;
+UI tidak mempratinjaunya di browser, hanya menawarkan unduhan (dan pratinjau versi HTML dari paket yang sama).
+
+```bash
+curl -s -X POST http://127.0.0.1:8790/api/artifacts/art_123/docx   # art_123 = id .md/.html/.tsd.json sebuah TSD
+```
 
 ## Lampiran dokumen
 
@@ -52,7 +90,7 @@ Dokumen proyek (PDF, Word `.docx`, Excel `.xlsx`/`.xlsm`/`.csv`, PowerPoint `.pp
 
 | Method | Path | Body / query | Keterangan |
 |---|---|---|---|
-| POST | `/attachments` | query `sessionId`, `name`; body = isi file mentah (`Content-Type: application/octet-stream`) | Unggah + ekstraksi. `201` → `Attachment` (`kind`, `parts` = halaman/slide/sheet, `chars`, `outline`, `warnings`). `413` terlalu besar (`ATTACHMENT_MAX_MB`, default 25) atau terindikasi zip bomb, `415` jenis tidak didukung (termasuk `.doc`/`.xls`/`.ppt` lama - juga bila diberi ekstensi modern, `.xlsb`, `.vsdx`, OpenDocument, file biner berekstensi teks), `400` isi file kosong, `422` file rusak, terenkripsi/berpassword, atau melewati batas waktu baca. Pesan error (`error`) berbahasa Indonesia dan bisa langsung ditampilkan. |
+| POST | `/attachments` | query `sessionId`, `name`; body = isi file mentah (`Content-Type: application/octet-stream`) | Unggah + ekstraksi. `201` → `Attachment` (`kind`, `parts` = halaman/slide/sheet, `chars`, `outline`, `warnings`). `413` terlalu besar (`ATTACHMENT_MAX_MB`, default 25) atau terindikasi zip bomb, `415` jenis tidak didukung (termasuk `.doc`/`.xls`/`.ppt` lama - juga bila diberi ekstensi modern, `.xlsb`, `.vsdx`, OpenDocument, file biner berekstensi teks), `400` isi file kosong, `422` file rusak, terenkripsi/berpassword, atau melewati batas waktu baca. Pesan error (`error`) dan `warnings` dalam bahasa permintaan ([Bahasa](#bahasa)) dan bisa langsung ditampilkan; `warnings` disimpan bersama lampiran. |
 | GET | `/attachments?sessionId=` | | Lampiran sebuah percakapan (terlama dulu). |
 | GET | `/attachments/:id` | | Metadata. |
 | GET | `/attachments/:id/text` | | Markdown hasil ekstraksi (persis yang dibaca agen). |
@@ -91,6 +129,7 @@ Dokumen proyek (PDF, Word `.docx`, Excel `.xlsx`/`.xlsm`/`.csv`, PowerPoint `.pp
 | PUT | `/knowledge/file` | `{ path, content }` | Buat / ubah file (file bawaan disimpan sebagai override). |
 | DELETE | `/knowledge/file?path=` | | Hapus file pengguna (override → versi bawaan kembali). |
 | POST | `/knowledge/import` | `{ files: [{ path, content }] }` | Impor banyak file .md. |
+| POST | `/knowledge/import-artifact` | `{ artifactId, type, path?, id?, title?, description?, aliases?, tags?, status?, overwrite? }` | Simpan artefak Markdown sebagai file knowledge (front matter ditambahkan, `source: artifact:<id>/<nama>`). 404 artefak tidak ada, 400 bukan Markdown (menyebut `.md` dari paket yang sama), 409 path sudah dipakai (kirim `overwrite: true`). |
 | POST | `/knowledge/tables?name=` | isi file (raw) | Pratinjau sheet Excel/CSV: header, jumlah baris, contoh. |
 | POST | `/knowledge/import-table?name=&options=` | isi file (raw) | Satu file per baris + `INDEX.md`. `options` (JSON): `sheet`, `idColumn`, `titleColumn?`, `statusColumn?`, `aliasColumns[]`, `folder`, `type?`, `headerRow?`, `removeStale?`. |
 | POST | `/knowledge/import-document?name=&options=` | isi file (raw) | Word/PDF/PowerPoint/Markdown sebagai knowledge. `options`: `folder`, `split` (`"none"`, `1`, `2`), `type?`, `title?`, `removeStale?`. |

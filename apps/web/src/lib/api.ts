@@ -1,6 +1,8 @@
 import type {
+  Artifact,
   Attachment,
   Confirmation,
+  CreateTaskRequest,
   KnowledgeEntry,
   KnowledgeFile,
   KnowledgeSearchHit,
@@ -18,8 +20,28 @@ import type {
   TaskStats,
   TaskStatus,
 } from '@solar/shared';
+import { LANGUAGE_HEADER } from '@solar/shared';
+import { getLang, t, type Lang } from './i18n';
 
 const TOKEN_KEY = 'solar.accessToken';
+
+export interface ArtifactKnowledgeImport {
+  artifactId: string;
+  type: KnowledgeType;
+  path?: string;
+  id?: string;
+  title?: string;
+  aliases?: string[];
+  overwrite?: boolean;
+}
+
+/** Answer of POST /api/artifacts/:id/docx (Word file of a Technical Specification Document). */
+export interface WordExport {
+  artifact: Artifact;
+  /** false when the TSD already had a Word file, which is returned as it is */
+  created: boolean;
+  warnings: string[];
+}
 
 export function getToken(): string {
   try {
@@ -47,6 +69,35 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * The message of a failed response: the server's `{error}` (already in the interface language), otherwise a generic
+ * text with the HTTP status (a proxy's or framework's own error page is not shown).
+ */
+function failureMessage(status: number, statusText: string, data: unknown): string {
+  const error = (data as { error?: unknown } | null)?.error;
+  return typeof error === 'string' && error ? error : t().api.httpError(status, statusText);
+}
+
+/** A failed response read as an ApiError (for requests whose success body is not JSON). */
+async function failure(res: Response): Promise<ApiError> {
+  let data: unknown = null;
+  try {
+    data = JSON.parse(await res.text());
+  } catch {
+    // no JSON error body
+  }
+  return new ApiError(res.status, failureMessage(res.status, res.statusText, data));
+}
+
+/**
+ * Headers of every request: the access token and the interface language, in which the server writes its messages
+ * (errors, warnings, notices).
+ */
+function baseHeaders(): Record<string, string> {
+  const token = getToken();
+  return { [LANGUAGE_HEADER]: getLang(), ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+}
+
 /** Adds the access token to URLs used directly by the browser (SSE, downloads, previews). */
 export function withToken(url: string): string {
   const token = getToken();
@@ -54,43 +105,77 @@ export function withToken(url: string): string {
   return `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
 }
 
+/**
+ * Adds the interface language to URLs the browser opens itself (the event stream, downloads), which cannot carry the
+ * language header: the server writes their texts (a zip's README, an error page, plugin statuses) in it.
+ */
+export function withLang(url: string, lang: Lang = getLang()): string {
+  return `${url}${url.includes('?') ? '&' : '?'}lang=${lang}`;
+}
+
+/**
+ * fetch(), with a network failure (server down, connection lost) turned into an ApiError with status 0 and a message
+ * in the interface language: the browser's own text ("Failed to fetch", "NetworkError when attempting to fetch
+ * resource.") is in its language and means nothing to users. An abort is passed on as it is.
+ */
+async function send(input: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') throw err;
+    throw new ApiError(0, t().api.unreachable);
+  }
+}
+
+/** The body of a response; the connection dropping while it is read is the same failure as in send(). */
+async function readText(res: Response): Promise<string> {
+  try {
+    return await res.text();
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') throw err;
+    throw new ApiError(0, t().api.unreachable);
+  }
+}
+
+/** true for an ApiError raised because the server could not be reached (no HTTP answer at all). */
+export function isUnreachable(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 0;
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const token = getToken();
-  const res = await fetch(path, {
+  const res = await send(path, {
     method,
     headers: {
       ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...baseHeaders(),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  const text = await res.text();
+  const text = await readText(res);
   let data: unknown = null;
   try {
     data = text ? JSON.parse(text) : null;
   } catch {
     data = text;
   }
-  if (!res.ok) {
-    const message = (data as { error?: string } | null)?.error ?? `${res.status} ${res.statusText}`;
-    throw new ApiError(res.status, message);
-  }
+  if (!res.ok) throw new ApiError(res.status, failureMessage(res.status, res.statusText, data));
   return data as T;
 }
 
 export const api = {
   config: () => request<PublicConfig>('GET', '/api/config'),
+  /** The task carries the interface language: the server writes its steps and messages in it. */
   createTask: (prompt: string, sessionId: string, attachmentIds: string[] = []) =>
-    request<Task>('POST', '/api/tasks', { prompt, sessionId, attachmentIds }),
+    request<Task>('POST', '/api/tasks', { prompt, sessionId, attachmentIds, language: getLang() } satisfies CreateTaskRequest),
   listAttachments: (sessionId: string, unsentOnly = false) =>
     request<Attachment[]>('GET', `/api/attachments?sessionId=${encodeURIComponent(sessionId)}${unsentOnly ? '&unsent=1' : ''}`),
   deleteAttachment: (id: string) => request<null>('DELETE', `/api/attachments/${encodeURIComponent(id)}`),
-  attachmentDownloadUrl: (id: string) => withToken(`/api/attachments/${encodeURIComponent(id)}/content`),
+  /** The original file of an attachment, downloaded by the browser (an error page is in the interface language). */
+  attachmentDownloadUrl: (id: string) => withToken(withLang(`/api/attachments/${encodeURIComponent(id)}/content`)),
   attachmentText: async (id: string) => {
-    const token = getToken();
-    const res = await fetch(`/api/attachments/${encodeURIComponent(id)}/text`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-    if (!res.ok) throw new ApiError(res.status, await res.text());
-    return res.text();
+    const res = await send(`/api/attachments/${encodeURIComponent(id)}/text`, { headers: baseHeaders() });
+    if (!res.ok) throw await failure(res);
+    return readText(res);
   },
   listTasks: (params: { limit?: number; sessionId?: string; status?: TaskStatus } = {}) => {
     const q = new URLSearchParams();
@@ -124,6 +209,9 @@ export const api = {
   knowledge: () => request<KnowledgeEntry[]>('GET', '/api/knowledge'),
   knowledgeFile: (path: string) => request<KnowledgeFile>('GET', `/api/knowledge/file?path=${encodeURIComponent(path)}`),
   saveKnowledge: (path: string, content: string) => request<KnowledgeEntry>('PUT', '/api/knowledge/file', { path, content }),
+  /** Saves a Markdown artifact as a knowledge file; ApiError 409 when the path is taken (retry with overwrite). */
+  importArtifactToKnowledge: (input: ArtifactKnowledgeImport) =>
+    request<{ entry: KnowledgeEntry; replaced: 'user' | 'builtin' | null }>('POST', '/api/knowledge/import-artifact', input),
   deleteKnowledge: (path: string) => request<{ result: string }>('DELETE', `/api/knowledge/file?path=${encodeURIComponent(path)}`),
   searchKnowledge: (q: string, type?: KnowledgeType) =>
     request<KnowledgeSearchHit[]>('GET', `/api/knowledge/search?q=${encodeURIComponent(q)}${type ? `&type=${type}` : ''}`),
@@ -138,13 +226,22 @@ export const api = {
     ),
   importDocument: (file: File, options: DocumentImportOptions) =>
     uploadFile<{ written: KnowledgeEntry[]; removed: string[]; warnings: string[] }>('/api/knowledge/import-document', file, options),
-  artifactUrl: (id: string, download = false) => withToken(`/api/artifacts/${encodeURIComponent(id)}/content${download ? '?download=1' : ''}`),
-  zipUrl: (taskId: string) => withToken(`/api/tasks/${encodeURIComponent(taskId)}/artifacts.zip`),
+  /**
+   * An artifact's content: shown in place (<img>, <iframe>; the URL stays the same across a language switch, so nothing
+   * reloads) or, with `download`, saved by the browser (with the interface language for a possible error page).
+   */
+  artifactUrl: (id: string, download = false) => {
+    const url = `/api/artifacts/${encodeURIComponent(id)}/content`;
+    return withToken(download ? withLang(`${url}?download=1`) : url);
+  },
+  /** Creates the Word (.docx) file of a TSD made without one; `artifactId` is any artifact of the TSD (e.g. its .tsd.json). */
+  exportWord: (artifactId: string) => request<WordExport>('POST', `/api/artifacts/${encodeURIComponent(artifactId)}/docx`),
+  /** All artifacts of a task as a zip; its README.txt is written in the interface language. */
+  zipUrl: (taskId: string) => withToken(withLang(`/api/tasks/${encodeURIComponent(taskId)}/artifacts.zip`)),
   artifactText: async (id: string) => {
-    const token = getToken();
-    const res = await fetch(`/api/artifacts/${encodeURIComponent(id)}/content`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-    if (!res.ok) throw new ApiError(res.status, await res.text());
-    return res.text();
+    const res = await send(`/api/artifacts/${encodeURIComponent(id)}/content`, { headers: baseHeaders() });
+    if (!res.ok) throw await failure(res);
+    return readText(res);
   },
 };
 
@@ -178,21 +275,20 @@ export interface DocumentImportOptions {
 
 /** Sends a file as the raw body (options as a JSON query parameter). */
 async function uploadFile<T>(path: string, file: File, options?: unknown): Promise<T> {
-  const token = getToken();
   const qs = `name=${encodeURIComponent(file.name)}${options === undefined ? '' : `&options=${encodeURIComponent(JSON.stringify(options))}`}`;
-  const res = await fetch(`${path}?${qs}`, {
+  const res = await send(`${path}?${qs}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/octet-stream', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    headers: { 'Content-Type': 'application/octet-stream', ...baseHeaders() },
     body: file,
   });
-  const text = await res.text();
+  const text = await readText(res);
   let data: unknown = null;
   try {
     data = text ? JSON.parse(text) : null;
   } catch {
     data = text;
   }
-  if (!res.ok) throw new ApiError(res.status, (data as { error?: string } | null)?.error ?? `${res.status} ${res.statusText}`);
+  if (!res.ok) throw new ApiError(res.status, failureMessage(res.status, res.statusText, data));
   return data as T;
 }
 
@@ -210,8 +306,7 @@ export function uploadAttachment(file: File, sessionId: string, onProgress: (pha
   const promise = new Promise<Attachment>((resolve, reject) => {
     xhr.open('POST', `/api/attachments?sessionId=${encodeURIComponent(sessionId)}&name=${encodeURIComponent(file.name)}`);
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-    const token = getToken();
-    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    for (const [name, value] of Object.entries(baseHeaders())) xhr.setRequestHeader(name, value);
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && e.total > 0) onProgress('upload', e.loaded / e.total);
     };
@@ -224,10 +319,10 @@ export function uploadAttachment(file: File, sessionId: string, onProgress: (pha
         data = null;
       }
       if (xhr.status >= 200 && xhr.status < 300) resolve(data as Attachment);
-      else reject(new ApiError(xhr.status, (data as { error?: string } | null)?.error ?? `${xhr.status} ${xhr.statusText}`));
+      else reject(new ApiError(xhr.status, failureMessage(xhr.status, xhr.statusText, data)));
     };
-    xhr.onerror = () => reject(new ApiError(0, 'Koneksi ke server terputus saat mengunggah.'));
-    xhr.onabort = () => reject(new DOMException('Upload dibatalkan', 'AbortError'));
+    xhr.onerror = () => reject(new ApiError(0, t().api.uploadDisconnected));
+    xhr.onabort = () => reject(new DOMException(t().api.uploadCancelled, 'AbortError'));
     xhr.send(file);
   });
   return { promise, abort: () => xhr.abort() };
