@@ -62,7 +62,8 @@ export const common = {
   done: 'Selesai',
   failed: 'Gagal',
   success: 'Berhasil',
-  error: 'Kesalahan',
+  /** A label or badge for the error state (the loanword, as in the timeline and the plugin status). */
+  error: 'Error',
   unknown: 'Tidak diketahui',
 
   // field names

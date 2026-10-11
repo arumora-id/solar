@@ -21,7 +21,7 @@ import type {
   TaskStatus,
 } from '@solar/shared';
 import { LANGUAGE_HEADER } from '@solar/shared';
-import { getLang, t } from './i18n';
+import { getLang, t, type Lang } from './i18n';
 
 const TOKEN_KEY = 'solar.accessToken';
 
@@ -105,8 +105,45 @@ export function withToken(url: string): string {
   return `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
 }
 
+/**
+ * Adds the interface language to URLs the browser opens itself (the event stream, downloads), which cannot carry the
+ * language header: the server writes their texts (a zip's README, an error page, plugin statuses) in it.
+ */
+export function withLang(url: string, lang: Lang = getLang()): string {
+  return `${url}${url.includes('?') ? '&' : '?'}lang=${lang}`;
+}
+
+/**
+ * fetch(), with a network failure (server down, connection lost) turned into an ApiError with status 0 and a message
+ * in the interface language: the browser's own text ("Failed to fetch", "NetworkError when attempting to fetch
+ * resource.") is in its language and means nothing to users. An abort is passed on as it is.
+ */
+async function send(input: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') throw err;
+    throw new ApiError(0, t().api.unreachable);
+  }
+}
+
+/** The body of a response; the connection dropping while it is read is the same failure as in send(). */
+async function readText(res: Response): Promise<string> {
+  try {
+    return await res.text();
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') throw err;
+    throw new ApiError(0, t().api.unreachable);
+  }
+}
+
+/** true for an ApiError raised because the server could not be reached (no HTTP answer at all). */
+export function isUnreachable(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 0;
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(path, {
+  const res = await send(path, {
     method,
     headers: {
       ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
@@ -114,7 +151,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  const text = await res.text();
+  const text = await readText(res);
   let data: unknown = null;
   try {
     data = text ? JSON.parse(text) : null;
@@ -133,11 +170,12 @@ export const api = {
   listAttachments: (sessionId: string, unsentOnly = false) =>
     request<Attachment[]>('GET', `/api/attachments?sessionId=${encodeURIComponent(sessionId)}${unsentOnly ? '&unsent=1' : ''}`),
   deleteAttachment: (id: string) => request<null>('DELETE', `/api/attachments/${encodeURIComponent(id)}`),
-  attachmentDownloadUrl: (id: string) => withToken(`/api/attachments/${encodeURIComponent(id)}/content`),
+  /** The original file of an attachment, downloaded by the browser (an error page is in the interface language). */
+  attachmentDownloadUrl: (id: string) => withToken(withLang(`/api/attachments/${encodeURIComponent(id)}/content`)),
   attachmentText: async (id: string) => {
-    const res = await fetch(`/api/attachments/${encodeURIComponent(id)}/text`, { headers: baseHeaders() });
+    const res = await send(`/api/attachments/${encodeURIComponent(id)}/text`, { headers: baseHeaders() });
     if (!res.ok) throw await failure(res);
-    return res.text();
+    return readText(res);
   },
   listTasks: (params: { limit?: number; sessionId?: string; status?: TaskStatus } = {}) => {
     const q = new URLSearchParams();
@@ -188,14 +226,22 @@ export const api = {
     ),
   importDocument: (file: File, options: DocumentImportOptions) =>
     uploadFile<{ written: KnowledgeEntry[]; removed: string[]; warnings: string[] }>('/api/knowledge/import-document', file, options),
-  artifactUrl: (id: string, download = false) => withToken(`/api/artifacts/${encodeURIComponent(id)}/content${download ? '?download=1' : ''}`),
+  /**
+   * An artifact's content: shown in place (<img>, <iframe>; the URL stays the same across a language switch, so nothing
+   * reloads) or, with `download`, saved by the browser (with the interface language for a possible error page).
+   */
+  artifactUrl: (id: string, download = false) => {
+    const url = `/api/artifacts/${encodeURIComponent(id)}/content`;
+    return withToken(download ? withLang(`${url}?download=1`) : url);
+  },
   /** Creates the Word (.docx) file of a TSD made without one; `artifactId` is any artifact of the TSD (e.g. its .tsd.json). */
   exportWord: (artifactId: string) => request<WordExport>('POST', `/api/artifacts/${encodeURIComponent(artifactId)}/docx`),
-  zipUrl: (taskId: string) => withToken(`/api/tasks/${encodeURIComponent(taskId)}/artifacts.zip`),
+  /** All artifacts of a task as a zip; its README.txt is written in the interface language. */
+  zipUrl: (taskId: string) => withToken(withLang(`/api/tasks/${encodeURIComponent(taskId)}/artifacts.zip`)),
   artifactText: async (id: string) => {
-    const res = await fetch(`/api/artifacts/${encodeURIComponent(id)}/content`, { headers: baseHeaders() });
+    const res = await send(`/api/artifacts/${encodeURIComponent(id)}/content`, { headers: baseHeaders() });
     if (!res.ok) throw await failure(res);
-    return res.text();
+    return readText(res);
   },
 };
 
@@ -230,12 +276,12 @@ export interface DocumentImportOptions {
 /** Sends a file as the raw body (options as a JSON query parameter). */
 async function uploadFile<T>(path: string, file: File, options?: unknown): Promise<T> {
   const qs = `name=${encodeURIComponent(file.name)}${options === undefined ? '' : `&options=${encodeURIComponent(JSON.stringify(options))}`}`;
-  const res = await fetch(`${path}?${qs}`, {
+  const res = await send(`${path}?${qs}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/octet-stream', ...baseHeaders() },
     body: file,
   });
-  const text = await res.text();
+  const text = await readText(res);
   let data: unknown = null;
   try {
     data = text ? JSON.parse(text) : null;

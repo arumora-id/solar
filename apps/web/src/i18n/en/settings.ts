@@ -44,7 +44,7 @@ export const settings: Dict['settings'] = {
       storageLocal: 'Local files (data/artifacts)',
       github: 'GitHub',
       githubConnected: (repo: string, branch: string) => `Connected · default repo: ${repo} (${branch})`,
-      githubMissing: 'Not yet (GITHUB_TOKEN)',
+      githubMissing: 'Not configured (GITHUB_TOKEN)',
       plane: 'Plane',
       accessToken: 'Access token',
       tokenRequired: 'Required',
@@ -82,6 +82,8 @@ export const settings: Dict['settings'] = {
     newProvider: 'New provider',
     editProvider: (id: string) => `Edit provider: ${id}`,
     presetName: {
+      anthropic: 'Anthropic (OpenAI-compatible)',
+      gemini: 'Google Gemini (OpenAI-compatible)',
       ollama: 'Ollama (local)',
     },
     presetHint: {

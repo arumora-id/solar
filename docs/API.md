@@ -2,6 +2,31 @@
 
 Base URL: `http://127.0.0.1:8790/api`. Semua body JSON, kecuali unggah lampiran (isi file mentah). Bila `SOLAR_ACCESS_TOKEN` diisi, kirim header
 `Authorization: Bearer <token>` (atau query `?token=<token>` untuk SSE/unduhan). `GET /api/health` tidak memerlukan token.
+Pesan untuk manusia (`error`, peringatan, status) ditulis dalam Bahasa Indonesia atau English - lihat [Bahasa](#bahasa).
+
+## Bahasa
+
+SOLAR menjawab dalam Bahasa Indonesia (`id`) atau English (`en`). Tanpa bahasa yang disebut, server memakai `id`.
+
+**Bahasa sebuah permintaan** (pesan `error` API termasuk error validasi, error dan `warnings` unggah lampiran, hasil
+impor knowledge, hasil tes koneksi provider, status plugin MCP, README di dalam ZIP), urutan prioritas:
+
+1. header `X-Solar-Language: id | en` - web UI mengirimnya di setiap request, sesuai bahasa antarmuka;
+2. query `?lang=id | en` - untuk yang tidak bisa mengirim header: `GET /stream` (EventSource) dan link unduhan
+   (`/tasks/:id/artifacts.zip`, `/artifacts/:id/content?download=1`, `/attachments/:id/content`);
+3. header `Accept-Language` (bahasa pertama yang dikenali menurut nilai `q`: `en…` → `en`; `id…`, `in…`, `ms…` → `id`);
+4. selain itu `id`.
+
+`warnings` sebuah lampiran ditulis sekali saat diunggah, dalam bahasa unggahan itu, dan disimpan bersama lampirannya.
+
+**Bahasa sebuah task** (`Task.language`): dikirim di body `POST /tasks` (`"language": "en"`); bila tidak ada, bahasa
+permintaannya (urutan di atas). Semua teks milik task ditulis dalam bahasa ini - `currentStep`, pesan event `status`,
+`displayName` event `tool_call`, `summary` event `tool_result`, `displayName` dan `reason` sebuah `Confirmation`,
+`error` task - karena `/stream` mengirim task yang sama ke semua klien, apa pun bahasa mereka. Task lama tanpa
+`language` dianggap `id`. Agent menjawab dalam bahasa tulisan permintaan dan memakai `Task.language` bila itu tidak
+jelas; TSD tanpa `language` eksplisit ditulis dalam `Task.language`.
+
+Tidak diterjemahkan (data): isi knowledge base, skill, deskripsi plugin dari konfigurasi, isi artefak, teks pengguna.
 
 ## Sistem
 
@@ -9,18 +34,18 @@ Base URL: `http://127.0.0.1:8790/api`. Semua body JSON, kecuali unggah lampiran 
 |---|---|---|
 | GET | `/health` | `{ ok, name, version }` |
 | GET | `/config` | Konfigurasi publik: provider (OpenAI), model, reasoning effort, `openaiConfigured`, mode penyimpanan, status GitHub/Plane, apakah token wajib. |
-| GET | `/stream` | Server-Sent Events: `hello`, `task`, `event`, `delta`, `plugins` (lihat `StreamMessage` di `packages/shared`). |
+| GET | `/stream` | Server-Sent Events: `hello`, `task`, `event`, `delta`, `plugins` (lihat `StreamMessage` di `packages/shared`). Query `?lang=id\|en`: bahasa status plugin di pesan `plugins` (teks task mengikuti `Task.language`). Web UI membuka ulang stream saat bahasa antarmuka diganti. |
 
 ## Task
 
 | Method | Path | Body / Query | Keterangan |
 |---|---|---|---|
-| POST | `/tasks` | `{ prompt, sessionId, attachmentIds? }` | Membuat task (status `queued`). `attachmentIds` (maks. 10) harus lampiran milik `sessionId` yang sama. Respons `201` berisi `Task`. |
+| POST | `/tasks` | `{ prompt, sessionId, attachmentIds?, language? }` | Membuat task (status `queued`). `attachmentIds` (maks. 10) harus lampiran milik `sessionId` yang sama. `language` (`"id"` \| `"en"`, opsional): bahasa antarmuka klien, disimpan sebagai `Task.language` (default: bahasa permintaan, lihat [Bahasa](#bahasa)). Respons `201` berisi `Task`. |
 | GET | `/tasks` | `limit`, `offset`, `sessionId`, `status` | Daftar task terbaru. |
 | GET | `/tasks/stats` | | Total per status dan estimasi biaya. |
 | GET | `/tasks/:id` | | `TaskDetail`: task, events, artifacts, confirmations, attachments. |
 | POST | `/tasks/:id/cancel` | | Membatalkan task yang antre/berjalan (`409` bila sudah selesai). |
-| GET | `/tasks/:id/artifacts.zip` | | Semua artefak task dalam ZIP. |
+| GET | `/tasks/:id/artifacts.zip` | `lang?` | Semua artefak task dalam ZIP; `README.md` di dalamnya dalam bahasa permintaan (`?lang=` karena berupa link unduhan). |
 
 Contoh:
 
@@ -28,6 +53,11 @@ Contoh:
 curl -s -X POST http://127.0.0.1:8790/api/tasks \
   -H "Content-Type: application/json" \
   -d '{"prompt":"Buatkan sequence diagram reset password via email","sessionId":"cli"}'
+
+# task berbahasa Inggris (langkah, status, error dalam English; error API juga)
+curl -s -X POST http://127.0.0.1:8790/api/tasks \
+  -H "Content-Type: application/json" -H "X-Solar-Language: en" \
+  -d '{"prompt":"Create a sequence diagram for password reset by email","sessionId":"cli","language":"en"}'
 ```
 
 ## Konfirmasi
@@ -60,7 +90,7 @@ Dokumen proyek (PDF, Word `.docx`, Excel `.xlsx`/`.xlsm`/`.csv`, PowerPoint `.pp
 
 | Method | Path | Body / query | Keterangan |
 |---|---|---|---|
-| POST | `/attachments` | query `sessionId`, `name`; body = isi file mentah (`Content-Type: application/octet-stream`) | Unggah + ekstraksi. `201` → `Attachment` (`kind`, `parts` = halaman/slide/sheet, `chars`, `outline`, `warnings`). `413` terlalu besar (`ATTACHMENT_MAX_MB`, default 25) atau terindikasi zip bomb, `415` jenis tidak didukung (termasuk `.doc`/`.xls`/`.ppt` lama - juga bila diberi ekstensi modern, `.xlsb`, `.vsdx`, OpenDocument, file biner berekstensi teks), `400` isi file kosong, `422` file rusak, terenkripsi/berpassword, atau melewati batas waktu baca. Pesan error (`error`) berbahasa Indonesia dan bisa langsung ditampilkan. |
+| POST | `/attachments` | query `sessionId`, `name`; body = isi file mentah (`Content-Type: application/octet-stream`) | Unggah + ekstraksi. `201` → `Attachment` (`kind`, `parts` = halaman/slide/sheet, `chars`, `outline`, `warnings`). `413` terlalu besar (`ATTACHMENT_MAX_MB`, default 25) atau terindikasi zip bomb, `415` jenis tidak didukung (termasuk `.doc`/`.xls`/`.ppt` lama - juga bila diberi ekstensi modern, `.xlsb`, `.vsdx`, OpenDocument, file biner berekstensi teks), `400` isi file kosong, `422` file rusak, terenkripsi/berpassword, atau melewati batas waktu baca. Pesan error (`error`) dan `warnings` dalam bahasa permintaan ([Bahasa](#bahasa)) dan bisa langsung ditampilkan; `warnings` disimpan bersama lampiran. |
 | GET | `/attachments?sessionId=` | | Lampiran sebuah percakapan (terlama dulu). |
 | GET | `/attachments/:id` | | Metadata. |
 | GET | `/attachments/:id/text` | | Markdown hasil ekstraksi (persis yang dibaca agen). |

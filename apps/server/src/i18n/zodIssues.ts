@@ -1,12 +1,39 @@
 import type { z } from 'zod';
-import type { Lang } from '../i18n.js';
+import { both, type Lang, type Localized, type MessageArgs, type MessageKey } from '../i18n.js';
 
 /**
  * Validation messages of the HTTP API in the language of the request. English keeps zod's own messages; Indonesian
- * gets its own short texts. The field path stays as it is ("prompt: ..."), it names a field of the request body.
+ * gets its own short texts. A message a schema sets itself (a hint such as "baseUrl must start with http://") comes
+ * from the catalog through {@link schemaMessage} and is shown in either language. The field path stays as it is
+ * ("prompt: ..."), it names a field of the request body.
  */
 
 type Issue = z.core.$ZodRawIssue | z.core.$ZodIssue;
+
+/** The messages schemas set themselves, in both languages, by their English text (the text zod keeps in the issue). */
+const SCHEMA_MESSAGES = new Map<string, Localized>();
+
+/**
+ * A schema's own validation message, e.g. `.regex(re, schemaMessage('validation.idFormat'))`. A zod issue holds one
+ * text, and a schema's own message wins over the error map of a parse, so the schema carries the English text (logs and
+ * the English UI) and {@link formatZodIssues} turns it into the language of the request, whichever route parsed it.
+ */
+export function schemaMessage<K extends MessageKey>(key: K, ...args: MessageArgs<K>): string {
+  const text = both(key, ...args);
+  SCHEMA_MESSAGES.set(text.en, text);
+  return text.en;
+}
+
+/** The text of a schema's own message in `lang`; for an invalid record key, that of the key's own issue. */
+function schemaText(issue: z.core.$ZodIssue, lang: Lang): string | undefined {
+  const own = SCHEMA_MESSAGES.get(issue.message);
+  if (own) return own[lang];
+  if (issue.code === 'invalid_key' || issue.code === 'invalid_element') {
+    const inner = issue.issues.map((i) => SCHEMA_MESSAGES.get(i.message)).find((m) => m !== undefined);
+    if (inner) return inner[lang];
+  }
+  return undefined;
+}
 
 const TYPE_ID: Record<string, string> = {
   string: 'teks',
@@ -63,6 +90,8 @@ function issueId(issue: Issue): string | null {
       return `harus kelipatan ${String(issue.divisor)}`;
     case 'unrecognized_keys':
       return `kunci tidak dikenal: ${issue.keys.join(', ')}`;
+    case 'invalid_key':
+      return 'nama kunci tidak valid';
     default:
       return 'isian tidak valid';
   }
@@ -70,7 +99,7 @@ function issueId(issue: Issue): string | null {
 
 /**
  * Error map for `schema.safeParse(value, { error })`: messages in `lang`. Messages a schema sets itself (e.g. a regex
- * with its own text) still win.
+ * with its own text) still win; {@link formatZodIssues} translates those made with {@link schemaMessage}.
  */
 export function zodErrorMap(lang: Lang): z.core.$ZodErrorMap | undefined {
   if (lang === 'en') return undefined;
@@ -78,13 +107,14 @@ export function zodErrorMap(lang: Lang): z.core.$ZodErrorMap | undefined {
 }
 
 /**
- * The issues of a failed validation as one line, "path: message; path: message", in `lang`. Issues from a parse that
- * already ran with {@link zodErrorMap} keep their message; issues thrown by a store (zod's English) are translated.
+ * The issues of a failed validation as one line, "path: message; path: message", in `lang`. A schema's own message
+ * ({@link schemaMessage}) is shown in `lang`; other issues from a parse that already ran with {@link zodErrorMap} keep
+ * their message, those thrown by a store (zod's English) are translated.
  */
 export function formatZodIssues(issues: readonly z.core.$ZodIssue[], lang: Lang, translated = false): string {
   return issues
     .map((i) => {
-      const message = lang === 'en' || translated ? i.message : (issueId(i) ?? i.message);
+      const message = schemaText(i, lang) ?? (lang === 'en' || translated ? i.message : (issueId(i) ?? i.message));
       return `${i.path.map(String).join('.') || 'body'}: ${message}`;
     })
     .join('; ');

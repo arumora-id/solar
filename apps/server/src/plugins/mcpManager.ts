@@ -293,8 +293,9 @@ export class McpManager {
       if (err instanceof Superseded || superseded()) return;
       const message = err instanceof Error ? err.message : String(err);
       log.warn(`Could not connect to ${config.name}: ${message}`);
-      // SOLAR's own errors in both languages, a server's or library's as they are
-      this.setStatus(id, { state: 'error', error: err instanceof LocalizedError ? err.text : message, tools: [], connectedAt: null });
+      // SOLAR's own errors in both languages; a server's or library's text (e.g. "fetch failed") after a translated prefix
+      const error = err instanceof LocalizedError ? err.text : both('mcp.connectFailed', { plugin: config.name, error: message });
+      this.setStatus(id, { state: 'error', error, tools: [], connectedAt: null });
       throw err;
     }
   }

@@ -1,7 +1,9 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import OpenAI from 'openai';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Artifact, Attachment, Confirmation, Language, Task, TaskDetail, TaskEvent } from '@solar/shared';
 import type { ResponsesStreamer, ResponseStreamLike, StreamDeltaEvent, StreamParams } from '../src/agent/agent.js';
@@ -9,9 +11,12 @@ import { createBuiltinTools } from '../src/agent/builtinTools.js';
 import { createMcpTools } from '../src/agent/mcpTools.js';
 import { loadConfig, type AppConfig } from '../src/config.js';
 import { both, errorMessage, langOfAcceptLanguage, localize, LocalizedError, messageEntry, messageKeys, requestLanguage, t } from '../src/i18n.js';
-import type { McpManager } from '../src/plugins/mcpManager.js';
+import { toLlmError } from '../src/llm/errors.js';
+import { McpManager } from '../src/plugins/mcpManager.js';
+import { PluginStore } from '../src/plugins/pluginStore.js';
 import { startServer, type RunningServer } from '../src/server.js';
 import type { ArtifactService, NewArtifact } from '../src/tasks/artifactService.js';
+import { EventBus } from '../src/tasks/eventBus.js';
 import type { TaskRunContext } from '../src/tasks/taskManager.js';
 import { sampleTechSpec } from './fixtures.js';
 
@@ -30,7 +35,7 @@ describe('server messages', () => {
 
   it('fill placeholders and English plurals', () => {
     expect(t('id', 'task.step.awaitingApproval', { tool: 'Simpan knowledge' })).toBe('Menunggu persetujuan: Simpan knowledge');
-    expect(t('en', 'task.step.awaitingApproval', { tool: 'Saving knowledge' })).toBe('Waiting for approval: Saving knowledge');
+    expect(t('en', 'task.step.awaitingApproval', { tool: 'Saving knowledge file' })).toBe('Waiting for approval: Saving knowledge file');
     expect(t('en', 'confirm.github', { n: 1, target: 'acme/docs/arch' })).toBe('Commit 1 file to acme/docs/arch');
     expect(t('en', 'confirm.github', { n: 3, target: 'acme/docs/arch' })).toBe('Commit 3 files to acme/docs/arch');
     expect(t('id', 'confirm.github', { n: 3, target: 'acme/docs/arch' })).toBe('Commit 3 file ke acme/docs/arch');
@@ -274,14 +279,14 @@ describe('a task in English', () => {
     expect(created.currentStep).toBe('Waiting in the queue');
     expect(intro).toContain('Interface language: English');
 
-    expect(waiting.step).toBe('Waiting for approval: Saving knowledge');
-    expect(waiting.confirmation.displayName).toBe('Saving knowledge');
+    expect(waiting.step).toBe('Waiting for approval: Saving knowledge file');
+    expect(waiting.confirmation.displayName).toBe('Saving knowledge file');
     expect(waiting.confirmation.reason).toMatch(/^Save standard "Naming rules" to the knowledge base: standards\/naming-task_\w+\.md\. From the next task on/);
 
     expect(detail.task.language).toBe('en');
     expect(detail.task.currentStep).toBe('Done');
     expect(statusMessages(detail.events)).toEqual(expect.arrayContaining(['Task created', 'The agent started working', waiting.confirmation.reason]));
-    expect(toolCalls(detail.events)).toEqual(['Saving knowledge', 'Writing the Technical Specification']);
+    expect(toolCalls(detail.events)).toEqual(['Saving knowledge file', 'Writing the Technical Specification']);
     expect(toolSummaries(detail.events)[0]).toMatch(/^saved: standards\/naming-/);
     expect(tsdLanguage).toBe('en');
     expect(detail.artifacts.find((a) => a.kind === 'tsd-markdown')!.description).toBe('1 functional / 1 non-functional requirements');
@@ -328,6 +333,36 @@ describe('API answers in the language of the request', () => {
     expect(broken).toEqual({ status: 400, body: { error: 'The request body is not valid JSON' } });
   });
 
+  it("validation hints of the stores' own schemas in both languages, whichever route parsed them", async () => {
+    const send = (method: string, path: string, body: unknown, language?: Language) =>
+      api<{ error: string }>(path, { method, body: JSON.stringify(body), headers: language ? { 'X-Solar-Language': language } : {} });
+    // POST: the store parses (and throws); PUT: the route parses with the error map of the language
+    const provider = { id: 'Bad ID', name: 'Local', kind: 'openai-chat', baseUrl: 'localhost:11434/v1' };
+    const created = await send('POST', '/api/llm/providers', provider, 'en');
+    expect(created).toEqual({
+      status: 400,
+      body: {
+        error:
+          'id: id may only contain lower-case letters, digits and dashes (-), up to 40 characters; baseUrl: baseUrl must start with http:// or https://',
+      },
+    });
+    expect((await send('POST', '/api/llm/providers', provider)).body.error).toBe(
+      'id: id hanya boleh berisi huruf kecil, angka dan tanda hubung (-), maksimal 40 karakter; baseUrl: baseUrl harus diawali http:// atau https://',
+    );
+    expect((await send('POST', '/api/llm/providers', { ...provider, id: 'openai', baseUrl: '' })).body.error).toBe('id: "openai" khusus untuk provider dari .env');
+
+    expect((await send('PUT', '/api/llm/routes', { routes: { default: ['gpt-5'] } })).body.error).toBe('routes.default.0: entri rute harus berbentuk "provider/model"');
+    expect((await send('PUT', '/api/llm/routes', { routes: { default: ['gpt-5'] } }, 'en')).body.error).toBe(
+      'routes.default.0: a route entry must look like "provider/model"',
+    );
+    expect((await send('PUT', '/api/llm/routes', { routes: { 'Fast Lane': ['openai/gpt-5'] } })).body.error).toMatch(/^routes\.Fast Lane: nama rute hanya boleh berisi huruf kecil/);
+
+    expect((await send('POST', '/api/plugins', { name: 'Local tools', transport: 'stdio' })).body.error).toBe('command: command wajib diisi untuk plugin stdio');
+    expect((await send('POST', '/api/plugins', { name: 'Remote tools', transport: 'http' }, 'en')).body.error).toBe('url: url is required for http/sse plugins');
+    // issues without a hint of their own keep the generic text
+    expect((await send('POST', '/api/plugins', { name: '', transport: 'http', url: 'https://x.example/mcp' })).body.error).toBe('name: tidak boleh kosong');
+  });
+
   it('upload errors and document warnings, which the attachment keeps in the upload language', async () => {
     const upload = (name: string, body: string, language: Language) =>
       fetch(`${server.url}/api/attachments?sessionId=s-up&name=${encodeURIComponent(name)}`, {
@@ -370,5 +405,41 @@ describe('API answers in the language of the request', () => {
     expect(removed).toEqual({ status: 404, body: { error: 'User skill "nope" not found (built-in skills can only be disabled)' } });
     const removedId = await api<{ error: string }>('/api/skills/nope', { method: 'DELETE' });
     expect(removedId.body.error).toBe('Skill pengguna "nope" tidak ditemukan (skill bawaan hanya bisa dinonaktifkan)');
+  });
+});
+
+// ---- errors of model providers and MCP servers ------------------------------------------------------------------
+
+describe('errors written around a provider or server text', () => {
+  it('a model API error without a friendlier mapping (5xx) is still worded in the language', () => {
+    const err = OpenAI.APIError.generate(502, undefined, 'Bad gateway', new Headers());
+    expect(err).toBeInstanceOf(OpenAI.InternalServerError);
+    const en = toLlmError(err, 'OpenRouter', 'm', false, 'en') as Error;
+    expect(en.message).toBe(`OpenRouter API error 502: ${err.message}`);
+    expect((toLlmError(err, 'OpenRouter', 'm', false, 'id') as Error).message).toBe(`API OpenRouter mengembalikan kesalahan 502: ${err.message}`);
+    const noStatus = new OpenAI.APIError(undefined, undefined, 'stream ended', undefined);
+    expect((toLlmError(noStatus, 'OpenRouter', 'm', false, 'id') as Error).message).toBe('API OpenRouter mengembalikan kesalahan: stream ended');
+  });
+
+  it("an MCP server that cannot be reached: the library's text after a translated prefix", async () => {
+    // a port that was free a moment ago: nothing answers there
+    const port = await new Promise<number>((resolve) => {
+      const probe = createServer().listen(0, '127.0.0.1', () => {
+        const { port } = probe.address() as { port: number };
+        probe.close(() => resolve(port));
+      });
+    });
+    const dir = mkdtempSync(join(tmpdir(), 'solar-i18n-mcp-'));
+    writeFileSync(join(dir, 'defaults.json'), '[]');
+    const store = new PluginStore(dir, join(dir, 'defaults.json'));
+    await store.init();
+    await store.create({ id: 'down', name: 'Docs server', transport: 'http', url: `http://127.0.0.1:${port}/mcp` });
+    const mcp = new McpManager(store, new EventBus());
+    await expect(mcp.connect('down')).rejects.toThrow();
+    const en = mcp.status('down', 'en');
+    expect(en.state).toBe('error');
+    expect(en.error).toMatch(/^Cannot connect to Docs server: \S/);
+    expect(mcp.status('down', 'id').error).toMatch(/^Tidak dapat terhubung ke Docs server: \S/);
+    await mcp.shutdown();
   });
 });

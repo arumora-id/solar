@@ -142,10 +142,17 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   });
 
   const port = options.port ?? config.port;
-  const server = await new Promise<import('node:http').Server>((resolve, reject) => {
-    const s = app.listen(port, config.host, () => resolve(s));
-    s.on('error', reject);
-  });
+  let server: import('node:http').Server;
+  try {
+    server = await new Promise<import('node:http').Server>((resolve, reject) => {
+      // Express 5 calls this callback with the error too (e.g. EADDRINUSE, which makes the desktop app retry on a free port)
+      const s = app.listen(port, config.host, (err?: Error) => (err ? reject(err) : resolve(s)));
+    });
+  } catch (err) {
+    // nothing listens: release what was opened above (database pool) before the caller retries or gives up
+    await repo.close().catch(() => undefined);
+    throw err;
+  }
   const actualPort = (server.address() as AddressInfo).port;
   const host = config.host === '0.0.0.0' || config.host === '::' ? 'localhost' : config.host;
   const url = `http://${host}:${actualPort}`;

@@ -25,9 +25,9 @@ export const app = {
     navLabel: 'Navigasi utama',
     agent: 'Agent',
     monitor: 'Monitor',
-    /** Monitor tab with the number of confirmations waiting for an answer. */
+    /** Monitor tab with the number of approval requests waiting for an answer. */
     monitorWaiting: (n: number) => `Monitor (${n})`,
-    monitorWaitingLabel: (n: number) => `Monitor, ${n} konfirmasi menunggu`,
+    monitorWaitingLabel: (n: number) => `Monitor, ${n} persetujuan menunggu`,
     connected: 'Terhubung',
     disconnected: 'Terputus',
     install: 'Pasang aplikasi',

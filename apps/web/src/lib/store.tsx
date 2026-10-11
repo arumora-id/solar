@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
 import type { Artifact, Attachment, Confirmation, PluginStatus, PublicConfig, StreamMessage, Task, TaskEvent } from '@solar/shared';
-import { api, ApiError, setToken, withToken } from './api';
+import { api, ApiError, setToken, withLang, withToken } from './api';
+import { useLang } from './i18n';
 import { getSessionId, newSessionId } from './session';
 
 interface Draft {
@@ -178,6 +179,9 @@ export function SolarProvider({ children }: { children: ReactNode }) {
   stateRef.current = state;
   // bumped to (re)open the event stream after it was closed for good or the token changed
   const [streamNonce, setStreamNonce] = useState(0);
+  // the stream carries the interface language (an EventSource cannot send headers): plugin statuses arrive in it, so a
+  // switch reopens the stream
+  const lang = useLang();
   /** Survives stream re-creation: the next successful open must resync what was missed. */
   const missedEvents = useRef(false);
 
@@ -221,7 +225,7 @@ export function SolarProvider({ children }: { children: ReactNode }) {
     if (state.authRequired) return;
     void reloadConfig();
     void refreshTasks();
-    const source = new EventSource(withToken('/api/stream'));
+    const source = new EventSource(withToken(withLang('/api/stream', lang)));
     let retryTimer: number | undefined;
     // deltas are batched per animation frame; flush them before any event/task message so ordering holds
     // (a 'text' event clears the draft the deltas belong to)
@@ -297,9 +301,11 @@ export function SolarProvider({ children }: { children: ReactNode }) {
     };
     return () => {
       window.clearTimeout(retryTimer);
+      // closing an open stream (language switch, new token) leaves a gap: the next open resyncs what it missed
+      if (source.readyState === EventSource.OPEN) missedEvents.current = true;
       source.close();
     };
-  }, [state.authRequired, streamNonce, reloadConfig, refreshTasks, loadTask, handleError]);
+  }, [state.authRequired, streamNonce, lang, reloadConfig, refreshTasks, loadTask, handleError]);
 
   const submit = useCallback(
     async (prompt: string, attachmentIds: string[] = []) => {

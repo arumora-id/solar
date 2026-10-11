@@ -6,6 +6,7 @@ import { SECRET_MASK, type LlmProviderConfig, type LlmProviderView, type LlmSett
 import { REASONING_EFFORTS, type AppConfig } from '../config.js';
 import { interpolate } from '../plugins/pluginStore.js';
 import { both, LocalizedError } from '../i18n.js';
+import { schemaMessage } from '../i18n/zodIssues.js';
 import { writeFileAtomic } from '../util/fs.js';
 import { slugify } from '../util/ids.js';
 
@@ -29,8 +30,8 @@ export const LlmModelSchema = z.object({
 export const LlmProviderBaseSchema = z.object({
   id: z
     .string()
-    .regex(/^[a-z0-9][a-z0-9-]{0,39}$/, 'id must be lower-case letters, digits or dashes')
-    .refine((id) => id !== ENV_PROVIDER_ID, `"${ENV_PROVIDER_ID}" is reserved for the provider from .env`),
+    .regex(/^[a-z0-9][a-z0-9-]{0,39}$/, schemaMessage('validation.idFormat'))
+    .refine((id) => id !== ENV_PROVIDER_ID, schemaMessage('validation.reservedProviderId', { id: ENV_PROVIDER_ID })),
   name: z.string().trim().min(1).max(80),
   kind: z.enum(['openai-responses', 'openai-chat']),
   enabled: z.boolean().default(true),
@@ -38,7 +39,7 @@ export const LlmProviderBaseSchema = z.object({
     .string()
     .trim()
     .max(500)
-    .refine((v) => v === '' || /^https?:\/\//i.test(v) || /^\$\{[A-Za-z_][A-Za-z0-9_]*\}/.test(v), 'baseUrl must start with http:// or https://')
+    .refine((v) => v === '' || /^https?:\/\//i.test(v) || /^\$\{[A-Za-z_][A-Za-z0-9_]*\}/.test(v), schemaMessage('validation.baseUrl'))
     .optional(),
   apiKey: z.string().max(4000).optional(),
   headers: z.record(z.string(), z.string()).optional(),
@@ -47,8 +48,8 @@ export const LlmProviderBaseSchema = z.object({
   models: z.array(LlmModelSchema).max(100).default([]),
 });
 
-const RouteSchema = z.array(z.string().trim().regex(/^[a-z0-9][a-z0-9-]*\/.+$/, 'route entries look like "provider/model"')).max(10);
-export const RoutesSchema = z.record(z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/), RouteSchema);
+const RouteSchema = z.array(z.string().trim().regex(/^[a-z0-9][a-z0-9-]*\/.+$/, schemaMessage('validation.routeEntry'))).max(10);
+export const RoutesSchema = z.record(z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/, schemaMessage('validation.routeName')), RouteSchema);
 
 const FileSchema = z.object({
   providers: z.array(LlmProviderBaseSchema).default([]),

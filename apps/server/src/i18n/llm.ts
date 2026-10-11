@@ -37,6 +37,11 @@ export const LLM_MESSAGES = {
   'llm.notFound.hintUser': { id: 'Periksa id model di Pengaturan → Model AI.', en: 'Check the model id in Settings → AI models.' },
   'llm.permission': { id: 'Akses {provider} ditolak untuk model/proyek ini: {error}', en: '{provider} denied access to this model/project: {error}' },
   'llm.badRequest': { id: 'Permintaan ditolak oleh {provider}: {error}', en: '{provider} rejected the request: {error}' },
+  'llm.server': { id: 'API {provider} mengembalikan kesalahan: {error}', en: '{provider} API error: {error}' },
+  'llm.serverWithStatus': {
+    id: 'API {provider} mengembalikan kesalahan {status}: {error}',
+    en: '{provider} API error {status}: {error}',
+  },
   'llm.failed': { id: '{provider} gagal memproses permintaan: {error}', en: '{provider} could not process the request: {error}' },
   'llm.cut': {
     id: 'Koneksi ke {provider} terputus sebelum respons selesai. Kirim ulang task.',
@@ -75,6 +80,7 @@ export const LLM_MESSAGES = {
     en: 'Invalid URL: "{url}" (it must start with http:// or https://)',
   },
   'mcp.disconnected': { id: 'Koneksi terputus', en: 'Connection lost' },
+  'mcp.connectFailed': { id: 'Tidak dapat terhubung ke {plugin}: {error}', en: 'Cannot connect to {plugin}: {error}' },
   'mcp.connectTimeout': {
     id: 'Tidak ada jawaban dari {plugin} dalam {seconds} detik saat menghubungkan',
     en: 'Connecting to {plugin} timed out after {seconds} s',

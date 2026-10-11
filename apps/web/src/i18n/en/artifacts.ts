@@ -44,14 +44,14 @@ export const artifacts: Dict['artifacts'] = {
     failed: (reason: string) => `The Word document could not be created: ${reason}`,
     errors: {
       offline: 'the server cannot be reached. Try again.',
-      invalid: 'this specification is not valid for a Word version.',
+      invalid: 'this specification is not valid.',
       notFound: 'the artifact was not found (it may have been deleted).',
       server: 'the server could not create the Word document. Try again later.',
     },
     createdWithNotes: (n: number) => `Word document created with ${numEn(n)} ${plural(n, 'note')}.`,
     ready: 'The Word document is ready to download.',
     noPreview:
-      'Word documents cannot be previewed in the browser. Download it and open it in Microsoft Word, LibreOffice Writer or Google Docs.',
+      'This Word document cannot be previewed in the browser. Download it and open it in Microsoft Word, LibreOffice Writer or Google Docs.',
     previewHtml: 'Preview the HTML version',
     htmlHint: 'The HTML version has the same content, without the Word page layout (cover, page numbers).',
   },

@@ -2,7 +2,7 @@ import gsap from 'gsap';
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import type { Artifact, KnowledgeType } from '@solar/shared';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, isUnreachable } from '../lib/api';
 import { formatBytes } from '../lib/format';
 import { useT, type Dict } from '../lib/i18n';
 import { TYPE_FOLDERS, TYPES } from '../lib/knowledgeTypes';
@@ -72,7 +72,7 @@ type WordErrorReason = keyof Dict['artifacts']['word']['errors'];
  * a language switch); the server's own message is kept as detail.
  */
 function wordError(e: unknown): { reason: WordErrorReason; detail?: string } {
-  if (!(e instanceof ApiError)) return { reason: 'offline' };
+  if (!(e instanceof ApiError) || isUnreachable(e)) return { reason: 'offline' };
   if (e.status === 400) return { reason: 'invalid', detail: e.message };
   if (e.status === 404) return { reason: 'notFound', detail: e.message };
   return { reason: 'server', detail: e.message };
@@ -86,7 +86,7 @@ function wordError(e: unknown): { reason: WordErrorReason; detail?: string } {
 type Failure = { message?: string };
 
 function failure(e: unknown): Failure {
-  return e instanceof ApiError ? { message: e.message } : {};
+  return e instanceof ApiError && !isUnreachable(e) ? { message: e.message } : {};
 }
 
 /** Splits a text at its "{path}" marker, so the path can be shown as code in the middle of a translated sentence. */

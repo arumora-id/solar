@@ -133,12 +133,12 @@ export const agent = {
     viewText: 'Lihat teks',
     originalFile: 'File asli',
     /** After the type, parts, size and length of the document in the preview header. */
-    previewNote: 'teks hasil ekstraksi inilah yang dibaca agen.',
+    previewNote: 'teks hasil ekstraksi inilah yang dibaca agent.',
     viewLabel: 'Tampilan teks',
     formatted: 'Diformat',
     raw: 'Teks mentah',
     loadingText: 'Memuat teks…',
-    truncated: '… (pratinjau dipotong; agen tetap membaca seluruh teks)',
+    truncated: '… (pratinjau dipotong; agent tetap membaca seluruh teks)',
     /** Separator for a page marker of the extracted text. */
     page: (n: string) => `Halaman ${n}`,
     pagesNotRead: (from: string, to: string) => `Halaman ${from}-${to} tidak dibaca (batas panjang dokumen)`,

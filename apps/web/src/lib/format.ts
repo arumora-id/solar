@@ -1,5 +1,5 @@
 import type { TaskStatus } from '@solar/shared';
-import { localeOf, t } from './i18n';
+import { getLang, localeOf, t, type Lang } from './i18n';
 
 /*
  * Formatting in the current interface language (lib/i18n.ts): call these while rendering, so a language switch, which
@@ -34,10 +34,24 @@ export function formatDuration(startIso: string | null, endIso: string | null, n
   return units.hours(Math.floor(m / 60), m % 60);
 }
 
-/** Day, month and time: "09 Okt, 15.51" / "Oct 09, 03:51 PM". */
+/*
+ * Indonesian times are 24-hour and zero-padded ("09 Okt, 08.05"); English ones are 12-hour without padding, as written
+ * in English ("Oct 9, 8:05 AM": "Oct 09, 08:05 AM" reads like a machine log and is wider).
+ */
+const TIME_OPTIONS: Record<Lang, Intl.DateTimeFormatOptions> = {
+  id: { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' },
+  en: { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' },
+};
+
+const CLOCK_OPTIONS: Record<Lang, Intl.DateTimeFormatOptions> = {
+  id: { hour: '2-digit', minute: '2-digit', second: '2-digit' },
+  en: { hour: 'numeric', minute: '2-digit', second: '2-digit' },
+};
+
+/** Day, month and time: "09 Okt, 15.51" / "Oct 9, 3:51 PM". */
 export function formatTime(iso: string | null): string {
   if (!iso) return '-';
-  return new Date(iso).toLocaleString(localeOf(), { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+  return new Date(iso).toLocaleString(localeOf(), TIME_OPTIONS[getLang()]);
 }
 
 /** Date only: "9 Okt 2026" / "Oct 9, 2026". */
@@ -46,9 +60,9 @@ export function formatDate(iso: string | null): string {
   return new Date(iso).toLocaleDateString(localeOf(), { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-/** Time of day with seconds: "15.51.27" / "03:51:27 PM". */
+/** Time of day with seconds: "15.51.27" / "3:51:27 PM". */
 export function formatClock(iso: string): string {
-  return new Date(iso).toLocaleTimeString(localeOf(), { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return new Date(iso).toLocaleTimeString(localeOf(), CLOCK_OPTIONS[getLang()]);
 }
 
 /** A number with the separators of the current language: "12.345,5" / "12,345.5". */

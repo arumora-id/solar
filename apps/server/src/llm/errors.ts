@@ -32,5 +32,6 @@ export function toLlmError(err: unknown, providerName: string, model: string, en
   if (err instanceof OpenAI.BadRequestError) {
     return new LlmError('bad_request', t(lang, 'llm.badRequest', { provider, error: err.message }));
   }
-  return new LlmError('server', `${provider} API error${err.status ? ` ${err.status}` : ''}: ${err.message}`);
+  const error = err.message;
+  return new LlmError('server', err.status ? t(lang, 'llm.serverWithStatus', { provider, status: err.status, error }) : t(lang, 'llm.server', { provider, error }));
 }

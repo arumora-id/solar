@@ -6,10 +6,10 @@ Dokumen ini menjelaskan cara kerja internal SOLAR untuk pengembang dan reviewer.
 
 | Komponen | Lokasi | Tanggung jawab |
 |---|---|---|
-| Web UI | `apps/web` | React 19 + Vite + TypeScript. Karakter 3D yang bisa dipilih (`src/character/`: Robo (default), Mochi, Cocoa Kelapa, Kelinci; three.js, animasi GSAP), chat + komposer suara, monitor, pengaturan. Berkomunikasi lewat REST dan Server-Sent Events. PWA: `public/manifest.webmanifest`, service worker `pwa/`, ikon PNG (`public/icons/`, juga ikon installer `apps/desktop/build/icon.png`) yang dibuat dari `public/favicon.svg` oleh `scripts/generate-icons.mjs`. |
-| Server | `apps/server` | Express 5. `TaskManager` (antrean, status, progres, konfirmasi), agent loop OpenAI, generator + validator, `SkillStore`, `PluginStore` + `McpManager`, penyimpanan. |
-| Desktop | `apps/desktop` | Electron 44. Memuat bundle server (`server.mjs`) di main process (pembacaan lampiran dan render Word berjalan di *worker thread* `extract-worker.mjs` / `docx-worker.mjs` yang ikut di resources), membuka jendela ke UI lokal, mengatur izin mikrofon, mode mini, `.env` di `%APPDATA%\SOLAR`. |
-| Shared | `packages/shared` | Kontrak tipe antara server dan UI (`Task`, `TaskEvent`, `Artifact`, `PluginView`, `StreamMessage`, ...). |
+| Web UI | `apps/web` | React 19 + Vite + TypeScript. Karakter 3D yang bisa dipilih (`src/character/`: Robo (default), Mochi, Cocoa Kelapa, Kelinci; three.js, animasi GSAP), chat + komposer suara, monitor, pengaturan. Semua teks dalam Bahasa Indonesia dan English (`src/i18n/{id,en}/`, `src/lib/i18n.ts`, lihat bagian 9). Berkomunikasi lewat REST dan Server-Sent Events. PWA: `public/manifest.webmanifest`, service worker `pwa/`, ikon PNG (`public/icons/`, juga ikon installer `apps/desktop/build/icon.png`) yang dibuat dari `public/favicon.svg` oleh `scripts/generate-icons.mjs`. |
+| Server | `apps/server` | Express 5. `TaskManager` (antrean, status, progres, konfirmasi), agent loop OpenAI, generator + validator, `SkillStore`, `PluginStore` + `McpManager`, penyimpanan. Pesan untuk manusia dalam dua bahasa (`src/i18n.ts` + katalog `src/i18n/*.ts`). |
+| Desktop | `apps/desktop` | Electron 44. Memuat bundle server (`server.mjs`) di main process (pembacaan lampiran dan render Word berjalan di *worker thread* `extract-worker.mjs` / `docx-worker.mjs` yang ikut di resources), membuka jendela ke UI lokal, mengatur izin mikrofon, mode mini, `.env` di `%APPDATA%\SOLAR`. Menu & dialog ID/EN (`src/i18n.ts`) mengikuti bahasa UI. |
+| Shared | `packages/shared` | Kontrak tipe antara server dan UI (`Task`, `TaskEvent`, `Artifact`, `PluginView`, `StreamMessage`, ...), termasuk `Language` (`'id' \| 'en'`), `LANGUAGES` dan `LANGUAGE_HEADER` (`X-Solar-Language`). |
 
 ## 2. Alur sebuah task ("sekali proses")
 
@@ -24,7 +24,7 @@ sequenceDiagram
     participant C as OpenAI Responses API
     participant T as Tools (generator / MCP)
     SA->>UI: perintah (ketik / suara)
-    UI->>API: POST /api/tasks
+    UI->>API: POST /api/tasks (+ language, header X-Solar-Language)
     API->>TM: create + enqueue
     TM-->>UI: SSE task (queued)
     TM->>AG: run(task)
@@ -59,11 +59,11 @@ sequenceDiagram
 - **Stateless & privasi**: `store: false` + `include: ["reasoning.encrypted_content"]` - tidak ada percakapan yang disimpan
   di OpenAI; item reasoning terenkripsi dikirim balik apa adanya sehingga penalaran model tetap utuh antar giliran.
 - **Penolakan / filter**: konten `refusal` atau `incomplete_details.reason = "content_filter"` dilaporkan sebagai kegagalan
-  task yang jelas. Error API dipetakan ke pesan Bahasa Indonesia (key salah, `insufficient_quota`, rate limit, model tidak
-  tersedia, koneksi).
-- **Prompt caching**: otomatis di OpenAI untuk prefix ≥ 1024 token. `instructions` tidak berisi data volatil (tanggal & id
-  task ada di pesan user pertama), daftar tool diurutkan deterministik, dan `prompt_cache_key: "solar-agent"` dipakai
-  bersama oleh semua task. Token cache terlihat di monitor.
+  task yang jelas. Error API dipetakan ke pesan dalam bahasa task, Indonesia atau English (key salah,
+  `insufficient_quota`, rate limit, model tidak tersedia, koneksi, error 5xx provider).
+- **Prompt caching**: otomatis di OpenAI untuk prefix ≥ 1024 token. `instructions` tidak berisi data volatil (tanggal, id
+  task dan bahasa antarmuka ada di blok `<task_context>` pesan user pertama), daftar tool diurutkan deterministik, dan
+  `prompt_cache_key: "solar-agent"` dipakai bersama oleh semua task. Token cache terlihat di monitor.
 - **Input append-only**: `instructions` dan daftar tool dibekukan per task; semua item output (reasoning, pesan,
   `function_call`) dikirim kembali apa adanya diikuti `function_call_output`. Konteks percakapan sebelumnya (maks. 5 task
   dalam sesi yang sama) diringkas ke pesan pertama ("simple compaction"), sehingga tidak ada pengeditan riwayat.
@@ -131,9 +131,9 @@ model memperbaiki input lalu memanggil ulang.
      *zip bomb* - termasuk yang header-nya berbohong - ditolak sebelum memakan memori. Kontainer OLE2 dibaca dengan batas
      ukuran file (tanpa membangun tabel FAT penuh) dan hanya stream di root yang dipakai untuk menentukan jenisnya.
    - Error membawa kode (`EMPTY`, `TOO_LARGE`, `ZIP_BOMB`, `ENCRYPTED`, `CORRUPT`, `LEGACY_FORMAT`, `UNSUPPORTED`,
-     `TIMEOUT`) → HTTP 413/415/422 dengan pesan Bahasa Indonesia, mis. dokumen terenkripsi atau `.doc` lama yang diberi
-     ekstensi `.docx`. Hasil dibatasi 2 juta karakter dan sel tabel 2.000 karakter; setiap pemotongan disebutkan sebagai
-     peringatan.
+     `TIMEOUT`) → HTTP 413/415/422 dengan pesan dalam bahasa permintaan (Indonesia/English), mis. dokumen terenkripsi
+     atau `.doc` lama yang diberi ekstensi `.docx`. Hasil dibatasi 2 juta karakter dan sel tabel 2.000 karakter; setiap
+     pemotongan disebutkan sebagai peringatan (ditulis dalam bahasa unggahan dan disimpan di `Attachment.warnings`).
 4. File asli dan hasil ekstraksi disimpan di object store (`attachments/<id>/…`), metadata (`Attachment`) di repository
    (`solar_attachments` / `data/attachments/*.json`). UI menampilkan chip + pratinjau teks hasil ekstraksi.
 5. `POST /api/tasks` membawa `attachmentIds` (harus satu percakapan; validasi + pembuatan task berjalan di bawah kunci
@@ -200,8 +200,8 @@ model memperbaiki input lalu memanggil ulang.
 - Web UI: file Word tidak dipratinjau sebagai teks; dialognya menawarkan unduhan dan pratinjau versi HTML paket yang
   sama. Kelompok TSD menampilkan tombol **Unduh Word (.docx)**, atau **Buat Word (.docx)** untuk TSD lama - tidak selama
   task masih berjalan. Tombol tetap fokus selama proses (`aria-disabled`, klik/Enter tambahan tidak mengirim permintaan
-  kedua), fokus pindah ke **Unduh Word** setelah berhasil, error tampil di `role="alert"` dalam Bahasa Indonesia (pesan
-  server di bawah "Rincian").
+  kedua), fokus pindah ke **Unduh Word** setelah berhasil, error tampil di `role="alert"` dalam bahasa antarmuka (pesan
+  server, juga dalam bahasa itu, di bawah "Rincian").
 
 **Aset biner dan bundle.** Aplikasi desktop dan paket self-host hanya membawa file bundle (`dist/index.js` atau
 `dist/server.mjs`, `dist/extract-worker.mjs`, `dist/docx-worker.mjs`, tanpa `node_modules`), jadi aset ikut di-embed:
@@ -220,8 +220,8 @@ beserta crate Rust di dalam wasm-nya), Liberation Sans (SIL OFL 1.1) - lihat `TH
 
 ## 4. Konfirmasi (human-in-the-loop)
 
-- Setiap tool punya fungsi `confirmation(input)`; plugin MCP mengikuti kebijakan `never | writes | always`
-  (`writes` memakai anotasi MCP `readOnlyHint`/`destructiveHint` bila ada, selain heuristik nama tool).
+- Setiap tool punya fungsi `confirmation(input, lang)` yang menulis alasan dalam bahasa task; plugin MCP mengikuti
+  kebijakan `never | writes | always` (`writes` memakai anotasi MCP `readOnlyHint`/`destructiveHint` bila ada, selain heuristik nama tool).
 - `TaskManager.requestConfirmation` menyimpan `Confirmation`, mengubah status task menjadi `awaiting_confirmation`,
   memancarkan event, lalu menunggu jawaban, pembatalan, atau timeout (`CONFIRMATION_TIMEOUT_MINUTES`).
 - Penolakan dikembalikan ke model sebagai `tool_result` error dengan instruksi untuk tidak mengulang.
@@ -230,7 +230,7 @@ beserta crate Rust di dalam wasm-nya), Liberation Sans (SIL OFL 1.1) - lihat `TH
 
 | Data | Tanpa konfigurasi | Dengan konfigurasi |
 |---|---|---|
-| Task, event timeline, metadata artefak, konfirmasi, metadata lampiran | `data/tasks/*.json` + `*.events.jsonl`, `data/attachments/*.json` | Neon Postgres (`DATABASE_URL`): tabel `solar_tasks`, `solar_task_events`, `solar_artifacts`, `solar_confirmations`, `solar_attachments` (dibuat/dimigrasi otomatis). |
+| Task, event timeline, metadata artefak, konfirmasi, metadata lampiran | `data/tasks/*.json` + `*.events.jsonl`, `data/attachments/*.json` | Neon Postgres (`DATABASE_URL`): tabel `solar_tasks`, `solar_task_events`, `solar_artifacts`, `solar_confirmations`, `solar_attachments` (dibuat/dimigrasi otomatis; mis. kolom `solar_tasks.language` ditambahkan dengan `ADD COLUMN IF NOT EXISTS … DEFAULT 'id'`). |
 | File artefak & lampiran | `data/artifacts/tasks/<task>/<artifact>/<file>`, `data/artifacts/attachments/<id>/…` | Object storage S3-compatible (`S3_*`) dengan prefix `S3_PREFIX`. |
 | Skill pengguna, plugin, status skill | `data/skills/`, `data/plugins.json`, `data/skills-state.json` | sama |
 
@@ -243,9 +243,12 @@ Saat server mulai, task yang tertinggal berstatus aktif dari proses sebelumnya d
 - `task` - snapshot task setiap perubahan (status, progres, langkah, usage).
 - `event` - event timeline yang tersimpan (status, progress, thinking, text, tool_call, tool_result, confirmation_*, artifact, usage, log, result, error).
 - `delta` - potongan teks/thinking yang sedang di-stream (tidak disimpan).
-- `plugins` - status koneksi plugin MCP.
+- `plugins` - status koneksi plugin MCP, dalam bahasa koneksi stream itu (`?lang=`).
 
-UI menggabungkan delta per frame animasi (requestAnimationFrame) agar tetap ringan.
+EventSource tidak bisa mengirim header, jadi web UI membuka `/api/stream?lang=<bahasa>` dan membuka ulang stream saat
+bahasa antarmuka diganti (task dan event dimuat ulang setelahnya, seperti setelah koneksi terputus). Teks di `task` dan
+`event` tidak bergantung pada koneksi: ditulis dalam bahasa task. UI menggabungkan delta per frame animasi
+(requestAnimationFrame) agar tetap ringan.
 
 ## 7. Karakter 3D (bisa dipilih)
 
@@ -280,3 +283,75 @@ karakter (`public/characters/*.svg`) ditampilkan.
   (`Xenova/whisper-small` default) di-cache browser; audio direkam dengan MediaRecorder, berhenti otomatis setelah ±1,5 detik
   hening, di-resample ke 16 kHz, ditranskripsi di Web Worker. Dipakai otomatis di Electron.
 - **TTS**: `speechSynthesis` dengan suara sistem sesuai bahasa.
+- **Bahasa suara** (`VoicePrefs.lang`, `localStorage` `solar.voice`): `'auto'` (default) memakai `id-ID`/`en-US` sesuai
+  bahasa antarmuka, untuk pengenalan suara dan TTS; `'id-ID'`/`'en-US'` eksplisit tetap. Preferensi disimpan dengan
+  `v: 2`; nilai lama tanpa `v` yang berisi default lama `'id-ID'` dibaca sebagai `'auto'`, `'en-US'` lama tetap.
+
+## 9. Bahasa (Indonesia / English)
+
+Seluruh aplikasi bisa dipakai dalam Bahasa Indonesia (`id`) atau English (`en`) dan bahasanya bisa diganti kapan saja.
+Tipe bersama: `Language`, `LANGUAGES`, `LANGUAGE_HEADER` (`X-Solar-Language`) dan `Task.language` di `packages/shared`.
+
+**Web UI** (`apps/web/src/lib/i18n.ts`)
+
+- Kamus per namespace di `src/i18n/{id,en}/<namespace>.ts` (common, app, agent, character, monitor, artifacts,
+  settings, voice, api). File Indonesia adalah sumber tipe (`Dict = typeof id`); file English bertipe `Dict['<ns>']`,
+  jadi key yang hilang/berlebih adalah error kompilasi. Parameter dan bentuk jamak English memakai fungsi
+  (`i18n/helpers.ts`); komponen tidak pernah merangkai potongan terjemahan.
+- Komponen memakai `useT()` / `useLang()` (store kecil berbasis `useSyncExternalStore`, seperti `lib/pwa.ts`), modul
+  biasa memakai `t()` saat teksnya dibutuhkan dan `subscribeLang()` untuk hal yang dibuat sekali (mis. `aria-label`
+  canvas karakter). Tanggal, angka, ukuran dan durasi diformat per bahasa di `lib/format.ts` (`localeOf()` →
+  `id-ID`/`en-US`).
+- **Bahasa awal** bila pengguna belum memilih: bahasa pertama dari `navigator.languages` yang dikenali (`id`/`ms` →
+  `id`, `en` → `en`), selain itu `id`. Pilihan disimpan lewat `writePref` (`localStorage` `solar.lang`, JSON) dan
+  diikuti jendela lain lewat event `storage`; selama belum memilih, event `languagechange` browser juga diikuti.
+- Script inline di `index.html` (seperti script tema, aturan yang sama dengan `detectLang`) membaca `solar.lang` /
+  `navigator.languages` dan mengatur `<html lang>` dan link manifest sebelum tampilan pertama; saat aplikasi dimuat dan
+  setiap pergantian, `lib/i18n.ts` memperbarui keduanya plus `<meta name="description">`. Manifest PWA bergantian antara
+  `manifest.webmanifest` (id) dan `manifest.en.webmanifest` (en).
+- Ke server: header `X-Solar-Language` di setiap request `fetch`, `language` di body `POST /api/tasks`, dan
+  `?lang=` di URL yang dibuka browser sendiri (`/api/stream`, ZIP, unduhan artefak dan lampiran). Stream dibuka ulang
+  saat bahasa diganti. Error jaringan (`fetch` gagal) ditampilkan sebagai pesan "server tidak bisa dihubungi" dalam
+  bahasa antarmuka.
+- Tombol cepat di bawah karakter berisi template perintah dalam bahasa antarmuka, sehingga agent menjawab dalam bahasa
+  yang sama.
+
+**Server** (`apps/server/src/i18n.ts`)
+
+- Katalog per area di `src/i18n/` (`tasks`, `api`, `documents`, `knowledge`, `llm`), setiap entri berisi kedua bahasa
+  berdampingan; `t(lang, key, params)` bertipe (key harus ada, placeholder `{name}` harus cocok). `both(key)` membuat
+  teks dua bahasa untuk nilai yang ditampilkan nanti; `LocalizedError` membawa pesan dua bahasa (`message` = `id` untuk
+  log, test dan agent) dan dijawab dalam bahasa permintaan oleh handler error. Nama tool (`AgentTool.displayName`)
+  bertipe `LocalizedText` (`{ id, en }` atau satu string untuk tool MCP). Pesan validasi zod diterjemahkan oleh
+  `formatZodIssues`; pesan khusus skema ditulis dengan `schemaMessage()` agar ikut diterjemahkan.
+- **Lingkup task**: teks yang tersimpan bersama task dan dikirim lewat SSE ke semua klien (`currentStep`, pesan
+  `status`, `displayName` tool, `summary` hasil tool, alasan konfirmasi, error agent, `Confirmation.displayName`)
+  ditulis dalam `Task.language` (`taskLang(ctx)`), yang ditetapkan sekali saat task dibuat dari bahasa klien.
+- **Lingkup permintaan**: error route, error & peringatan lampiran (disimpan di `Attachment.warnings` dalam bahasa
+  unggahan), hasil impor knowledge, tes koneksi provider, status plugin di `/stream` dan README ZIP mengikuti
+  `requestLanguage()`: header `X-Solar-Language`, lalu query `lang`, lalu `Accept-Language`, lalu `id`.
+  `languageMiddleware` menyimpannya di `req.lang`; handler error (yang bisa jalan sebelum middleware) memakai `langOf(req)`.
+- Tanpa bahasa apa pun server tetap berbahasa Indonesia (`DEFAULT_LANG = 'id'`), sehingga klien lama, task lama
+  (`language` kosong dibaca sebagai `id` oleh kedua repository) dan test lama tidak berubah. Test bahasa English ada
+  di `apps/server/test/i18n.test.ts` (katalog: placeholder kedua bahasa sama; route, upload, task, agent, LLM, MCP).
+- Tidak diterjemahkan: data (isi knowledge & skill, deskripsi plugin dari konfigurasi, isi artefak, teks pengguna) dan
+  deskripsi tool untuk model (English).
+
+**Agent**
+
+- System prompt tetap sama untuk semua task (cache tetap stabil): aturannya, jawab dalam bahasa tulisan permintaan;
+  bila tidak jelas, pakai bahasa antarmuka di `<task_context>` (`Interface language: English` / `Bahasa Indonesia`)
+  pesan user pertama.
+- `create_technical_specification` tanpa `language` menulis TSD dalam bahasa task (default skema TSD sendiri tetap
+  `id`); agent mengisi `language` bila permintaan meminta bahasa lain.
+
+**Desktop** (`apps/desktop/src/i18n.ts`, `main.ts`, `preload.ts`)
+
+- Menu dan dialog (sambutan pertama kali, gagal start) dalam dua bahasa. Saat start bahasa dibaca dari
+  `<userData>/language.json` (`%APPDATA%\SOLAR\language.json`), selain itu dari `app.getLocale()` (`en…` → `en`, lainnya
+  `id`).
+- Preload menambahkan `solarDesktop.setLanguage(lang)`; web UI memanggilnya saat start dan setiap pergantian bahasa.
+  Main process (IPC `solar:set-language`) hanya menerima pesan dari origin UI SOLAR sendiri, menyimpan bahasanya ke
+  `language.json` dan membangun ulang menu.
+- Installer NSIS: `multiLanguageInstaller` dengan `installerLanguages: ["en_US", "id_ID"]` - installer tampil dalam
+  bahasa Windows bila Indonesia, selain itu English.

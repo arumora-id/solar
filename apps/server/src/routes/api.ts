@@ -671,7 +671,10 @@ export function createApiRouter(deps: ApiDeps): Router {
       });
       res.status(201).json({ entry, replaced });
     } catch (err) {
-      if (err instanceof KnowledgeConflictError) throw new HttpError(409, err.in(req.lang));
+      if (err instanceof KnowledgeConflictError) {
+        const { path, title, source } = err.existing;
+        throw new HttpError(409, t(req.lang, source === 'builtin' ? 'api.knowledgeExists.builtin' : 'api.knowledgeExists.user', { path, title }));
+      }
       if (err instanceof KnowledgeInputError) throw new HttpError(err.status, err.in(req.lang));
       throw knowledgeError(err, req.lang);
     }

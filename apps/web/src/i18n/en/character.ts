@@ -13,9 +13,9 @@ export const character: Dict['character'] = {
       sceneLabel: 'SOLAR AI AGENT as Mochi, a pink mochi cake wearing glasses',
     },
     cocoa: {
-      name: 'Cocoa Coconut',
+      name: 'Cocoa Kelapa',
       description: 'A cocoa-brown coconut with a straw and a little umbrella.',
-      sceneLabel: 'SOLAR AI AGENT as Cocoa Coconut, a brown coconut with glasses and a straw',
+      sceneLabel: 'SOLAR AI AGENT as Cocoa Kelapa, a brown coconut with glasses and a straw',
     },
     rabbit: {
       name: 'Rabbit',

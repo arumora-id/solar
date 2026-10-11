@@ -5,7 +5,7 @@ export const monitor: Dict['monitor'] = {
   status: {
     queued: 'Queued',
     running: 'Running',
-    awaiting_confirmation: 'Awaiting confirmation',
+    awaiting_confirmation: 'Awaiting approval',
     completed: 'Completed',
     failed: 'Failed',
     cancelled: 'Cancelled',
@@ -25,7 +25,7 @@ export const monitor: Dict['monitor'] = {
     total: 'Total tasks',
     running: 'Running',
     queued: (n: number) => `${numEn(n)} queued`,
-    awaiting: 'Awaiting confirmation',
+    awaiting: 'Awaiting approval',
     completed: 'Completed',
     failedOrCancelled: 'Failed / cancelled',
     cancelled: (n: number) => `${numEn(n)} cancelled`,

@@ -187,7 +187,7 @@ export function createKnowledgeTools(knowledge: KnowledgeStore, artifacts?: Arti
     }),
     zodTool({
       name: 'search_knowledge',
-      displayName: { id: 'Cari knowledge', en: 'Searching knowledge' },
+      displayName: { id: 'Cari knowledge', en: 'Searching the knowledge base' },
       description:
         'Keyword search over the knowledge base. Returns the best files with matching lines (line numbers) - then read the relevant files with read_knowledge.',
       schema: z.object({
@@ -207,7 +207,7 @@ export function createKnowledgeTools(knowledge: KnowledgeStore, artifacts?: Arti
     }),
     zodTool({
       name: 'read_knowledge',
-      displayName: { id: 'Baca knowledge', en: 'Reading knowledge' },
+      displayName: { id: 'Baca knowledge', en: 'Reading knowledge file' },
       description: `Read a knowledge base file by path (from list_knowledge / search_knowledge). Long files come in chunks of ${READ_CHUNK} characters: call again with next_offset.`,
       schema: z.object({
         path: z.string().min(1).max(300),
@@ -239,7 +239,7 @@ export function createKnowledgeTools(knowledge: KnowledgeStore, artifacts?: Arti
     }),
     zodTool({
       name: 'save_knowledge',
-      displayName: { id: 'Simpan knowledge', en: 'Saving knowledge' },
+      displayName: { id: 'Simpan knowledge', en: 'Saving knowledge file' },
       description: [
         'Create or update a Markdown file in the knowledge base (the user approves every write).',
         'Use it only when the user asks to register or update knowledge, e.g. a system, integration, standard or document structure.',
@@ -290,7 +290,7 @@ export function createKnowledgeTools(knowledge: KnowledgeStore, artifacts?: Arti
     tools.push(
       zodTool({
         name: 'import_artifact_to_knowledge',
-        displayName: { id: 'Simpan artefak ke knowledge', en: 'Saving artifact to knowledge' },
+        displayName: { id: 'Simpan artefak ke knowledge', en: 'Saving artifact to the knowledge base' },
         description: [
           'Save a Markdown artifact (from this or a previous task, e.g. the .md file of a TSD) as a knowledge base file, so later tasks use it.',
           'Generated artifacts are NOT knowledge until saved with this tool. The user approves every write.',

@@ -40,9 +40,22 @@ export const DEFAULT_VOICE_PREFS: VoicePrefs = {
   speakReplies: true,
 };
 
+/**
+ * Version of the stored preferences. Version 1 (no `v`) had no 'auto' language, defaulted to 'id-ID' and saved the
+ * whole object on any change, so a stored 'id-ID' from then was usually never chosen.
+ */
+const PREFS_VERSION = 2;
+
+type StoredVoicePrefs = Partial<VoicePrefs> & { v?: number };
+
 export function loadVoicePrefs(): VoicePrefs {
-  const prefs = { ...DEFAULT_VOICE_PREFS, ...readPref<Partial<VoicePrefs>>('voice', {}) };
-  // an unknown stored value (an older or a damaged preference) falls back to the interface language
+  const stored = readPref<StoredVoicePrefs | null>('voice', null);
+  const { v, ...saved }: StoredVoicePrefs = stored !== null && typeof stored === 'object' ? stored : {};
+  const prefs: VoicePrefs = { ...DEFAULT_VOICE_PREFS, ...saved };
+  // version 1's 'id-ID' was the old default and cannot be told apart from a choice: it follows the interface language
+  // now (the same Indonesian while the interface is Indonesian). Its 'en-US' was chosen and stays.
+  if (stored !== null && v === undefined && prefs.lang === 'id-ID') prefs.lang = 'auto';
+  // an unknown stored value (a damaged preference) falls back to the interface language
   if (prefs.lang !== 'auto' && !SPEECH_LOCALES.includes(prefs.lang)) prefs.lang = 'auto';
   return prefs;
 }
@@ -53,7 +66,7 @@ export function speechLocale(lang: VoicePrefs['lang']): SpeechLocale {
 }
 
 export function saveVoicePrefs(prefs: VoicePrefs): void {
-  writePref('voice', prefs);
+  writePref<StoredVoicePrefs>('voice', { ...prefs, v: PREFS_VERSION });
   window.dispatchEvent(new CustomEvent('solar:voice-prefs'));
 }
 

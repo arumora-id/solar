@@ -10,7 +10,7 @@ export const monitor = {
   status: {
     queued: 'Antre',
     running: 'Berjalan',
-    awaiting_confirmation: 'Menunggu konfirmasi',
+    awaiting_confirmation: 'Menunggu persetujuan',
     completed: 'Selesai',
     failed: 'Gagal',
     cancelled: 'Dibatalkan',
@@ -33,7 +33,7 @@ export const monitor = {
     running: 'Sedang berjalan',
     /** Under "Sedang berjalan": how many of them still wait in the queue. */
     queued: (n: number) => `${numId(n)} antre`,
-    awaiting: 'Menunggu konfirmasi',
+    awaiting: 'Menunggu persetujuan',
     completed: 'Selesai',
     failedOrCancelled: 'Gagal / batal',
     /** Under "Gagal / batal": how many of them were cancelled. */

@@ -369,7 +369,7 @@ describe('knowledge writes through a task and the API', () => {
   });
 
   const api = async <T>(path: string, init?: RequestInit) => {
-    const res = await fetch(`${server.url}${path}`, { ...init, headers: { 'Content-Type': 'application/json' } });
+    const res = await fetch(`${server.url}${path}`, { ...init, headers: { 'Content-Type': 'application/json', ...(init?.headers as Record<string, string> | undefined) } });
     return { status: res.status, data: (await res.json()) as T };
   };
 
@@ -406,6 +406,13 @@ describe('knowledge writes through a task and the API', () => {
     const again = await api<{ error: string }>('/api/knowledge/import-artifact', { method: 'POST', body: JSON.stringify(body) });
     expect(again.status).toBe(409);
     expect(again.data.error).toContain('systems/EPROC.md');
+    // shown above the "Replace the existing file" checkbox, in the language of the request
+    expect(again.data.error).toBe('File knowledge "systems/EPROC.md" sudah ada (file pengguna: TSD E-Procurement). Untuk menggantinya, centang "Ganti file yang sudah ada" lalu simpan lagi.');
+    const againEn = await api<{ error: string }>('/api/knowledge/import-artifact', { method: 'POST', body: JSON.stringify(body), headers: { 'X-Solar-Language': 'en' } });
+    expect(againEn).toEqual({
+      status: 409,
+      data: { error: 'The knowledge file "systems/EPROC.md" already exists (user file: TSD E-Procurement). To replace it, tick "Replace the existing file" and save again.' },
+    });
     const replace = await api<{ replaced: string | null }>('/api/knowledge/import-artifact', { method: 'POST', body: JSON.stringify({ ...body, overwrite: true }) });
     expect(replace.status).toBe(201);
     expect(replace.data.replaced).toBe('user');

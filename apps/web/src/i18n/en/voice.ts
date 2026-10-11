@@ -34,7 +34,7 @@ export const voice: Dict['voice'] = {
     autoSend: 'Send automatically when I stop speaking',
     speakReplies: 'The character reads out a summary of the result (text-to-speech)',
     test: 'Test voice',
-    testPhrase: 'Hi, I am SOLAR AI Agent, ready to help with your architecture design.',
+    testPhrase: "Hi, I'm SOLAR AI Agent, ready to help with your architecture design.",
   },
 
   recognition: {

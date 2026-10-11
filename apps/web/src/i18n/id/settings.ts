@@ -72,7 +72,7 @@ export const settings = {
     intro:
       'SOLAR bisa memakai beberapa provider LLM sekaligus: OpenAI, gateway seperti OmniRoute/OpenRouter/LiteLLM, Claude, Gemini, atau model lokal (Ollama). **Rute default** menentukan model utama dan cadangannya: bila model utama gagal (koneksi, kuota, limit, key salah), task otomatis pindah ke model berikutnya.',
     kind: {
-      'openai-chat': 'Chat Completions (OpenAI-compatible)',
+      'openai-chat': 'Chat Completions (kompatibel OpenAI)',
       'openai-responses': 'OpenAI Responses API',
     } satisfies Record<LlmProviderKind, string>,
 
@@ -95,6 +95,8 @@ export const settings = {
     editProvider: (id: string) => `Edit provider: ${id}`,
     /** Name of a provider made from a preset (only the presets whose name has words to translate). */
     presetName: {
+      anthropic: 'Anthropic (kompatibel OpenAI)',
+      gemini: 'Google Gemini (kompatibel OpenAI)',
       ollama: 'Ollama (lokal)',
     },
     /** Shown under the preset buttons after one is picked. */

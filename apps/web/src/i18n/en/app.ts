@@ -24,7 +24,7 @@ export const app: Dict['app'] = {
     agent: 'Agent',
     monitor: 'Monitor',
     monitorWaiting: (n: number) => `Monitor (${n})`,
-    monitorWaitingLabel: (n: number) => `Monitor, ${n} ${plural(n, 'confirmation')} waiting`,
+    monitorWaitingLabel: (n: number) => `Monitor, ${n} ${plural(n, 'approval')} waiting`,
     connected: 'Connected',
     disconnected: 'Disconnected',
     install: 'Install app',

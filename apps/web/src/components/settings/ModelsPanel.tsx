@@ -17,8 +17,8 @@ const PRESETS: Array<{ id: PresetId; label: string; name: string; kind: LlmProvi
   { id: 'omniroute', label: 'OmniRoute', name: 'OmniRoute', kind: 'openai-chat', baseUrl: 'http://localhost:PORT/v1', apiKey: '' },
   { id: 'openai', label: 'OpenAI', name: 'OpenAI (Chat)', kind: 'openai-chat', baseUrl: 'https://api.openai.com/v1', apiKey: '' },
   { id: 'openrouter', label: 'OpenRouter', name: 'OpenRouter', kind: 'openai-chat', baseUrl: 'https://openrouter.ai/api/v1', apiKey: '' },
-  { id: 'anthropic', label: 'Anthropic', name: 'Anthropic (OpenAI-compatible)', kind: 'openai-chat', baseUrl: 'https://api.anthropic.com/v1', apiKey: '' },
-  { id: 'gemini', label: 'Gemini', name: 'Google Gemini (OpenAI-compatible)', kind: 'openai-chat', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', apiKey: '' },
+  { id: 'anthropic', label: 'Anthropic', name: 'Anthropic', kind: 'openai-chat', baseUrl: 'https://api.anthropic.com/v1', apiKey: '' },
+  { id: 'gemini', label: 'Gemini', name: 'Google Gemini', kind: 'openai-chat', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', apiKey: '' },
   { id: 'ollama', label: 'Ollama', name: 'Ollama', kind: 'openai-chat', baseUrl: 'http://localhost:11434/v1', apiKey: '' },
 ];
 

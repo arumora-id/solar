@@ -6,13 +6,14 @@ import { count, type Catalog } from './helpers.js';
  */
 export const KNOWLEDGE_MESSAGES = {
   // ---- writes (agent tools and API) ------------------------------------------------------------------------
+  // the agent's text (it names the tool's overwrite parameter); the API answers with api.knowledgeExists.*
   'knowledge.conflict.builtin': {
-    id: 'Knowledge "{path}" sudah ada (file bawaan: {title}). Baca dulu isinya, lalu simpan ulang dengan overwrite bila memang ingin menggantinya.',
-    en: 'Knowledge "{path}" already exists (built-in file: {title}). Read it first, then save it again with overwrite if you really want to replace it.',
+    id: 'File knowledge "{path}" sudah ada (file bawaan: {title}). Baca dulu isinya, lalu simpan ulang dengan overwrite bila memang ingin menggantinya.',
+    en: 'The knowledge file "{path}" already exists (built-in file: {title}). Read it first, then save it again with overwrite if you really want to replace it.',
   },
   'knowledge.conflict.user': {
-    id: 'Knowledge "{path}" sudah ada (file pengguna: {title}). Baca dulu isinya, lalu simpan ulang dengan overwrite bila memang ingin menggantinya.',
-    en: 'Knowledge "{path}" already exists (user file: {title}). Read it first, then save it again with overwrite if you really want to replace it.',
+    id: 'File knowledge "{path}" sudah ada (file pengguna: {title}). Baca dulu isinya, lalu simpan ulang dengan overwrite bila memang ingin menggantinya.',
+    en: 'The knowledge file "{path}" already exists (user file: {title}). Read it first, then save it again with overwrite if you really want to replace it.',
   },
   'knowledge.guidancePath': {
     id: '"{path}" adalah panduan untuk manusia (folder/file berawalan "_" atau README.md) dan tidak dibaca agent; pilih path lain.',
@@ -23,8 +24,8 @@ export const KNOWLEDGE_MESSAGES = {
     en: 'The knowledge file would be {kb} KB including the front matter; the limit is {max} KB. Shorten or split the content.',
   },
   'knowledge.stateChanged': {
-    id: 'Knowledge "{path}" berubah setelah persetujuan diminta.',
-    en: 'Knowledge "{path}" changed after the approval was requested.',
+    id: 'File knowledge "{path}" berubah setelah persetujuan diminta.',
+    en: 'The knowledge file "{path}" changed after approval was requested.',
   },
   'knowledge.artifactNotFound': { id: 'Artefak {id} tidak ditemukan.', en: 'Artifact {id} not found.' },
   'knowledge.notMarkdown': {

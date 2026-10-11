@@ -66,8 +66,32 @@ export const API_MESSAGES = {
     en: 'Route "{route}": unknown provider in "{entry}"',
   },
 
+  // ---- validation hints of the stores' schemas (zodIssues.schemaMessage; shown after the field path) ----------------
+  'validation.idFormat': {
+    id: 'id hanya boleh berisi huruf kecil, angka dan tanda hubung (-), maksimal 40 karakter',
+    en: 'id may only contain lower-case letters, digits and dashes (-), up to 40 characters',
+  },
+  'validation.reservedProviderId': { id: '"{id}" khusus untuk provider dari .env', en: '"{id}" is reserved for the provider from .env' },
+  'validation.baseUrl': { id: 'baseUrl harus diawali http:// atau https://', en: 'baseUrl must start with http:// or https://' },
+  'validation.routeName': {
+    id: 'nama rute hanya boleh berisi huruf kecil, angka dan tanda hubung (-), maksimal 40 karakter',
+    en: 'a route name may only contain lower-case letters, digits and dashes (-), up to 40 characters',
+  },
+  'validation.routeEntry': { id: 'entri rute harus berbentuk "provider/model"', en: 'a route entry must look like "provider/model"' },
+  'validation.stdioCommand': { id: 'command wajib diisi untuk plugin stdio', en: 'command is required for stdio plugins' },
+  'validation.httpUrl': { id: 'url wajib diisi untuk plugin http/sse', en: 'url is required for http/sse plugins' },
+
   // ---- knowledge files ------------------------------------------------------------------------------------------
   'api.knowledgeNotFound': { id: 'File knowledge tidak ditemukan', en: 'Knowledge file not found' },
+  // "Save to the knowledge base" of an artifact: shown above the web's "Replace the existing file" checkbox
+  'api.knowledgeExists.builtin': {
+    id: 'File knowledge "{path}" sudah ada (file bawaan: {title}). Untuk menggantinya, centang "Ganti file yang sudah ada" lalu simpan lagi.',
+    en: 'The knowledge file "{path}" already exists (built-in file: {title}). To replace it, tick "Replace the existing file" and save again.',
+  },
+  'api.knowledgeExists.user': {
+    id: 'File knowledge "{path}" sudah ada (file pengguna: {title}). Untuk menggantinya, centang "Ganti file yang sudah ada" lalu simpan lagi.',
+    en: 'The knowledge file "{path}" already exists (user file: {title}). To replace it, tick "Replace the existing file" and save again.',
+  },
   'api.spreadsheetOnly': { id: 'pilih file .xlsx, .xlsm atau .csv', en: 'choose an .xlsx, .xlsm or .csv file' },
   'api.sheetMissing': { id: 'Sheet "{sheet}" tidak ada di file', en: 'Sheet "{sheet}" is not in the file' },
   'store.knowledge.invalidPath': {

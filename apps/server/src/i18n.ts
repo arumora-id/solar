@@ -67,7 +67,9 @@ type ParamsOf<E> = E extends { readonly id: (params: infer P) => string }
       : never;
 
 export type MessageParams<K extends MessageKey> = ParamsOf<Messages[K]>;
-type Args<K extends MessageKey> = MessageParams<K> extends void ? [] : [params: MessageParams<K>];
+/** The arguments after the key: none, or the message's parameters. */
+export type MessageArgs<K extends MessageKey> = MessageParams<K> extends void ? [] : [params: MessageParams<K>];
+type Args<K extends MessageKey> = MessageArgs<K>;
 
 export const isLang = (value: unknown): value is Lang => typeof value === 'string' && (LANGUAGES as readonly string[]).includes(value);
 
