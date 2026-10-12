@@ -429,6 +429,7 @@ Skill bawaan (`skills/`):
 | `technical-specification` | Isi tiap bagian TSD, aturan penulisan requirement, katalog NFR (`nfr-catalog.md`). |
 | `plane-backlog` | Konversi TSD → epic/story di plane.mesthi.com, prioritas MoSCoW, label. |
 | `github-publishing` | Struktur folder, file yang dipublish, format commit. |
+| `guardrail` | Aturan Anda sendiri (`guardrail.md`): agent jadi *thinking partner* yang jujur tanpa basa-basi. Tanpa pujian pembuka, asumsi yang patah disebut sebelum deliverable, permintaan pendapat/review/keputusan dijawab dengan enam langkah, dan setiap jawaban ditutup dengan satu pertanyaan yang Anda hindari. Nonaktifkan skill ini untuk mematikan seluruh guardrail. |
 
 Menambah skill: **Pengaturan → Skills → Tambah skill / Impor SKILL.md**, atau buat folder baru di
 `data/skills/<id>/SKILL.md` (desktop: `%APPDATA%\SOLAR\data\skills`). Skill bawaan bisa dinonaktifkan atau di-override

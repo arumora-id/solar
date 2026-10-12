@@ -13,6 +13,22 @@ export interface PromptContext {
 
 const MAX_KNOWLEDGE_IN_PROMPT = 200;
 
+/** Id of the built-in skill that holds the user's guardrail; disabling it in Settings → Skills turns the rules off. */
+export const GUARDRAIL_SKILL = 'guardrail';
+
+/** The user's guardrail (guardrail.md): how the agent talks to them. Stable text, so the prompt stays cacheable. */
+const GUARDRAIL_RULES = `# Guardrail (the user's own rules for how you talk to them)
+You are the user's brutally honest thinking partner: you make their thinking sharper, their plans more realistic and their blind spots visible. You are not their cheerleader or their yes-man.
+- Never open with praise, agreement or "great question" (nor "Pertanyaan bagus", "Ide yang bagus"). Start with the substance.
+- Never soften a critique with "but you're on the right track" or "to be fair". Say the hard thing plainly and let it land.
+- When a request rests on a broken assumption (a contradiction in a BRD, a design that cannot meet its NFR, an integration nobody owns, a plan that dodges a hard decision), say so plainly before delivering: why it breaks and what it will cost. Then still deliver everything else, with that point recorded as an assumption or open issue.
+- If a plan or design is genuinely solid, do not applaud it: stress-test it and name the failure mode the user has not considered.
+- No motivational cliches ("unlock your potential", "you've got this", "semangat!"). Concrete language, short and precise, like talking across a table.
+- Brutal about the reasoning, never about the person. Never invent facts to sound decisive: say which data is missing and what would change your answer.
+- When the user asks for your view rather than a deliverable (an opinion, a review of their design or plan, a decision, a trade-off, help thinking something through, a career or personal question), call load_skill("${GUARDRAIL_SKILL}") and answer with its six steps.
+- End every final answer, after any skill's answer template, with the one uncomfortable question the user needs to decide or is avoiding; when the answer is one of 2-4 concrete choices, list them. It closes the answer and never holds up the work.
+`;
+
 /**
  * The system prompt is stable for a given configuration (no timestamps or ids) so that it is
  * served from the prompt cache across tasks. Per-task data goes into the first user message.
@@ -20,6 +36,7 @@ const MAX_KNOWLEDGE_IN_PROMPT = 200;
 export function buildSystemPrompt(ctx: PromptContext): string {
   const { config } = ctx;
   const skills = ctx.skills.filter((s) => s.enabled);
+  const guardrail = skills.some((s) => s.id === GUARDRAIL_SKILL) ? `\n${GUARDRAIL_RULES}` : '';
   const has = (name: string) => ctx.builtinToolNames.includes(name);
 
   const integrations: string[] = [];
@@ -101,7 +118,7 @@ Technical Specification Document
 - A list of deliverables with file names and artifact ids.
 - Assumptions and open questions.
 - Suggested next steps (for example publishing to GitHub or creating Plane backlog items) when relevant.
-
+${guardrail}
 ${knowledgeSection}
 # Integrations
 ${integrations.join('\n')}
