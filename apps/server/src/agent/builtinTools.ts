@@ -15,6 +15,7 @@ import type { TaskRunContext } from '../tasks/taskManager.js';
 import { resolveTaskDiagrams, tsdDocxArtifact, withTechSpecBundleLock } from '../tasks/techSpecDocx.js';
 import { renderTechSpecDocxIsolated } from '../tasks/techSpecDocxIsolated.js';
 import { newId, slugify } from '../util/ids.js';
+import { artifactAccess } from './access.js';
 import { createDocumentTools } from './documentTools.js';
 import { json, zodTool } from './zodTool.js';
 import type { AgentTool, ToolOutput } from './types.js';
@@ -395,6 +396,7 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
       description:
         'Read the text content of an artifact by id (for review or reuse). Works for artifacts of this task and of previous tasks listed in the session context.',
       schema: z.object({ artifact_id: z.string().regex(/^art_[A-Za-z0-9]+$/) }),
+      authorize: (input, ctx) => artifactAccess([input.artifact_id], ctx),
       async execute(input, ctx) {
         const lang = taskLang(ctx);
         const artifact = await artifacts.get(input.artifact_id);
@@ -437,6 +439,7 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
           artifact_ids: z.array(z.string().regex(/^art_[A-Za-z0-9]+$/)).min(1).max(100),
           commit_message: z.string().min(1).max(500),
         }),
+        authorize: (input, ctx) => artifactAccess(input.artifact_ids, ctx),
         confirmation: (input, lang) =>
           config.github.publishConfirm === 'always'
             ? t(lang, 'confirm.github', { n: input.artifact_ids.length, target: `${input.repository ?? config.github.defaultRepo}/${input.path}` })

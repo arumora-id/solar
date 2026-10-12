@@ -19,6 +19,7 @@ import {
   type SaveKnowledgeResult,
 } from '../knowledge/knowledgeWrite.js';
 import type { ArtifactService } from '../tasks/artifactService.js';
+import { artifactAccess } from './access.js';
 import { json, zodTool } from './zodTool.js';
 import type { AgentTool, ToolOutput } from './types.js';
 
@@ -301,6 +302,7 @@ export function createKnowledgeTools(knowledge: KnowledgeStore, artifacts?: Arti
           path: pathField.optional().describe('e.g. systems/AD1GATE.md (default: <type folder>/<artifact name>)'),
           ...metaFields,
         }),
+        authorize: (input, ctx) => artifactAccess([input.artifact_id], ctx),
         confirmation: async (input, lang) => {
           // an unknown or non-Markdown artifact is refused in execute, before anything is written
           const artifact = await markdownArtifact(artifacts, input.artifact_id).catch(() => null);

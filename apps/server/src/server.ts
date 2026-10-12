@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { createAgentRunner, type ResponsesStreamer } from './agent/agent.js';
+import { AuthService, type AuthServiceOptions } from './auth/authService.js';
 import { createBuiltinTools } from './agent/builtinTools.js';
 import { createKnowledgeTools } from './agent/knowledgeTools.js';
 import type { AgentTool } from './agent/types.js';
@@ -41,12 +42,19 @@ export interface StartOptions {
   chatApis?: Record<string, ChatCompletionsApi>;
   /** Additional tools (tests / extensions). */
   extraTools?: AgentTool[];
+  /** Password hashing parameters and rate limits of the login (tests). */
+  auth?: AuthServiceOptions;
 }
 
 export interface RunningServer {
   url: string;
   port: number;
   config: AppConfig;
+  /**
+   * The one-time first-superadmin setup code while no account exists (null afterwards): for a shell that starts the
+   * server in-process (the desktop app) to hand to its own window. Never send it anywhere else.
+   */
+  setupCode(): string | null;
   close(): Promise<void>;
 }
 
@@ -63,6 +71,15 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   const bus = new EventBus();
   const artifacts = new ArtifactService(repo, objects);
   const attachments = new AttachmentService(repo, objects, { maxFileBytes: config.attachments.maxFileBytes });
+  const auth = new AuthService(config, repo, bus, options.auth);
+  try {
+    // SOLAR_ADMIN_* bootstrap; an invalid one stops the start (the operator asked for that account)
+    await auth.init();
+  } catch (err) {
+    auth.close();
+    await repo.close().catch(() => undefined);
+    throw err;
+  }
   const llm = new LlmProviderStore(config);
   await llm.init();
   const models = new ModelRouter({ config, store: llm, envStreamer: options.responses, chatApis: options.chatApis });
@@ -70,6 +87,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     concurrency: config.taskConcurrency,
     model: () => models.primaryLabel(),
     confirmationTimeoutMs: config.confirmationTimeoutMs,
+    resolveRequester: (ownerId) => auth.requesterOf(ownerId),
   });
   await tasks.recoverInterrupted();
 
@@ -96,7 +114,9 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
 
   const app = express();
   app.disable('x-powered-by');
-  app.use('/api', createApiRouter({ config, repo, objectsKind: objects.kind, tasks, artifacts, attachments, bus, skills, plugins, mcp, knowledge, llm, models }));
+  // X-Forwarded-For / -Proto / -Host are believed only from TRUST_PROXY hops (client address, Secure cookies)
+  app.set('trust proxy', config.auth.trustProxy > 0 ? config.auth.trustProxy : false);
+  app.use('/api', createApiRouter({ config, repo, objectsKind: objects.kind, tasks, artifacts, attachments, bus, skills, plugins, mcp, knowledge, llm, models, auth }));
 
   if (existsSync(join(config.webDistDir, 'index.html'))) {
     app.use(
@@ -138,7 +158,8 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     } else if (type === 'entity.parse.failed') message = t(lang, 'api.invalidJson');
     else if (type === 'entity.too.large') message = t(lang, 'api.bodyTooLarge');
     if (status >= 500) log.error('Request failed', err);
-    res.status(status).json({ error: message });
+    if (err instanceof HttpError && err.headers) for (const [name, value] of Object.entries(err.headers)) res.setHeader(name, value);
+    res.status(status).json(err instanceof HttpError && err.code ? { error: message, code: err.code } : { error: message });
   });
 
   const port = options.port ?? config.port;
@@ -150,6 +171,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     });
   } catch (err) {
     // nothing listens: release what was opened above (database pool) before the caller retries or gives up
+    auth.close();
     await repo.close().catch(() => undefined);
     throw err;
   }
@@ -160,6 +182,13 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   const loopback = ['127.0.0.1', 'localhost', '::1'].includes(config.host);
   if (!loopback && !config.accessToken) {
     log.warn(`HOST=${config.host} exposes SOLAR on the network without SOLAR_ACCESS_TOKEN - set a token in .env.`);
+  }
+  if (await auth.setupRequired()) {
+    log.warn(
+      'No user account yet: create the first superadmin with SOLAR_ADMIN_USERNAME / SOLAR_ADMIN_EMAIL / SOLAR_ADMIN_PASSWORD in .env, ' +
+        `or open ${url} on this computer and enter the setup code logged above (${auth.setupCodeFile()}), ` +
+        'or call POST /api/auth/setup with SOLAR_ACCESS_TOKEN.',
+    );
   }
 
   mcp.startAll();
@@ -178,8 +207,10 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     url,
     port: actualPort,
     config,
+    setupCode: () => auth.setupCode(),
     async close() {
       clearInterval(gcTimer);
+      auth.close();
       server.closeAllConnections?.();
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await mcp.shutdown();

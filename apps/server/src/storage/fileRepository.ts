@@ -1,8 +1,16 @@
 import { appendFile, mkdir, readdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Artifact, Attachment, Confirmation, Task, TaskEvent, TaskStats } from '@solar/shared';
+import type { Artifact, Attachment, Confirmation, Task, TaskEvent, TaskStats, User, UserStatus } from '@solar/shared';
 import { KeyedQueue, writeFileAtomic } from '../util/fs.js';
-import { emptyStats, type ListTasksOptions, type Repository } from './repository.js';
+import {
+  emptyStats,
+  type CreateUserResult,
+  type ListTasksOptions,
+  type Repository,
+  type StoredSession,
+  type StoredUser,
+  type UserPatch,
+} from './repository.js';
 
 interface TaskRecord {
   task: Task;
@@ -11,10 +19,14 @@ interface TaskRecord {
   confirmations: Confirmation[];
 }
 
+/** Files holding password hashes and session hashes: readable by the server's own OS user only. */
+const PRIVATE_FILE = 0o600;
+
 /**
  * Zero-configuration storage used when DATABASE_URL is not set.
- * Layout: <dataDir>/tasks/<taskId>.json, .events.jsonl, .artifacts.json, .confirmations.json
- * and <dataDir>/attachments/<attachmentId>.json (metadata; the files themselves live in the object store).
+ * Layout: <dataDir>/tasks/<taskId>.json, .events.jsonl, .artifacts.json, .confirmations.json,
+ * <dataDir>/attachments/<attachmentId>.json (metadata; the files themselves live in the object store),
+ * <dataDir>/users.json (accounts with password hashes) and <dataDir>/sessions.json (hashes of login sessions).
  */
 export class FileRepository implements Repository {
   readonly kind = 'local-file' as const;
@@ -23,16 +35,27 @@ export class FileRepository implements Repository {
   private readonly artifactIndex = new Map<string, Artifact>();
   private readonly attachments = new Map<string, Attachment>();
   private readonly attachmentDir: string;
+  private readonly usersFile: string;
+  private readonly sessionsFile: string;
+  private readonly users = new Map<string, StoredUser>();
+  private readonly sessions = new Map<string, StoredSession>();
   private readonly queue = new KeyedQueue();
 
   constructor(dataDir: string) {
     this.dir = join(dataDir, 'tasks');
     this.attachmentDir = join(dataDir, 'attachments');
+    this.usersFile = join(dataDir, 'users.json');
+    this.sessionsFile = join(dataDir, 'sessions.json');
   }
 
   async init(): Promise<void> {
     await mkdir(this.dir, { recursive: true });
     await mkdir(this.attachmentDir, { recursive: true });
+    // accounts must load or the server must not start: an unreadable users.json silently treated as "no users" would
+    // reopen the first-superadmin setup to whoever comes first
+    for (const u of await readJsonFile<StoredUser[]>(this.usersFile, [], true)) this.users.set(u.id, u);
+    // sessions are disposable: an unreadable file only logs everybody out
+    for (const s of await readJsonFile<StoredSession[]>(this.sessionsFile, [], false)) this.sessions.set(s.tokenHash, s);
     for (const file of await readdir(this.attachmentDir)) {
       if (!/^att_[A-Za-z0-9]+\.json$/.test(file)) continue;
       try {
@@ -78,9 +101,13 @@ export class FileRepository implements Repository {
 
   async upsertTask(task: Task): Promise<void> {
     const existing = this.records.get(task.id);
-    if (existing) existing.task = { ...task };
-    else this.records.set(task.id, { task: { ...task }, events: [], artifacts: [], confirmations: [] });
-    await this.persist(`${task.id}.json`, task);
+    // the owner is set once, when the task is created (an update never moves a task to another user)
+    const stored: Task = { ...task, owner: undefined, ownerId: existing ? existing.task.ownerId : task.ownerId };
+    delete stored.owner;
+    if (stored.ownerId === undefined) delete stored.ownerId;
+    if (existing) existing.task = stored;
+    else this.records.set(task.id, { task: stored, events: [], artifacts: [], confirmations: [] });
+    await this.persist(`${task.id}.json`, stored);
   }
 
   async getTask(id: string): Promise<Task | null> {
@@ -92,14 +119,16 @@ export class FileRepository implements Repository {
     let tasks = [...this.records.values()].map((r) => r.task);
     if (options.sessionId) tasks = tasks.filter((t) => t.sessionId === options.sessionId);
     if (options.status) tasks = tasks.filter((t) => t.status === options.status);
+    if (options.ownerId !== undefined) tasks = tasks.filter((t) => (t.ownerId ?? null) === options.ownerId);
     tasks.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     const offset = options.offset ?? 0;
     return tasks.slice(offset, offset + options.limit).map((t) => ({ ...t }));
   }
 
-  async stats(): Promise<TaskStats> {
+  async stats(filter: { ownerId?: string } = {}): Promise<TaskStats> {
     const stats = emptyStats();
     for (const { task } of this.records.values()) {
+      if (filter.ownerId !== undefined && task.ownerId !== filter.ownerId) continue;
       stats.total += 1;
       stats.byStatus[task.status] += 1;
       stats.costUsd += task.usage.costUsd;
@@ -197,5 +226,178 @@ export class FileRepository implements Repository {
     return source
       .filter((c) => !filter.status || c.status === filter.status)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  // ---- user accounts ------------------------------------------------------------------------------------------
+
+  private persistUsers(): Promise<void> {
+    return this.queue.run(this.usersFile, () =>
+      writeFileAtomic(this.usersFile, JSON.stringify([...this.users.values()], null, 2), { mode: PRIVATE_FILE }),
+    );
+  }
+
+  private persistSessions(): Promise<void> {
+    return this.queue.run(this.sessionsFile, () =>
+      writeFileAtomic(this.sessionsFile, JSON.stringify([...this.sessions.values()], null, 2), { mode: PRIVATE_FILE }),
+    );
+  }
+
+  /** Runs `op` alone among the account changes (the uniqueness checks and the "no account yet" check need it). */
+  private exclusive<T>(op: () => Promise<T>): Promise<T> {
+    return this.queue.run('users:lock', op);
+  }
+
+  private taken(user: StoredUser): CreateUserResult | null {
+    for (const u of this.users.values()) {
+      if (u.username.toLowerCase() === user.username.toLowerCase()) return 'username-taken';
+      if (u.email.toLowerCase() === user.email.toLowerCase()) return 'email-taken';
+    }
+    return null;
+  }
+
+  createUser(user: StoredUser): Promise<CreateUserResult> {
+    return this.exclusive(async () => {
+      const taken = this.taken(user);
+      if (taken) return taken;
+      this.users.set(user.id, { ...user });
+      await this.persistUsers();
+      return 'created';
+    });
+  }
+
+  createFirstUser(user: StoredUser): Promise<boolean> {
+    return this.exclusive(async () => {
+      if (this.users.size > 0) return false;
+      this.users.set(user.id, { ...user });
+      await this.persistUsers();
+      return true;
+    });
+  }
+
+  async getUser(id: string): Promise<StoredUser | null> {
+    const u = this.users.get(id);
+    return u ? { ...u } : null;
+  }
+
+  async findUserByUsername(username: string): Promise<StoredUser | null> {
+    const key = username.toLowerCase();
+    for (const u of this.users.values()) if (u.username.toLowerCase() === key) return { ...u };
+    return null;
+  }
+
+  async findUserByEmail(email: string): Promise<StoredUser | null> {
+    const key = email.toLowerCase();
+    for (const u of this.users.values()) if (u.email.toLowerCase() === key) return { ...u };
+    return null;
+  }
+
+  async listUsers(filter: { status?: UserStatus } = {}): Promise<StoredUser[]> {
+    return [...this.users.values()]
+      .filter((u) => !filter.status || u.status === filter.status)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
+      .map((u) => ({ ...u }));
+  }
+
+  async countUsers(filter: { status?: UserStatus; role?: User['role'] } = {}): Promise<number> {
+    let n = 0;
+    for (const u of this.users.values()) if ((!filter.status || u.status === filter.status) && (!filter.role || u.role === filter.role)) n += 1;
+    return n;
+  }
+
+  updateUser(id: string, patch: UserPatch): Promise<StoredUser | null> {
+    return this.exclusive(async () => {
+      const u = this.users.get(id);
+      if (!u) return null;
+      const updated: StoredUser = { ...u, ...patch };
+      this.users.set(id, updated);
+      await this.persistUsers();
+      return { ...updated };
+    });
+  }
+
+  deleteUser(id: string): Promise<boolean> {
+    return this.exclusive(async () => {
+      if (!this.users.delete(id)) return false;
+      await this.persistUsers();
+      let removed = false;
+      for (const [hash, s] of this.sessions) {
+        if (s.userId === id) {
+          this.sessions.delete(hash);
+          removed = true;
+        }
+      }
+      if (removed) await this.persistSessions();
+      return true;
+    });
+  }
+
+  // ---- login sessions -----------------------------------------------------------------------------------------
+
+  async createSession(session: StoredSession): Promise<void> {
+    this.sessions.set(session.tokenHash, { ...session });
+    await this.persistSessions();
+  }
+
+  async getSession(tokenHash: string): Promise<StoredSession | null> {
+    const s = this.sessions.get(tokenHash);
+    return s ? { ...s } : null;
+  }
+
+  async touchSession(tokenHash: string, lastSeenAt: string, expiresAt: string): Promise<void> {
+    const s = this.sessions.get(tokenHash);
+    if (!s) return;
+    this.sessions.set(tokenHash, { ...s, lastSeenAt, expiresAt });
+    await this.persistSessions();
+  }
+
+  async deleteSession(tokenHash: string): Promise<void> {
+    if (this.sessions.delete(tokenHash)) await this.persistSessions();
+  }
+
+  async deleteUserSessions(userId: string, exceptTokenHash?: string): Promise<string[]> {
+    const deleted: string[] = [];
+    for (const [hash, s] of this.sessions) {
+      if (s.userId === userId && hash !== exceptTokenHash) {
+        this.sessions.delete(hash);
+        deleted.push(hash);
+      }
+    }
+    if (deleted.length) await this.persistSessions();
+    return deleted;
+  }
+
+  async deleteExpiredSessions(nowIso: string): Promise<number> {
+    let n = 0;
+    for (const [hash, s] of this.sessions) {
+      if (s.expiresAt <= nowIso) {
+        this.sessions.delete(hash);
+        n += 1;
+      }
+    }
+    if (n) await this.persistSessions();
+    return n;
+  }
+}
+
+/**
+ * Reads a JSON array file; a missing file is the fallback. An unreadable or malformed file is the fallback too, unless
+ * `required`: then it is an error (the server refuses to start rather than run without its accounts).
+ */
+async function readJsonFile<T>(path: string, fallback: T, required: boolean): Promise<T> {
+  let raw: string;
+  try {
+    raw = await readFile(path, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return fallback;
+    if (required) throw err;
+    return fallback;
+  }
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (Array.isArray(parsed)) return parsed as T;
+    throw new Error('expected a JSON array');
+  } catch (err) {
+    if (required) throw new Error(`${path} is not valid (${(err as Error).message}); fix or restore it before starting SOLAR`);
+    return fallback;
   }
 }

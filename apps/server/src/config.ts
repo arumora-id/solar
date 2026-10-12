@@ -53,6 +53,26 @@ const EnvSchema = z.object({
   PORT: z.coerce.number().int().positive().default(8790),
   HOST: z.string().default('127.0.0.1'),
   SOLAR_ACCESS_TOKEN: optionalString,
+  // first superadmin, created at startup when no account exists yet (all three must be set)
+  SOLAR_ADMIN_USERNAME: optionalString,
+  SOLAR_ADMIN_EMAIL: optionalString,
+  SOLAR_ADMIN_PASSWORD: z.string().optional(),
+  SOLAR_ADMIN_NAME: optionalString,
+  // login sessions: idle lifetime (sliding) and absolute maximum
+  SESSION_TTL_HOURS: z.coerce.number().min(0.05).max(24 * 365).default(24 * 7),
+  SESSION_MAX_DAYS: z.coerce.number().min(0.01).max(365).default(30),
+  // reverse proxies in front of SOLAR whose X-Forwarded-* headers are trusted: true/false or a number of hops
+  TRUST_PROXY: z
+    .string()
+    .optional()
+    .transform((v, ctx) => {
+      const value = v?.trim().toLowerCase() ?? '';
+      if (value === '' || /^(0|false|no|off)$/.test(value)) return 0;
+      if (/^(true|yes|on)$/.test(value)) return 1;
+      if (/^[1-9]$/.test(value)) return Number(value);
+      ctx.addIssue({ code: 'custom', message: 'expected true, false or a number of proxy hops (1-9)' });
+      return 0;
+    }),
   SOLAR_ROOT: optionalString,
   DATA_DIR: optionalString,
   SKILLS_DIR: optionalString,
@@ -108,10 +128,25 @@ export interface S3Config {
   prefix: string;
 }
 
+export interface AuthConfig {
+  /** First superadmin created at startup when there is no account yet (SOLAR_ADMIN_*). */
+  bootstrapAdmin: { username: string; email: string; password: string; name: string } | null;
+  /** Idle lifetime of a login session (renewed while it is used). */
+  sessionTtlMs: number;
+  /** Absolute lifetime of a login session (from login). */
+  sessionMaxMs: number;
+  /**
+   * Number of reverse-proxy hops whose X-Forwarded-For / -Proto / -Host headers are trusted (0 = none): used for the
+   * client address (rate limits), the Secure cookie flag and the same-origin check.
+   */
+  trustProxy: number;
+}
+
 export interface AppConfig {
   port: number;
   host: string;
   accessToken: string | undefined;
+  auth: AuthConfig;
   rootDir: string;
   dataDir: string;
   builtinSkillsDir: string;
@@ -190,10 +225,25 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const s3Complete = Boolean(e.S3_BUCKET && e.S3_ACCESS_KEY_ID && e.S3_SECRET_ACCESS_KEY);
   const dataDir = resolve(root, e.DATA_DIR ?? 'data');
 
+  const admin = e.SOLAR_ADMIN_USERNAME && e.SOLAR_ADMIN_EMAIL && e.SOLAR_ADMIN_PASSWORD ? e.SOLAR_ADMIN_PASSWORD : undefined;
+  if (!admin && (e.SOLAR_ADMIN_USERNAME || e.SOLAR_ADMIN_EMAIL || e.SOLAR_ADMIN_PASSWORD)) {
+    console.warn('[config] SOLAR_ADMIN_USERNAME, SOLAR_ADMIN_EMAIL and SOLAR_ADMIN_PASSWORD must all be set to create the first superadmin - ignored.');
+  }
+  const sessionMaxMs = e.SESSION_MAX_DAYS * 86_400_000;
+
   return {
     port: e.PORT,
     host: e.HOST,
     accessToken: e.SOLAR_ACCESS_TOKEN,
+    auth: {
+      bootstrapAdmin: admin
+        ? { username: e.SOLAR_ADMIN_USERNAME!, email: e.SOLAR_ADMIN_EMAIL!, password: admin, name: e.SOLAR_ADMIN_NAME ?? e.SOLAR_ADMIN_USERNAME! }
+        : null,
+      // the idle lifetime never exceeds the absolute one
+      sessionTtlMs: Math.min(e.SESSION_TTL_HOURS * 3_600_000, sessionMaxMs),
+      sessionMaxMs,
+      trustProxy: e.TRUST_PROXY,
+    },
     rootDir: root,
     dataDir,
     builtinSkillsDir: resolve(root, e.SKILLS_DIR ?? 'skills'),

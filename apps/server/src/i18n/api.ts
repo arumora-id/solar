@@ -11,10 +11,6 @@ export const API_MESSAGES = {
     en: 'Forbidden host "{host}". Without SOLAR_ACCESS_TOKEN the API only answers requests for this computer (127.0.0.1 / localhost).',
   },
   'api.forbiddenOrigin': { id: 'Origin "{origin}" ditolak.', en: 'Forbidden origin "{origin}".' },
-  'api.unauthorized': {
-    id: 'Tidak diizinkan: token akses SOLAR tidak ada atau tidak valid',
-    en: 'Unauthorized: missing or invalid SOLAR access token',
-  },
   'api.invalidJson': { id: 'Isi permintaan bukan JSON yang valid', en: 'The request body is not valid JSON' },
   'api.bodyTooLarge': { id: 'Isi permintaan terlalu besar', en: 'The request body is too large' },
   'api.optionsJson': { id: 'options: harus berupa JSON', en: 'options: expected JSON' },

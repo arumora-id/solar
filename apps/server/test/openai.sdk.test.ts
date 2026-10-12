@@ -10,6 +10,7 @@ import { toFunctionOutput } from '../src/agent/agent.js';
 import { capabilitiesOf, estimateCostUsd } from '../src/agent/models.js';
 import { loadConfig } from '../src/config.js';
 import { startServer, type RunningServer } from '../src/server.js';
+import { authFetch, TEST_ACCESS_TOKEN } from './helpers/auth.js';
 
 /**
  * Runs SOLAR with the real OpenAI SDK against a local fake of the Responses API (SSE streaming),
@@ -146,7 +147,7 @@ let solar: RunningServer;
 
 async function waitForTask(id: string): Promise<TaskDetail> {
   for (let i = 0; i < 200; i++) {
-    const detail = (await (await fetch(`${solar.url}/api/tasks/${id}`)).json()) as TaskDetail;
+    const detail = (await (await authFetch(`${solar.url}/api/tasks/${id}`)).json()) as TaskDetail;
     if (['completed', 'failed', 'cancelled'].includes(detail.task.status)) return detail;
     await new Promise((r) => setTimeout(r, 50));
   }
@@ -154,7 +155,7 @@ async function waitForTask(id: string): Promise<TaskDetail> {
 }
 
 async function runTask(prompt: string): Promise<TaskDetail> {
-  const res = await fetch(`${solar.url}/api/tasks`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, sessionId: 'sdk-test' }) });
+  const res = await authFetch(`${solar.url}/api/tasks`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, sessionId: 'sdk-test' }) });
   if (!res.ok) throw new Error(`POST /api/tasks: ${res.status} ${await res.text()}`);
   return waitForTask(((await res.json()) as Task).id);
 }
@@ -181,7 +182,7 @@ beforeAll(async () => {
   });
   config.databaseUrl = undefined;
   config.s3 = null;
-  config.accessToken = undefined;
+  config.accessToken = TEST_ACCESS_TOKEN;
   config.github.token = undefined;
   config.plane.apiKey = undefined;
   solar = await startServer({ config, port: 0 });

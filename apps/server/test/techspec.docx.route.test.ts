@@ -14,6 +14,7 @@ import { FileRepository } from '../src/storage/fileRepository.js';
 import { LocalObjectStore } from '../src/storage/objectStore.js';
 import { ArtifactService } from '../src/tasks/artifactService.js';
 import { richTechSpec, sampleArchimate, sampleSequence } from './fixtures.js';
+import { authFetch, TEST_ACCESS_TOKEN } from './helpers/auth.js';
 
 /**
  * POST /api/artifacts/:id/docx on TSDs made before the tool wrote Word files: the data directory is seeded with a finished
@@ -27,7 +28,7 @@ async function post(
   id: string,
   language?: 'id' | 'en',
 ): Promise<{ status: number; body: { artifact?: Artifact; created?: boolean; warnings?: string[]; error?: string } }> {
-  const res = await fetch(`${server.url}/api/artifacts/${id}/docx`, { method: 'POST', headers: language ? { 'X-Solar-Language': language } : {} });
+  const res = await authFetch(`${server.url}/api/artifacts/${id}/docx`, { method: 'POST', headers: language ? { 'X-Solar-Language': language } : {} });
   return { status: res.status, body: (await res.json()) as never };
 }
 
@@ -96,7 +97,7 @@ beforeAll(async () => {
   });
   config.databaseUrl = undefined;
   config.s3 = null;
-  config.accessToken = undefined;
+  config.accessToken = TEST_ACCESS_TOKEN;
   config.github.token = undefined;
   server = await startServer({ config, port: 0 });
 });
@@ -109,7 +110,7 @@ describe('POST /api/artifacts/:id/docx', () => {
   it('creates the Word file of an older TSD once, in the same task and bundle, and tells open UIs', async () => {
     // listen to the live stream the web UI uses
     const controller = new AbortController();
-    const stream = await fetch(`${server.url}/api/stream`, { signal: controller.signal });
+    const stream = await authFetch(`${server.url}/api/stream`, { signal: controller.signal });
     const reader = stream.body!.getReader();
     let streamed = '';
     const reading = (async () => {
@@ -143,7 +144,7 @@ describe('POST /api/artifacts/:id/docx', () => {
     expect(third.status).toBe(200);
     expect(third.body.artifact!.id).toBe(docx.id);
 
-    const detail = (await (await fetch(`${server.url}/api/tasks/${ids.taskId}`)).json()) as TaskDetail;
+    const detail = (await (await authFetch(`${server.url}/api/tasks/${ids.taskId}`)).json()) as TaskDetail;
     expect(detail.artifacts.filter((a) => a.kind === 'tsd-docx').map((a) => a.id)).toEqual([docx.id]);
     expect(detail.events.filter((e) => e.type === 'artifact').map((e) => (e.type === 'artifact' ? e.artifact.id : ''))).toEqual([docx.id]);
     expect(detail.task.status).toBe('completed');
@@ -160,7 +161,7 @@ describe('POST /api/artifacts/:id/docx', () => {
     expect(event?.event).toMatchObject({ taskId: ids.taskId, artifact: { id: docx.id, kind: 'tsd-docx' } });
 
     // the file: English labels, the diagrams it references, and the TSD's own date (not the export day)
-    const res = await fetch(`${server.url}/api/artifacts/${docx.id}/content?download=1`);
+    const res = await authFetch(`${server.url}/api/artifacts/${docx.id}/content?download=1`);
     expect(res.headers.get('content-disposition')).toContain('order-platform.docx');
     const files = unzipSync(new Uint8Array(await res.arrayBuffer()));
     const doc = strFromU8(files['word/document.xml']!);

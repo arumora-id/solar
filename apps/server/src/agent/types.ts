@@ -30,6 +30,11 @@ export interface AgentTool {
   pluginName?: string;
   parse(input: unknown): ParseResult;
   /**
+   * Access check before anything else (approval included): a refusal is returned to the model as the tool's result.
+   * Tools that take ids of other tasks' artifacts use it (see TaskRunContext.canReadArtifact).
+   */
+  authorize?(input: unknown, ctx: TaskRunContext): Promise<ToolOutput | null>;
+  /**
    * Returns the reason when the user must approve this call, otherwise null (may look things up first). The reason is
    * shown to the user in `lang`, the task's language (default Indonesian).
    */

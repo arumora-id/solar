@@ -1,8 +1,12 @@
 # REST API SOLAR
 
-Base URL: `http://127.0.0.1:8790/api`. Semua body JSON, kecuali unggah lampiran (isi file mentah). Bila `SOLAR_ACCESS_TOKEN` diisi, kirim header
-`Authorization: Bearer <token>` (atau query `?token=<token>` untuk SSE/unduhan). `GET /api/health` tidak memerlukan token.
+Base URL: `http://127.0.0.1:8790/api`. Semua body JSON, kecuali unggah lampiran (isi file mentah). Setiap endpoint
+memerlukan pengguna yang **masuk** (cookie sesi `solar_session`, lihat [Autentikasi](#autentikasi--pengguna)) atau
+`SOLAR_ACCESS_TOKEN` (header `Authorization: Bearer <token>`, atau query `?token=<token>` untuk SSE/unduhan) yang
+bertindak sebagai superadmin. Publik (tanpa login): `GET /health`, `GET /auth/state`, `POST /auth/login`,
+`POST /auth/register`, `POST /auth/setup`, `POST /auth/logout`, dan file web statis.
 Pesan untuk manusia (`error`, peringatan, status) ditulis dalam Bahasa Indonesia atau English - lihat [Bahasa](#bahasa).
+Error berupa `{ error, code? }`: `error` untuk ditampilkan, `code` (mis. `account_pending`) untuk logika klien.
 
 ## Bahasa
 
@@ -28,34 +32,195 @@ jelas; TSD tanpa `language` eksplisit ditulis dalam `Task.language`.
 
 Tidak diterjemahkan (data): isi knowledge base, skill, deskripsi plugin dari konfigurasi, isi artefak, teks pengguna.
 
+## Autentikasi & pengguna
+
+### Peran
+
+| Izin (`Permission`) | `superadmin` | `head_of_it` (Head of IT Solar) | `staff` (Solar Staff) |
+|---|:-:|:-:|:-:|
+| `agent.use` - membuat task, unggah lampiran, artefak & persetujuan task **sendiri** | ✓ | ✓ | ✓ |
+| `tasks.all` - melihat & bertindak atas task **semua** pengguna (event, artefak, lampiran, persetujuan, batal) | ✓ | ✓ | - |
+| `users.view` - daftar akun, jumlah pendaftaran menunggu | ✓ | ✓ | - |
+| `users.approve` - menyetujui pendaftaran | ✓ (peran apa pun) | ✓ (hanya sebagai `staff`) | - |
+| `users.disable` - menonaktifkan / mengaktifkan akun | ✓ | ✓ (hanya akun `staff`) | - |
+| `users.manage` - membuat akun, ubah peran & nama, reset password, hapus akun | ✓ | - | - |
+| `knowledge.read` / `knowledge.write` - baca / tulis & impor knowledge base | ✓ | ✓ | ✓ |
+| `skills.read` / `skills.manage` - baca / kelola skill | ✓ | ✓ | ✓ |
+| `settings.manage` - provider & rute LLM, tes model, plugin MCP (termasuk membaca daftarnya), konfigurasi & token | ✓ | - | - |
+
+Tabelnya ada sekali, di `packages/shared` (`ROLE_PERMISSIONS`, `can(role, permission)`, `canActOnUser`,
+`assignableRoles`) - server dan web memakai yang sama. Aturan tambahan: tidak ada yang bisa mengubah peran,
+menonaktifkan, mereset password (lewat admin) atau menghapus akunnya sendiri; superadmin aktif terakhir tidak bisa
+dinonaktifkan, diturunkan perannya atau dihapus (`409 last_superadmin`). Peran dibaca ulang dari penyimpanan setiap
+permintaan (cache 30 detik yang dikosongkan oleh setiap perubahan akun di server ini).
+
+**Task milik siapa.** Task dan lampiran menyimpan `ownerId` (pembuat / pengunggah). `staff` hanya melihat miliknya
+sendiri - di semua route (daftar, detail, event, artefak, isi & ZIP & `.docx` artefak, lampiran, persetujuan, batal)
+dan di `/stream`. Task milik orang lain dijawab **404** (sama dengan id yang tidak ada, sehingga keberadaannya tidak
+bocor); `POST /tasks/:id/cancel` menjawab **409** untuk keduanya (jawaban lama untuk id yang tidak dikenal). Task dari
+sebelum ada akun (tanpa `ownerId`) hanya terlihat oleh `superadmin` dan `head_of_it`. Percakapan (`sessionId`) bersifat
+per pengguna: riwayat percakapan dan dokumen yang dibaca agen hanya dari task pengguna yang sama. Agen juga hanya bisa
+membaca / mem-publish / menyimpan ke knowledge artefak dari task yang boleh dilihat peminta. Untuk `tasks.all`, task di
+daftar, detail dan pesan `task` di `/stream` membawa `owner`: `{ id, name, username, role, kind: "user" | "token",
+deleted }` (`deleted: true` = akun sudah dihapus, `name` = "Pengguna terhapus"/"Deleted user"; `null` = task lama).
+Task yang dibuat dengan `SOLAR_ACCESS_TOKEN` memiliki `ownerId: "system:access-token"`.
+
+### Sesi & cookie
+
+- Login membuat token acak 32 byte (base64url) yang dikirim sebagai cookie
+  `solar_session=<token>; Path=/; Max-Age=<SESSION_MAX_DAYS>; HttpOnly; SameSite=Lax` (+ `; Secure` bila permintaan
+  datang lewat HTTPS - langsung, atau `X-Forwarded-Proto: https` dari proxy yang dipercaya lewat `TRUST_PROXY`).
+  Server hanya menyimpan SHA-256 token itu (+ pengguna, waktu dibuat/terakhir dipakai/kedaluwarsa, user agent, IP).
+- Masa berlaku bergeser: habis setelah `SESSION_TTL_HOURS` (default 168 = 7 hari) tanpa dipakai, dan paling lama
+  `SESSION_MAX_DAYS` (default 30) sejak login. Sesi kedaluwarsa dibersihkan tiap jam.
+- Logout menghapus sesi itu. Ganti password sendiri mengakhiri sesi **lain** milik pengguna itu; reset password oleh
+  admin, nonaktif, hapus akun dan perubahan peran mengakhiri **semua** sesinya. Stream `/stream` sesi yang berakhir
+  menerima `{ kind: "signed_out" }` lalu ditutup.
+- **CSRF**: permintaan yang mengubah data (`POST/PUT/PATCH/DELETE`) tanpa token akses yang **valid** harus berasal dari
+  origin SOLAR sendiri (sekadar mengirim token apa pun, mis. `?token=` di form situs lain, tidak melewati cek ini): header `Origin` harus sama dengan `Host` (atau `X-Forwarded-Host` bila `TRUST_PROXY`), dan tanpa `Origin`,
+  `Sec-Fetch-Site` tidak boleh `cross-site`/`same-site`. Selain itu `403`. (SameSite=Lax saja tidak cukup: port lain
+  dan subdomain dihitung "same-site".) Di belakang reverse proxy: teruskan `Host` asli, atau set `TRUST_PROXY` dan
+  kirim `X-Forwarded-Host`/`-Proto`/`-For`.
+- **`SOLAR_ACCESS_TOKEN`** tetap ada sebagai token mesin (skrip, CI, test): permintaan yang membawanya bertindak sebagai
+  superadmin (bukan akun; `GET /auth/me` → `user: null, via: "token"`). Token yang dikirim tetapi salah → `401
+  invalid_token` (tidak jatuh ke cookie) - **kecuali** di rute publik `GET /auth/state`, `POST /auth/login`,
+  `/register`, `/setup`, `/logout`: di sana token yang salah diabaikan (dianggap tidak ada; cookie tetap berlaku), agar
+  browser yang masih menyimpan token lama (sudah diganti/dihapus) tidak terkunci dari form login. Tanpa token, API tetap hanya melayani nama host komputer ini (127.0.0.1 /
+  localhost / `HOST`) - perlindungan DNS rebinding.
+
+### Superadmin pertama
+
+Selama belum ada akun sama sekali, `GET /auth/state` menjawab `setupRequired: true` dan pendaftaran ditutup. Superadmin
+pertama dibuat dengan salah satu cara:
+
+1. `.env`: `SOLAR_ADMIN_USERNAME`, `SOLAR_ADMIN_EMAIL`, `SOLAR_ADMIN_PASSWORD` (opsional `SOLAR_ADMIN_NAME`) - dibuat
+   (aktif) saat server start bila belum ada akun; diabaikan bila sudah ada. Nilai yang tidak valid (mis. password < 10
+   karakter) membuat server **gagal start** dengan pesan yang jelas.
+2. `POST /auth/setup`, hanya bila belum ada akun **dan** salah satu:
+   - permintaan membawa `SOLAR_ACCESS_TOKEN` (dari mana pun), **atau**
+   - permintaan datang langsung dari komputer server itu sendiri (alamat loopback, `Host` localhost/127.0.0.1, `Origin`
+     lokal bila ada, tanpa header proxy `X-Forwarded-*`/`Forwarded`/`Via`/`X-Real-IP`, dan `TRUST_PROXY` tidak di-set)
+     **dan** membawa **kode penyiapan** sekali pakai (`setupCode`).
+
+   Kode penyiapan (`XXXX-XXXX-XXXX-XXXX`, 80 bit acak; huruf besar/kecil, spasi dan tanda hubung diabaikan) dibuat
+   setiap kali server start selama belum ada akun, dicetak di log server, dan disimpan di `DATA_DIR/setup-code.txt`
+   (mode 0600). Kode itu hilang (file dihapus) begitu superadmin pertama ada. Aplikasi desktop yang menjalankan server
+   di prosesnya sendiri bisa membacanya lewat `RunningServer.setupCode()`. `GET /auth/state` memberi tahu UI lewat
+   `setupCodeRequired`.
+
+   Alasannya: server baru yang sudah terbuka di jaringan tidak boleh bisa "diklaim" oleh siapa pun yang pertama kali
+   menemukannya. "Datang dari localhost" saja tidak cukup: reverse proxy di komputer yang sama dengan setelan bawaan
+   (mis. nginx `proxy_pass http://127.0.0.1:8790;` - `Host` ditulis ulang ke 127.0.0.1, tanpa header `X-Forwarded-*`)
+   membuat setiap permintaan dari luar terlihat lokal. Kode penyiapan hanya bisa dibaca oleh operator (log / folder
+   data), sehingga syarat lokal + kode tetap aman di belakang proxy seperti itu. Setup yang berjalan bersamaan
+   diserialkan (file: antrean dalam proses; Postgres: transaksi dengan advisory lock) - tepat satu yang menang, sisanya
+   `409`. Untuk server yang dibuka ke jaringan, cara 1 tetap yang paling sederhana.
+
+### Endpoint `/auth`
+
+| Method | Path | Body | Jawaban |
+|---|---|---|---|
+| GET | `/auth/state` | | Publik. `AuthState`: `{ appName, version, setupRequired, setupCodeRequired, registrationOpen, me: AuthMe \| null, passwordPolicy: { minLength: 10, maxLength: 128 } }`. `setupCodeRequired` = setup menunggu dan permintaan tidak membawa token akses (form setup perlu kolom kode). |
+| POST | `/auth/register` | `{ username, email, name, password }` | Publik. `201 { status: "pending" }` - akun `staff` berstatus `pending`, **tidak** login (tanpa cookie). `400 invalid_input` (username/email/nama tidak valid) / `weak_password`; `409 username_taken` / `email_taken`; `409 registration_closed` (belum ada superadmin); `429 rate_limited` (5 per IP per jam) + `Retry-After`; `503 busy`. |
+| POST | `/auth/login` | `{ identifier, password }` (`identifier` = username **atau** email, tidak peka huruf besar) | Publik. `200 AuthMe` + `Set-Cookie`. `401 invalid_credentials` (pesan sama untuk akun tak dikenal dan password salah; akun tak dikenal tetap menjalankan scrypt penuh); `403 account_pending` / `account_disabled` (hanya setelah password terbukti benar); `429 rate_limited` + `Retry-After` (10 kegagalan per 15 menit per IP, dan per akun/identifier - juga untuk percobaan yang dikirim paralel, lihat di bawah); `503 busy` + `Retry-After`. |
+| POST | `/auth/logout` | | `204`, cookie dihapus (`Max-Age=0`). |
+| GET | `/auth/me` | | `200 AuthMe { user, role, permissions, via: "session" \| "token" }`; `401 unauthenticated`. |
+| POST | `/auth/password` | `{ currentPassword, newPassword }` | `204`, sesi lain diakhiri. `400 wrong_password` / `weak_password`; `400 forbidden` untuk token akses; `429` setelah 10 password lama salah per 15 menit (juga paralel); `503 busy`. |
+| POST | `/auth/setup` | `{ username, email, name, password, setupCode? }` | Publik. `201 AuthMe` + `Set-Cookie` (superadmin aktif pertama, langsung login). `403 setup_forbidden` (bukan loopback & tanpa token), `403 setup_code_invalid` (kode penyiapan salah/tidak ada; tidak perlu dengan token), `409 setup_not_available` (sudah ada akun), `400`, `429`, `503 busy`. |
+
+**Batas percobaan & beban.** Setiap percobaan login dihitung **sebelum** password diperiksa, dalam langkah yang sama
+dengan pengecekan batasnya; percobaan yang membuktikan password benar (termasuk akun `pending`/`disabled`), atau yang
+tidak sempat diperiksa (`429`, `503`), dikembalikan. Jadi percobaan yang dikirim paralel tidak bisa melewati batas:
+paling banyak 10 password diperiksa per IP dan per akun dalam 15 menit, bagaimanapun waktunya diatur. Hal yang sama
+berlaku untuk password lama di `POST /auth/password`. Catatan: karena percobaan yang sedang berjalan ikut dihitung,
+lebih dari 10 login yang benar-benar bersamaan dari satu IP (mis. satu kantor di balik NAT, dalam sepersekian detik)
+bisa mendapat `429` sesaat. Selain itu semua hash scrypt (login, pendaftaran, setup, ganti/reset password) melewati
+satu gerbang per proses: paling banyak separuh thread pool libuv (`UV_THREADPOOL_SIZE`, default 4 → 2) bekerja
+bersamaan dan 32 lainnya menunggu; sisanya langsung dijawab `503 busy` + `Retry-After: 5`. Dengan begitu banjir login
+dari banyak IP tidak memenuhi thread pool yang juga dipakai penyimpanan file dan file statis.
+
+**Aturan akun**: username 3-32 karakter `a-z 0-9 . _ -` (disimpan huruf kecil), email valid (disimpan huruf kecil),
+keduanya unik tanpa memandang huruf besar; nama tampilan 1-80 karakter tanpa karakter kontrol. Password 10-128
+karakter (setelah normalisasi Unicode NFKC), tidak boleh hanya spasi, tidak boleh sama dengan username/email. Hash:
+scrypt (`node:crypto`, N=2^15, r=8, p=1, salt 16 byte, kunci 64 byte), disimpan sebagai `scrypt$N$r$p$salt$hash`
+sehingga parameternya bisa dinaikkan nanti (hash lama diperbarui otomatis saat login berhasil). Hash tidak pernah
+dikembalikan API atau ditulis ke log.
+
+`409 username_taken` / `email_taken` sengaja membedakan keduanya: username maupun email sama-sama bisa dipakai login,
+jadi menyembunyikan salah satunya tidak melindungi apa pun, sedangkan pengguna perlu tahu field mana yang harus
+diganti; SOLAR adalah alat internal tanpa pengiriman email, dan pendaftaran dibatasi 5 per IP per jam sehingga
+enumerasi lambat.
+
+### Endpoint `/users`
+
+| Method | Path | Body / query | Izin | Jawaban |
+|---|---|---|---|---|
+| GET | `/users` | `?status=pending\|active\|disabled` | `users.view` | `User[]` (terlama dulu). |
+| GET | `/users/pending-count` | | `users.view` | `{ count }`. |
+| GET | `/users/:id` | | `users.view` | `User`; `404 user_not_found`. |
+| POST | `/users` | `{ username, email, name, password, role? }` (default `staff`) | `users.manage` | `201 User` (aktif). `409 username_taken`/`email_taken`, `400`. |
+| PATCH | `/users/:id` | `{ role?, status?: "active" \| "disabled", name? }` | sesuai aksi | `200 User`. `status: "active"` pada akun `pending` = persetujuan. `403 forbidden` (peran/target tidak boleh), `403 self_action`, `409 last_superadmin`, `400` (mis. `status: "pending"`), `404`. |
+| POST | `/users/:id/approve` | `{ role? }` (default `staff`) | `users.approve` | `200 User` (aktif, `approvedAt`, `approvedBy`). `head_of_it` hanya sebagai `staff`. `409 not_pending`. |
+| POST | `/users/:id/password` | `{ password }` | `users.manage` (bukan akun sendiri) | `204`; semua sesi akun itu berakhir. |
+| DELETE | `/users/:id` | | `users.manage` (bukan akun sendiri) | `204`; sesi ikut terhapus; task-nya tetap menyimpan `ownerId` (tampil sebagai pengguna terhapus). `409 last_superadmin`. |
+
+Setiap pendaftaran baru dan perubahan akun mengirim `{ kind: "users_changed", pendingCount }` di `/stream` kepada
+pengguna dengan `users.view` (untuk badge jumlah pendaftaran yang menunggu).
+
+### Kode error
+
+`unauthenticated` (401), `invalid_token` (401), `invalid_credentials` (401), `account_pending` (403),
+`account_disabled` (403), `forbidden` (403), `self_action` (403), `setup_forbidden` (403), `setup_code_invalid` (403),
+`user_not_found` (404),
+`username_taken` / `email_taken` / `registration_closed` / `setup_not_available` / `not_pending` / `last_superadmin`
+(409), `invalid_input` / `weak_password` / `wrong_password` (400), `rate_limited` (429, dengan `Retry-After` dalam detik),
+`busy` (503, dengan `Retry-After`).
+
+Contoh:
+
+```bash
+# pendaftaran mandiri (menunggu persetujuan)
+curl -s -X POST http://127.0.0.1:8790/api/auth/register -H "Content-Type: application/json" \
+  -d '{"username":"budi.santoso","email":"budi@solar.co.id","name":"Budi Santoso","password":"kata sandi yang panjang"}'
+
+# login (cookie disimpan di cookies.txt), lalu memakai API dengan cookie itu
+curl -s -c cookies.txt -X POST http://127.0.0.1:8790/api/auth/login -H "Content-Type: application/json" \
+  -d '{"identifier":"budi@solar.co.id","password":"kata sandi yang panjang"}'
+curl -s -b cookies.txt http://127.0.0.1:8790/api/tasks
+
+# skrip dengan token akses (bertindak sebagai superadmin)
+curl -s -H "Authorization: Bearer $SOLAR_ACCESS_TOKEN" "http://127.0.0.1:8790/api/users?status=pending"
+```
+
 ## Sistem
 
 | Method | Path | Keterangan |
 |---|---|---|
 | GET | `/health` | `{ ok, name, version }` |
-| GET | `/config` | Konfigurasi publik: provider (OpenAI), model, reasoning effort, `openaiConfigured`, mode penyimpanan, status GitHub/Plane, apakah token wajib. |
-| GET | `/stream` | Server-Sent Events: `hello`, `task`, `event`, `delta`, `plugins` (lihat `StreamMessage` di `packages/shared`). Query `?lang=id\|en`: bahasa status plugin di pesan `plugins` (teks task mengikuti `Task.language`). Web UI membuka ulang stream saat bahasa antarmuka diganti. |
+| GET | `/config` | Semua pengguna yang masuk. Konfigurasi publik (tanpa rahasia): provider, model, reasoning effort, `openaiConfigured`, mode penyimpanan, status GitHub/Plane, `authRequired` (= `SOLAR_ACCESS_TOKEN` di-set). |
+| GET | `/stream` | Server-Sent Events: `hello`, `task`, `event`, `delta`, `plugins`, `users_changed`, `signed_out` (lihat `StreamMessage` di `packages/shared`). Setiap pengguna hanya menerima task miliknya (semua task untuk `tasks.all`, dengan `owner`), `plugins` untuk semua, `users_changed` untuk `users.view`. Query `?lang=id\|en`: bahasa status plugin di pesan `plugins` (teks task mengikuti `Task.language`). Web UI membuka ulang stream saat bahasa antarmuka diganti. |
 
 ## Task
 
 | Method | Path | Body / Query | Keterangan |
 |---|---|---|---|
-| POST | `/tasks` | `{ prompt, sessionId, attachmentIds?, language? }` | Membuat task (status `queued`). `attachmentIds` (maks. 10) harus lampiran milik `sessionId` yang sama. `language` (`"id"` \| `"en"`, opsional): bahasa antarmuka klien, disimpan sebagai `Task.language` (default: bahasa permintaan, lihat [Bahasa](#bahasa)). Respons `201` berisi `Task`. |
-| GET | `/tasks` | `limit`, `offset`, `sessionId`, `status` | Daftar task terbaru. |
-| GET | `/tasks/stats` | | Total per status dan estimasi biaya. |
-| GET | `/tasks/:id` | | `TaskDetail`: task, events, artifacts, confirmations, attachments. |
-| POST | `/tasks/:id/cancel` | | Membatalkan task yang antre/berjalan (`409` bila sudah selesai). |
+| POST | `/tasks` | `{ prompt, sessionId, attachmentIds?, language? }` | Membuat task (status `queued`) milik pengguna yang meminta (`ownerId`). `attachmentIds` (maks. 10) harus lampiran **unggahan pengguna itu** di `sessionId` yang sama (lampiran orang lain = "tidak ditemukan", `400`). `language` (`"id"` \| `"en"`, opsional): bahasa antarmuka klien, disimpan sebagai `Task.language` (default: bahasa permintaan, lihat [Bahasa](#bahasa)). Respons `201` berisi `Task`. |
+| GET | `/tasks` | `limit`, `offset`, `sessionId`, `status`, `owner` | Daftar task terbaru: task sendiri; untuk `tasks.all` semua task (dengan `owner`). `sessionId` selalu percakapan milik peminta. `owner` (hanya `tasks.all`): `me`, `none` (task dari sebelum ada akun) atau id pengguna. |
+| GET | `/tasks/stats` | | Total per status dan estimasi biaya (task sendiri; semua untuk `tasks.all`). |
+| GET | `/tasks/:id` | | `TaskDetail`: task, events, artifacts, confirmations, attachments. `404` juga untuk task orang lain. |
+| POST | `/tasks/:id/cancel` | | Membatalkan task yang antre/berjalan (`409` bila sudah selesai, tidak dikenal, atau milik orang lain). |
 | GET | `/tasks/:id/artifacts.zip` | `lang?` | Semua artefak task dalam ZIP; `README.md` di dalamnya dalam bahasa permintaan (`?lang=` karena berupa link unduhan). |
 
-Contoh:
+Contoh (dengan cookie dari `POST /auth/login`, lihat [Autentikasi](#autentikasi--pengguna); skrip juga bisa memakai
+`-H "Authorization: Bearer $SOLAR_ACCESS_TOKEN"`):
 
 ```bash
-curl -s -X POST http://127.0.0.1:8790/api/tasks \
+curl -s -b cookies.txt -X POST http://127.0.0.1:8790/api/tasks \
   -H "Content-Type: application/json" \
   -d '{"prompt":"Buatkan sequence diagram reset password via email","sessionId":"cli"}'
 
 # task berbahasa Inggris (langkah, status, error dalam English; error API juga)
-curl -s -X POST http://127.0.0.1:8790/api/tasks \
+curl -s -b cookies.txt -X POST http://127.0.0.1:8790/api/tasks \
   -H "Content-Type: application/json" -H "X-Solar-Language: en" \
   -d '{"prompt":"Create a sequence diagram for password reset by email","sessionId":"cli","language":"en"}'
 ```
@@ -64,10 +229,12 @@ curl -s -X POST http://127.0.0.1:8790/api/tasks \
 
 | Method | Path | Body | Keterangan |
 |---|---|---|---|
-| GET | `/confirmations` | | Permintaan persetujuan yang sedang menunggu. |
-| POST | `/confirmations/:id` | `{ approved: boolean, note?: string }` | Menyetujui / menolak. |
+| GET | `/confirmations` | | Permintaan persetujuan yang sedang menunggu (task sendiri; semua untuk `tasks.all`). |
+| POST | `/confirmations/:id` | `{ approved: boolean, note?: string }` | Menyetujui / menolak - pemilik task, atau `tasks.all` (`404` untuk persetujuan task orang lain). |
 
 ## Artefak
+
+Artefak mengikuti task-nya: hanya pemilik task dan `tasks.all` yang bisa membuka (`404` untuk yang lain).
 
 | Method | Path | Keterangan |
 |---|---|---|
@@ -79,7 +246,7 @@ File Word disajikan dengan `Content-Type: application/vnd.openxmlformats-officed
 UI tidak mempratinjaunya di browser, hanya menawarkan unduhan (dan pratinjau versi HTML dari paket yang sama).
 
 ```bash
-curl -s -X POST http://127.0.0.1:8790/api/artifacts/art_123/docx   # art_123 = id .md/.html/.tsd.json sebuah TSD
+curl -s -b cookies.txt -X POST http://127.0.0.1:8790/api/artifacts/art_123/docx   # art_123 = id .md/.html/.tsd.json sebuah TSD
 ```
 
 ## Lampiran dokumen
@@ -91,13 +258,17 @@ Dokumen proyek (PDF, Word `.docx`, Excel `.xlsx`/`.xlsm`/`.csv`, PowerPoint `.pp
 | Method | Path | Body / query | Keterangan |
 |---|---|---|---|
 | POST | `/attachments` | query `sessionId`, `name`; body = isi file mentah (`Content-Type: application/octet-stream`) | Unggah + ekstraksi. `201` → `Attachment` (`kind`, `parts` = halaman/slide/sheet, `chars`, `outline`, `warnings`). `413` terlalu besar (`ATTACHMENT_MAX_MB`, default 25) atau terindikasi zip bomb, `415` jenis tidak didukung (termasuk `.doc`/`.xls`/`.ppt` lama - juga bila diberi ekstensi modern, `.xlsb`, `.vsdx`, OpenDocument, file biner berekstensi teks), `400` isi file kosong, `422` file rusak, terenkripsi/berpassword, atau melewati batas waktu baca. Pesan error (`error`) dan `warnings` dalam bahasa permintaan ([Bahasa](#bahasa)) dan bisa langsung ditampilkan; `warnings` disimpan bersama lampiran. |
-| GET | `/attachments?sessionId=` | | Lampiran sebuah percakapan (terlama dulu). |
+| GET | `/attachments?sessionId=` | | Lampiran sebuah percakapan milik peminta (terlama dulu); `&unsent=1` = yang belum dipakai task. |
 | GET | `/attachments/:id` | | Metadata. |
 | GET | `/attachments/:id/text` | | Markdown hasil ekstraksi (persis yang dibaca agen). |
 | GET | `/attachments/:id/content` | | File asli, selalu sebagai unduhan (`Content-Disposition: attachment`, CSP `sandbox`). |
 | DELETE | `/attachments/:id` | | Menghapus lampiran yang belum dipakai task (`204`); `409` bila sudah dipakai (tetap disimpan sebagai riwayat task). |
 
+Lampiran menyimpan `ownerId` (pengunggah): `GET`/`DELETE` lampiran orang lain → `404` (kecuali `tasks.all`).
+
 ## Skills
+
+Membaca: `skills.read`; membuat/mengubah/mengimpor/menghapus: `skills.manage` - keduanya dimiliki semua peran.
 
 | Method | Path | Body | Keterangan |
 |---|---|---|---|
@@ -110,6 +281,8 @@ Dokumen proyek (PDF, Word `.docx`, Excel `.xlsx`/`.xlsm`/`.csv`, PowerPoint `.pp
 
 ## Model AI (provider & rute)
 
+Hanya `superadmin` (`settings.manage`), termasuk `GET /llm`; peran lain `403 forbidden`.
+
 | Method | Path | Body | Keterangan |
 |---|---|---|---|
 | GET | `/llm` | | Provider (`openai` dari `.env` + provider pengguna, API key literal disamarkan) dan rute (`default` = utama lalu cadangan). |
@@ -120,6 +293,9 @@ Dokumen proyek (PDF, Word `.docx`, Excel `.xlsx`/`.xlsm`/`.csv`, PowerPoint `.pp
 | PUT | `/llm/routes` | `{ routes: { default: ["provider/model", ...] } }` | Simpan rute; `{}` = kembali ke model `.env`. |
 
 ## Knowledge base
+
+Membaca: `knowledge.read`; menulis, menghapus, mengimpor: `knowledge.write` - keduanya dimiliki semua peran.
+`POST /knowledge/import-artifact` hanya untuk artefak dari task yang boleh dilihat peminta (`404` selain itu).
 
 | Method | Path | Body | Keterangan |
 |---|---|---|---|
@@ -135,6 +311,9 @@ Dokumen proyek (PDF, Word `.docx`, Excel `.xlsx`/`.xlsm`/`.csv`, PowerPoint `.pp
 | POST | `/knowledge/import-document?name=&options=` | isi file (raw) | Word/PDF/PowerPoint/Markdown sebagai knowledge. `options`: `folder`, `split` (`"none"`, `1`, `2`), `type?`, `title?`, `removeStale?`. |
 
 ## Plugin MCP
+
+Hanya `superadmin` (`settings.manage`), termasuk `GET /plugins` (plugin bisa menjalankan perintah dan menyimpan
+kredensial); semua pengguna tetap menerima status koneksi plugin lewat pesan `plugins` di `/stream`.
 
 | Method | Path | Body | Keterangan |
 |---|---|---|---|

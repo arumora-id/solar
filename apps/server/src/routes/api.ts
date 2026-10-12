@@ -1,8 +1,22 @@
-import { timingSafeEqual } from 'node:crypto';
 import express, { type NextFunction, type Request, type Response, type Router } from 'express';
 import { zipSync, strToU8 } from 'fflate';
 import { z } from 'zod';
-import { ATTACHMENT_EXTENSIONS, LANGUAGES, type KnowledgeType, type PluginView, type PublicConfig, type StreamMessage, type TaskStatus } from '@solar/shared';
+import {
+  ATTACHMENT_EXTENSIONS,
+  can,
+  LANGUAGES,
+  type Artifact,
+  type Attachment,
+  type KnowledgeType,
+  type PluginView,
+  type PublicConfig,
+  type StreamMessage,
+  type Task,
+  type TaskOwner,
+  type TaskStatus,
+} from '@solar/shared';
+import type { AuthService, Principal } from '../auth/authService.js';
+import { authenticate, principalOf, requirePermission, requireUser, sameOriginGuard } from '../auth/http.js';
 import { APP_NAME, APP_VERSION, type AppConfig } from '../config.js';
 import { errorMessage, langOf, t, taskLang, type Lang } from '../i18n.js';
 import { formatZodIssues, zodErrorMap } from '../i18n/zodIssues.js';
@@ -20,9 +34,13 @@ import { importTable, MAX_IMPORT_ROWS, previewTables } from '../knowledge/tableI
 import { importArtifactToKnowledge, KnowledgeConflictError, KnowledgeInputError } from '../knowledge/knowledgeWrite.js';
 import type { ArtifactService } from '../tasks/artifactService.js';
 import type { AttachmentService } from '../tasks/attachmentService.js';
-import type { EventBus } from '../tasks/eventBus.js';
+import type { EventBus, MessageScope } from '../tasks/eventBus.js';
 import type { TaskManager } from '../tasks/taskManager.js';
 import { exportTechSpecDocx, TechSpecDocxError } from '../tasks/techSpecDocx.js';
+import { createAuthRouter, createUsersRouter } from './auth.js';
+import { HttpError } from './httpError.js';
+
+export { HttpError } from './httpError.js';
 
 export interface ApiDeps {
   config: AppConfig;
@@ -38,15 +56,7 @@ export interface ApiDeps {
   knowledge: KnowledgeStore;
   llm: LlmProviderStore;
   models: ModelRouter;
-}
-
-export class HttpError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
-    super(message);
-  }
+  auth: AuthService;
 }
 
 declare global {
@@ -83,12 +93,6 @@ const ATTACHMENT_ID = /^att_[A-Za-z0-9]+$/;
 
 const TASK_STATUSES = ['queued', 'running', 'awaiting_confirmation', 'completed', 'failed', 'cancelled'] as const;
 
-function safeEqual(a: string, b: string): boolean {
-  const x = Buffer.from(a);
-  const y = Buffer.from(b);
-  return x.length === y.length && timingSafeEqual(x, y);
-}
-
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
 
 function hostnameOf(hostHeader: string): string {
@@ -98,9 +102,12 @@ function hostnameOf(hostHeader: string): string {
 }
 
 /**
- * Without an access token the API trusts the local machine only. A DNS-rebinding page (evil.example -> 127.0.0.1)
- * would otherwise be "same origin" with the API and could e.g. register a stdio MCP plugin (= run a command).
- * So the Host header must name this machine and a browser Origin, when present, must be local too.
+ * Without an access token the API is served for the local machine only (HOST names it): a DNS-rebinding page
+ * (evil.example -> 127.0.0.1) must not reach it under a name of its own - e.g. the public first-superadmin setup, which
+ * is open to local requests (with the one-time setup code). So the Host header must name this machine and a browser
+ * Origin, when present, must be local too. With SOLAR_ACCESS_TOKEN set the server is meant for the network; user
+ * logins (cookie) are then protected by the same-origin check of sameOriginGuard, and the setup needs the token, or a
+ * direct request on the server itself with the setup code.
  */
 export function localOnlyMiddleware(token: string | undefined, configuredHost: string) {
   const allowed = new Set(LOOPBACK_HOSTS);
@@ -128,16 +135,6 @@ export function localOnlyMiddleware(token: string | undefined, configuredHost: s
   };
 }
 
-export function authMiddleware(token: string | undefined) {
-  return (req: Request, _res: Response, next: NextFunction) => {
-    if (!token) return next();
-    const header = req.headers.authorization;
-    const provided = header?.startsWith('Bearer ') ? header.slice(7) : typeof req.query.token === 'string' ? req.query.token : '';
-    if (provided && safeEqual(provided, token)) return next();
-    next(new HttpError(401, t(langOf(req), 'api.unauthorized')));
-  };
-}
-
 /** Validates a request body or query; the messages are in `lang`, the field paths stay as they are ("prompt: ..."). */
 function parse<T extends z.ZodType>(schema: T, value: unknown, lang: Lang): z.output<T> {
   const r = schema.safeParse(value, { error: zodErrorMap(lang) });
@@ -156,8 +153,15 @@ function contentDisposition(kind: 'inline' | 'attachment', name: string): string
   return `${kind}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`;
 }
 
+/** Whether a principal receives a stream message of this scope (see EventBus). */
+export function streamVisible(principal: Principal, scope: MessageScope | undefined): boolean {
+  if (!scope) return true;
+  if (scope.kind === 'permission') return can(principal.role, scope.permission);
+  return can(principal.role, 'tasks.all') || (scope.ownerId !== null && scope.ownerId === principal.id);
+}
+
 export function createApiRouter(deps: ApiDeps): Router {
-  const { config, tasks, artifacts, attachments, skills, plugins, mcp, bus, knowledge, llm, models } = deps;
+  const { config, tasks, artifacts, attachments, skills, plugins, mcp, bus, knowledge, llm, models, auth } = deps;
   const r = express.Router();
   r.use(languageMiddleware);
   const jsonBody = express.json({ limit: '4mb' });
@@ -169,7 +173,46 @@ export function createApiRouter(deps: ApiDeps): Router {
   });
 
   r.use(localOnlyMiddleware(config.accessToken, config.host));
-  r.use(authMiddleware(config.accessToken));
+  // req.principal: the session cookie's account, or the access token acting as a superadmin
+  r.use(authenticate(auth));
+  // CSRF: state-changing requests not authenticated by a valid access token must come from SOLAR's own origin
+  r.use(sameOriginGuard(config));
+  // public: state, login, register, setup (the rest of /auth and everything below need a user)
+  r.use('/auth', createAuthRouter({ config, auth }));
+  r.use('/users', createUsersRouter({ config, auth }));
+  r.use(requireUser);
+
+  // ---- who may see what --------------------------------------------------------------------------------------------
+  /** Roles with tasks.all see every task; everybody else only their own (never the ownerless tasks from before accounts). */
+  const seesAll = (req: Request) => can(principalOf(req).role, 'tasks.all');
+  const mayAccess = (req: Request, ownerId: string | undefined) => seesAll(req) || (ownerId !== undefined && ownerId === principalOf(req).id);
+  /** The task, or 404 also when it exists but belongs to someone else (its existence is not revealed). */
+  const visibleTask = async (req: Request, id: string): Promise<Task> => {
+    const task = await tasks.get(id);
+    if (!task || !mayAccess(req, task.ownerId)) throw new HttpError(404, t(req.lang, 'api.taskNotFound'));
+    return task;
+  };
+  const visibleArtifact = async (req: Request, id: string): Promise<Artifact> => {
+    const artifact = await artifacts.get(id);
+    const task = artifact ? await tasks.get(artifact.taskId) : null;
+    if (!artifact || !task || !mayAccess(req, task.ownerId)) throw new HttpError(404, t(req.lang, 'api.artifactNotFound'));
+    return artifact;
+  };
+  const visibleAttachment = async (req: Request, id: string): Promise<Attachment> => {
+    const attachment = await attachments.get(id);
+    if (!attachment || !mayAccess(req, attachment.ownerId)) throw new HttpError(404, t(req.lang, 'api.attachmentNotFound'));
+    return attachment;
+  };
+  /** Tasks with their creator, for viewers who see every user's tasks (the monitor shows who asked). */
+  const withOwners = async (req: Request, list: Task[]): Promise<Task[]> => {
+    if (!seesAll(req)) return list;
+    const owners = new Map<string, TaskOwner | null>();
+    for (const task of list) {
+      const key = task.ownerId ?? '';
+      if (!owners.has(key)) owners.set(key, await auth.ownerOf(task.ownerId, req.lang));
+    }
+    return list.map((task) => ({ ...task, owner: owners.get(task.ownerId ?? '') ?? null }));
+  };
 
   r.get('/config', async (_req, res) => {
     const route = llm.route();
@@ -203,25 +246,62 @@ export function createApiRouter(deps: ApiDeps): Router {
     // an EventSource cannot send headers: the language comes from ?lang= or Accept-Language. Task events are written in
     // each task's language; the plugin statuses are sent to each client in its own.
     const lang = req.lang;
+    const principal = principalOf(req);
+    const ownersVisible = can(principal.role, 'tasks.all');
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-transform',
       Connection: 'keep-alive',
       'X-Accel-Buffering': 'no',
     });
-    const send = (data: unknown) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+    let closed = false;
+    const send = (data: StreamMessage) => {
+      if (!closed) res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+    // messages go out in the order they were published, also when one needs a lookup (a task's owner for the monitor)
+    let queue: Promise<void> = Promise.resolve();
+    const enqueue = (produce: () => StreamMessage | Promise<StreamMessage>) => {
+      queue = queue.then(async () => send(await produce())).catch(() => undefined);
+    };
     send({ kind: 'hello', serverTime: new Date().toISOString() });
     send({ kind: 'plugins', plugins: mcp.statuses(lang) });
-    const unsubscribe = bus.subscribe((msg: StreamMessage) => send(msg.kind === 'plugins' ? { kind: 'plugins', plugins: mcp.statuses(lang) } : msg));
-    const heartbeat = setInterval(() => res.write(': ping\n\n'), 20_000);
-    req.on('close', () => {
+    // each user receives only what they may see: their own tasks (every task for tasks.all), global plugin statuses,
+    // account changes for those who manage accounts
+    const unsubscribe = bus.subscribe((msg: StreamMessage, scope: MessageScope | undefined) => {
+      if (!streamVisible(principal, scope)) return;
+      if (msg.kind === 'plugins') enqueue(() => ({ kind: 'plugins', plugins: mcp.statuses(lang) }));
+      else if (msg.kind === 'task' && ownersVisible) enqueue(async () => ({ kind: 'task', task: { ...msg.task, owner: await auth.ownerOf(msg.task.ownerId, lang) } }));
+      else enqueue(() => msg);
+    });
+    const end = (signedOut: boolean) => {
+      if (closed) return;
+      if (signedOut) send({ kind: 'signed_out' });
+      closed = true;
+      cleanup();
+      res.end();
+    };
+    // the session ending (logout, password change, account disabled/deleted, role changed) closes its streams at once
+    const stopRevoked = auth.onRevoked((revocation) => {
+      if (principal.sessionHash && revocation.tokenHashes.includes(principal.sessionHash)) end(true);
+    });
+    const heartbeat = setInterval(() => {
+      res.write(': ping\n\n');
+      // and expiry (idle or absolute) is noticed within a heartbeat
+      void auth.stillValid(principal).then((ok) => (ok ? undefined : end(true)), () => undefined);
+    }, 20_000);
+    const cleanup = () => {
       clearInterval(heartbeat);
       unsubscribe();
+      stopRevoked();
+    };
+    req.on('close', () => {
+      closed = true;
+      cleanup();
     });
   });
 
   // ---- tasks ----------------------------------------------------------------
-  r.post('/tasks', async (req, res) => {
+  r.post('/tasks', requirePermission('agent.use'), async (req, res) => {
     const body = parse(
       z.object({
         prompt: z.string().trim().min(1).max(50_000),
@@ -235,15 +315,17 @@ export function createApiRouter(deps: ApiDeps): Router {
       req.lang,
     );
     const ids = [...new Set(body.attachmentIds)];
+    const owner = principalOf(req).id;
     // validated and created under the conversation lock: a concurrent DELETE cannot remove a document in between
     const task = await attachments.withSession(body.sessionId, async () => {
       const found = await attachments.listByIds(ids);
       for (const id of ids) {
         const a = found.find((x) => x.id === id);
-        if (!a) throw new HttpError(400, t(req.lang, 'api.attachmentUnknown', { id }));
+        // another user's upload is "unknown": its existence is not revealed
+        if (!a || a.ownerId !== owner) throw new HttpError(400, t(req.lang, 'api.attachmentUnknown', { id }));
         if (a.sessionId !== body.sessionId) throw new HttpError(400, t(req.lang, 'api.attachmentOtherSession', { name: a.name }));
       }
-      return tasks.create(body.prompt, body.sessionId, ids, body.language ?? req.lang);
+      return tasks.create(body.prompt, body.sessionId, ids, body.language ?? req.lang, owner);
     });
     res.status(201).json(task);
   });
@@ -255,32 +337,48 @@ export function createApiRouter(deps: ApiDeps): Router {
         offset: z.coerce.number().int().min(0).default(0),
         sessionId: z.string().optional(),
         status: z.enum(TASK_STATUSES).optional(),
+        // tasks.all only: "me", "none" (tasks from before accounts) or a user id; others always list their own
+        owner: z.string().max(100).optional(),
       }),
       req.query,
       req.lang,
     );
-    res.json(await deps.repo.listTasks({ limit: q.limit, offset: q.offset, sessionId: q.sessionId, status: q.status as TaskStatus | undefined }));
+    const principal = principalOf(req);
+    // a conversation (sessionId) is always the requester's own; the whole list is everyone's for tasks.all
+    let ownerId: string | null | undefined = principal.id;
+    if (seesAll(req)) {
+      if (q.owner === 'none') ownerId = null;
+      else if (q.owner && q.owner !== 'me') ownerId = q.owner;
+      else if (!q.owner && !q.sessionId) ownerId = undefined;
+    }
+    const list = await deps.repo.listTasks({ limit: q.limit, offset: q.offset, sessionId: q.sessionId, status: q.status as TaskStatus | undefined, ownerId });
+    res.json(await withOwners(req, list));
   });
 
-  r.get('/tasks/stats', async (_req, res) => {
-    res.json(await deps.repo.stats());
+  r.get('/tasks/stats', async (req, res) => {
+    res.json(await deps.repo.stats(seesAll(req) ? {} : { ownerId: principalOf(req).id }));
   });
 
   r.get('/tasks/:id', async (req, res) => {
+    await visibleTask(req, req.params.id);
     const detail = await tasks.detail(req.params.id);
     if (!detail) throw new HttpError(404, t(req.lang, 'api.taskNotFound'));
-    res.json(detail);
+    const [task] = await withOwners(req, [detail.task]);
+    res.json({ ...detail, task });
   });
 
   r.post('/tasks/:id/cancel', async (req, res) => {
+    // another user's task answers exactly like an unknown id (409, the long-standing answer for both), so cancelling
+    // reveals nothing about other users' tasks
+    const task = await tasks.get(req.params.id);
+    if (!task || !mayAccess(req, task.ownerId)) throw new HttpError(409, t(req.lang, 'api.taskNotActive'));
     const ok = await tasks.cancel(req.params.id);
     if (!ok) throw new HttpError(409, t(req.lang, 'api.taskNotActive'));
     res.json({ ok: true });
   });
 
   r.get('/tasks/:id/artifacts.zip', async (req, res) => {
-    const task = await tasks.get(req.params.id);
-    if (!task) throw new HttpError(404, t(req.lang, 'api.taskNotFound'));
+    const task = await visibleTask(req, req.params.id);
     const list = await artifacts.list(task.id);
     if (list.length === 0) throw new HttpError(404, t(req.lang, 'api.taskNoArtifacts'));
     const files: Record<string, Uint8Array> = {};
@@ -301,12 +399,20 @@ export function createApiRouter(deps: ApiDeps): Router {
   });
 
   // ---- confirmations --------------------------------------------------------
-  r.get('/confirmations', (_req, res) => {
-    res.json(tasks.pendingConfirmations());
+  r.get('/confirmations', async (req, res) => {
+    const visible = [];
+    for (const c of tasks.pendingConfirmations()) {
+      const task = await tasks.get(c.taskId);
+      if (task && mayAccess(req, task.ownerId)) visible.push(c);
+    }
+    res.json(visible);
   });
 
-  r.post('/confirmations/:id', (req, res) => {
+  r.post('/confirmations/:id', async (req, res) => {
     const body = parse(z.object({ approved: z.boolean(), note: z.string().max(1000).optional() }), req.body, req.lang);
+    // only the task's owner, or a role that acts on every task, answers an approval
+    const pending = await tasks.pendingConfirmation(req.params.id);
+    if (!pending || !pending.task || !mayAccess(req, pending.task.ownerId)) throw new HttpError(404, t(req.lang, 'api.confirmationNotFound'));
     const c = tasks.resolveConfirmation(req.params.id, body.approved, body.note?.trim() || null);
     if (!c) throw new HttpError(404, t(req.lang, 'api.confirmationNotFound'));
     res.json({ ok: true });
@@ -314,14 +420,11 @@ export function createApiRouter(deps: ApiDeps): Router {
 
   // ---- artifacts ------------------------------------------------------------
   r.get('/artifacts/:id', async (req, res) => {
-    const a = await artifacts.get(req.params.id);
-    if (!a) throw new HttpError(404, t(req.lang, 'api.artifactNotFound'));
-    res.json(a);
+    res.json(await visibleArtifact(req, req.params.id));
   });
 
   r.get('/artifacts/:id/content', async (req, res) => {
-    const a = await artifacts.get(req.params.id);
-    if (!a) throw new HttpError(404, t(req.lang, 'api.artifactNotFound'));
+    const a = await visibleArtifact(req, req.params.id);
     const body = await artifacts.read(a);
     res.setHeader('Content-Type', a.mimeType);
     res.setHeader('Content-Disposition', contentDisposition(req.query.download ? 'attachment' : 'inline', a.name));
@@ -338,7 +441,8 @@ export function createApiRouter(deps: ApiDeps): Router {
    * already has a Word file; 404 unknown artifact; 400 not part of a TSD bundle, or its model is not a valid specification;
    * 500 when rendering failed or timed out (it runs in a worker thread, see tasks/techSpecDocxIsolated.ts).
    */
-  r.post('/artifacts/:id/docx', async (req, res) => {
+  r.post('/artifacts/:id/docx', requirePermission('agent.use'), async (req, res) => {
+    await visibleArtifact(req, req.params.id);
     try {
       // errors and warnings in the language of the request, the new artifact's description in the task's
       const result = await exportTechSpecDocx(
@@ -365,7 +469,7 @@ export function createApiRouter(deps: ApiDeps): Router {
       next(err);
     });
 
-  r.post('/attachments', uploadBody, async (req, res) => {
+  r.post('/attachments', requirePermission('agent.use'), uploadBody, async (req, res) => {
     const q = parse(z.object({ sessionId: z.string().trim().min(1).max(100), name: z.string().trim().min(1).max(300) }), req.query, req.lang);
     if (!Buffer.isBuffer(req.body) || req.body.length === 0) throw new HttpError(400, t(req.lang, 'api.fileEmpty'));
     // the client may give up while the document is being read (chip removed, page left): then do not keep it
@@ -376,7 +480,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     let created;
     try {
       // errors and warnings in the language of the upload (the warnings are stored with the attachment)
-      created = await attachments.create(q.sessionId, q.name, req.body, req.lang);
+      created = await attachments.create(q.sessionId, q.name, req.body, req.lang, principalOf(req).id);
     } catch (err) {
       if (err instanceof DocumentError) throw new HttpError(err.status, err.message);
       throw err;
@@ -390,19 +494,18 @@ export function createApiRouter(deps: ApiDeps): Router {
 
   r.get('/attachments', async (req, res) => {
     const q = parse(z.object({ sessionId: z.string().trim().min(1).max(100), unsent: z.enum(['0', '1']).optional() }), req.query, req.lang);
-    res.json(q.unsent === '1' ? await attachments.listUnsent(q.sessionId) : await attachments.listForSession(q.sessionId));
+    // a conversation's documents are the requester's own uploads
+    const owner = principalOf(req).id;
+    res.json(q.unsent === '1' ? await attachments.listUnsent(q.sessionId, owner) : await attachments.listForSession(q.sessionId, owner));
   });
 
   r.get('/attachments/:id', async (req, res) => {
-    const a = await attachments.get(req.params.id);
-    if (!a) throw new HttpError(404, t(req.lang, 'api.attachmentNotFound'));
-    res.json(a);
+    res.json(await visibleAttachment(req, req.params.id));
   });
 
   /** The Markdown the agent reads (for the preview in the UI). */
   r.get('/attachments/:id/text', async (req, res) => {
-    const a = await attachments.get(req.params.id);
-    if (!a) throw new HttpError(404, t(req.lang, 'api.attachmentNotFound'));
+    const a = await visibleAttachment(req, req.params.id);
     res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
     res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -411,8 +514,7 @@ export function createApiRouter(deps: ApiDeps): Router {
 
   /** The original file, always as a download (never rendered in the app origin). */
   r.get('/attachments/:id/content', async (req, res) => {
-    const a = await attachments.get(req.params.id);
-    if (!a) throw new HttpError(404, t(req.lang, 'api.attachmentNotFound'));
+    const a = await visibleAttachment(req, req.params.id);
     res.setHeader('Content-Type', a.mimeType);
     res.setHeader('Content-Disposition', contentDisposition('attachment', a.name));
     res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
@@ -421,6 +523,7 @@ export function createApiRouter(deps: ApiDeps): Router {
   });
 
   r.delete('/attachments/:id', async (req, res) => {
+    await visibleAttachment(req, req.params.id);
     const outcome = await attachments.remove(req.params.id);
     if (outcome === 'not-found') throw new HttpError(404, t(req.lang, 'api.attachmentNotFound'));
     if (outcome === 'in-use') throw new HttpError(409, t(req.lang, 'api.attachmentInUse'));
@@ -435,17 +538,20 @@ export function createApiRouter(deps: ApiDeps): Router {
     enabled: z.boolean().optional(),
   });
 
-  r.get('/skills', async (_req, res) => {
+  const readSkills = requirePermission('skills.read');
+  const manageSkills = requirePermission('skills.manage');
+
+  r.get('/skills', readSkills, async (_req, res) => {
     res.json(await skills.listDetailed());
   });
 
-  r.get('/skills/:id', async (req, res) => {
+  r.get('/skills/:id', readSkills, async (req, res) => {
     const s = await skills.get(req.params.id);
     if (!s) throw new HttpError(404, t(req.lang, 'api.skillNotFound'));
     res.json(s);
   });
 
-  r.post('/skills', async (req, res) => {
+  r.post('/skills', manageSkills, async (req, res) => {
     try {
       res.status(201).json(await skills.create(parse(skillBody, req.body, req.lang)));
     } catch (err) {
@@ -453,7 +559,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     }
   });
 
-  r.post('/skills/import', async (req, res) => {
+  r.post('/skills/import', manageSkills, async (req, res) => {
     const body = parse(z.object({ markdown: z.string().min(1).max(200_000) }), req.body, req.lang);
     try {
       res.status(201).json(await skills.importMarkdown(body.markdown));
@@ -462,7 +568,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     }
   });
 
-  r.put('/skills/:id', async (req, res) => {
+  r.put('/skills/:id', manageSkills, async (req, res) => {
     const body = onlySent(parse(skillBody.partial(), req.body, req.lang), req.body);
     try {
       res.json(await skills.update(req.params.id, body));
@@ -471,7 +577,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     }
   });
 
-  r.delete('/skills/:id', async (req, res) => {
+  r.delete('/skills/:id', manageSkills, async (req, res) => {
     try {
       res.json({ result: await skills.remove(req.params.id) });
     } catch (err) {
@@ -487,11 +593,15 @@ export function createApiRouter(deps: ApiDeps): Router {
     return { ...maskPlugin(p), status: mcp.status(id, lang) };
   };
 
-  r.get('/plugins', (req, res) => {
+  // MCP plugins can run commands and hold credentials: system settings, superadmin only (reading included); every
+  // logged-in user still sees the plugins' connection status in the event stream
+  const settings = requirePermission('settings.manage');
+
+  r.get('/plugins', settings, (req, res) => {
     res.json(plugins.list().map((p) => view(p.id, req.lang)));
   });
 
-  r.post('/plugins', async (req, res) => {
+  r.post('/plugins', settings, async (req, res) => {
     let created;
     try {
       created = await plugins.create(req.body);
@@ -502,7 +612,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     res.status(201).json(view(created.id, req.lang));
   });
 
-  r.put('/plugins/:id', async (req, res) => {
+  r.put('/plugins/:id', settings, async (req, res) => {
     const patch = onlySent(parse(PluginConfigBaseSchema.omit({ id: true }).partial(), req.body, req.lang), req.body);
     try {
       await plugins.update(req.params.id, patch);
@@ -513,7 +623,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     res.json(view(req.params.id, req.lang));
   });
 
-  r.post('/plugins/:id/reconnect', async (req, res) => {
+  r.post('/plugins/:id/reconnect', settings, async (req, res) => {
     if (!plugins.get(req.params.id)) throw new HttpError(404, t(req.lang, 'api.pluginNotFound'));
     try {
       await mcp.connect(req.params.id);
@@ -523,7 +633,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     res.json(view(req.params.id, req.lang));
   });
 
-  r.delete('/plugins/:id', async (req, res) => {
+  r.delete('/plugins/:id', settings, async (req, res) => {
     if (!plugins.get(req.params.id)) throw new HttpError(404, t(req.lang, 'api.pluginNotFound'));
     await mcp.disconnect(req.params.id);
     await plugins.remove(req.params.id);
@@ -531,11 +641,11 @@ export function createApiRouter(deps: ApiDeps): Router {
   });
 
   // ---- LLM providers & model routes ------------------------------------------
-  r.get('/llm', (_req, res) => {
+  r.get('/llm', settings, (_req, res) => {
     res.json(llm.view());
   });
 
-  r.post('/llm/providers', async (req, res) => {
+  r.post('/llm/providers', settings, async (req, res) => {
     try {
       await llm.create(req.body);
     } catch (err) {
@@ -544,7 +654,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     res.status(201).json(llm.view());
   });
 
-  r.put('/llm/providers/:id', async (req, res) => {
+  r.put('/llm/providers/:id', settings, async (req, res) => {
     const patch = onlySent(parse(LlmProviderBaseSchema.omit({ id: true }).partial(), req.body, req.lang), req.body);
     try {
       await llm.update(req.params.id, patch);
@@ -554,7 +664,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     res.json(llm.view());
   });
 
-  r.delete('/llm/providers/:id', async (req, res) => {
+  r.delete('/llm/providers/:id', settings, async (req, res) => {
     try {
       await llm.remove(req.params.id);
     } catch (err) {
@@ -563,12 +673,12 @@ export function createApiRouter(deps: ApiDeps): Router {
     res.json(llm.view());
   });
 
-  r.post('/llm/providers/:id/test', async (req, res) => {
+  r.post('/llm/providers/:id/test', settings, async (req, res) => {
     // Settings -> AI models "Test connection": the result in the language of the request
     res.json(await models.test(req.params.id, req.lang));
   });
 
-  r.put('/llm/routes', async (req, res) => {
+  r.put('/llm/routes', settings, async (req, res) => {
     const body = parse(z.object({ routes: RoutesSchema }), req.body, req.lang);
     try {
       await llm.setRoutes(body.routes);
@@ -582,11 +692,14 @@ export function createApiRouter(deps: ApiDeps): Router {
   const knowledgePath = z.string().trim().min(1).max(400);
   const knowledgeError = (err: unknown, lang: Lang, status = 400) => httpError(status, err, lang);
 
-  r.get('/knowledge', async (_req, res) => {
+  const readKnowledge = requirePermission('knowledge.read');
+  const writeKnowledge = requirePermission('knowledge.write');
+
+  r.get('/knowledge', readKnowledge, async (_req, res) => {
     res.json(await knowledge.listAll());
   });
 
-  r.get('/knowledge/search', async (req, res) => {
+  r.get('/knowledge/search', readKnowledge, async (req, res) => {
     const q = parse(
       z.object({ q: z.string().trim().min(1).max(300), type: z.enum(KNOWLEDGE_TYPES as [string, ...string[]]).optional() }),
       req.query,
@@ -595,7 +708,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     res.json(await knowledge.search(q.q, { type: q.type as KnowledgeType | undefined, limit: 20 }));
   });
 
-  r.get('/knowledge/file', async (req, res) => {
+  r.get('/knowledge/file', readKnowledge, async (req, res) => {
     const q = parse(z.object({ path: knowledgePath }), req.query, req.lang);
     let file;
     try {
@@ -607,7 +720,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     res.json(file);
   });
 
-  r.put('/knowledge/file', async (req, res) => {
+  r.put('/knowledge/file', writeKnowledge, async (req, res) => {
     const body = parse(z.object({ path: knowledgePath, content: z.string().max(MAX_KNOWLEDGE_FILE_BYTES) }), req.body, req.lang);
     try {
       res.json(await knowledge.write(body.path, body.content));
@@ -616,7 +729,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     }
   });
 
-  r.delete('/knowledge/file', async (req, res) => {
+  r.delete('/knowledge/file', writeKnowledge, async (req, res) => {
     const q = parse(z.object({ path: knowledgePath }), req.query, req.lang);
     try {
       res.json({ result: await knowledge.remove(q.path) });
@@ -626,7 +739,7 @@ export function createApiRouter(deps: ApiDeps): Router {
   });
 
   /** Bulk import (e.g. a whole folder of .md files picked in the browser). */
-  r.post('/knowledge/import', express.json({ limit: '50mb' }), async (req, res) => {
+  r.post('/knowledge/import', writeKnowledge, express.json({ limit: '50mb' }), async (req, res) => {
     const body = parse(
       z.object({ files: z.array(z.object({ path: knowledgePath, content: z.string().max(MAX_KNOWLEDGE_FILE_BYTES) })).min(1).max(500) }),
       req.body,
@@ -645,7 +758,7 @@ export function createApiRouter(deps: ApiDeps): Router {
   });
 
   /** A Markdown artifact (e.g. the .md of a TSD) saved as a knowledge file; 409 when the path is taken (send overwrite). */
-  r.post('/knowledge/import-artifact', async (req, res) => {
+  r.post('/knowledge/import-artifact', writeKnowledge, async (req, res) => {
     const body = parse(
       z.object({
         artifactId: z.string().regex(/^art_[A-Za-z0-9]+$/),
@@ -662,6 +775,8 @@ export function createApiRouter(deps: ApiDeps): Router {
       req.body,
       req.lang,
     );
+    // only an artifact of a task the requester may see (the same 404 as an unknown one)
+    await visibleArtifact(req, body.artifactId);
     try {
       const { entry, replaced } = await importArtifactToKnowledge(knowledge, artifacts, {
         artifactId: body.artifactId,
@@ -698,12 +813,12 @@ export function createApiRouter(deps: ApiDeps): Router {
     }
   };
 
-  r.post('/knowledge/tables', uploadBody, async (req, res) => {
+  r.post('/knowledge/tables', writeKnowledge, uploadBody, async (req, res) => {
     const { tables } = await readTables(req);
     res.json(previewTables(tables));
   });
 
-  r.post('/knowledge/import-table', uploadBody, async (req, res) => {
+  r.post('/knowledge/import-table', writeKnowledge, uploadBody, async (req, res) => {
     let raw: unknown;
     try {
       raw = JSON.parse(String(req.query.options ?? ''));
@@ -745,7 +860,7 @@ export function createApiRouter(deps: ApiDeps): Router {
   });
 
   /** Word, PDF, PowerPoint, Markdown or text kept as knowledge (whole, or one file per chapter). */
-  r.post('/knowledge/import-document', uploadBody, async (req, res) => {
+  r.post('/knowledge/import-document', writeKnowledge, uploadBody, async (req, res) => {
     let raw: unknown;
     try {
       raw = JSON.parse(String(req.query.options ?? '{}'));

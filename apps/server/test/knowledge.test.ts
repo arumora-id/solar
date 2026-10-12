@@ -9,6 +9,7 @@ import { loadConfig } from '../src/config.js';
 import { describeKnowledge, KnowledgeStore, normalizeKnowledgePath } from '../src/knowledge/knowledgeStore.js';
 import type { ChatCompletionsApi } from '../src/llm/chatClient.js';
 import { startServer, type RunningServer } from '../src/server.js';
+import { authFetch, TEST_ACCESS_TOKEN } from './helpers/auth.js';
 
 const AD1GATE = `---
 id: AD1GATE
@@ -108,7 +109,7 @@ describe('Knowledge base API and agent context', () => {
   const seen: ChatCompletionCreateParamsStreaming[] = [];
 
   const api = async <T>(method: string, path: string, body?: unknown) => {
-    const res = await fetch(`${solar.url}${path}`, {
+    const res = await authFetch(`${solar.url}${path}`, {
       method,
       headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -126,7 +127,7 @@ describe('Knowledge base API and agent context', () => {
     });
     config.databaseUrl = undefined;
     config.s3 = null;
-    config.accessToken = undefined;
+    config.accessToken = TEST_ACCESS_TOKEN;
     config.github.token = undefined;
     config.plane.apiKey = undefined;
     solar = await startServer({ config, port: 0, chatApis: { local: recordingChat(seen) } });
@@ -165,7 +166,7 @@ describe('Knowledge base API and agent context', () => {
 
   const upload = async <T>(path: string, name: string, body: Buffer | string, options?: unknown) => {
     const qs = `name=${encodeURIComponent(name)}${options ? `&options=${encodeURIComponent(JSON.stringify(options))}` : ''}`;
-    const res = await fetch(`${solar.url}${path}?${qs}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body });
+    const res = await authFetch(`${solar.url}${path}?${qs}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body });
     return { status: res.status, data: (await res.json()) as T };
   };
 
