@@ -4,6 +4,7 @@ import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   ACCESS_TOKEN_PRINCIPAL_ID,
+  type ActivityAction,
   assignableRoles,
   can,
   canActOnUser,
@@ -14,8 +15,10 @@ import {
   type TaskOwner,
   type User,
   type UserAction,
+  type LoginFailureReason,
   type UserStatus,
 } from '@solar/shared';
+import { ANONYMOUS_ACTOR, principalActor, SYSTEM_ACTOR, TOKEN_ACTOR, userActor, type ActivityActor, type ActivitySink, type ActivityTarget } from '../activity/activityLog.js';
 import type { AppConfig } from '../config.js';
 import { both, LocalizedError, t, type Lang, type Localized, type MessageArgs, type MessageKey } from '../i18n.js';
 import { createLogger } from '../logger.js';
@@ -62,6 +65,37 @@ export interface RequestMeta {
   ip: string | null;
   userAgent: string | null;
 }
+
+/** For calls without a request (tests, internal use): the activity log then has no address or user agent. */
+const NO_META: RequestMeta = { ip: null, userAgent: null };
+
+/** Refusals worth an entry in the activity log (form mistakes such as a taken username or a weak password are not). */
+const AUDITED_REFUSALS = new Set<AuthErrorCode>([
+  'forbidden',
+  'self_action',
+  'last_superadmin',
+  'not_pending',
+  'user_not_found',
+  'unauthenticated',
+  'rate_limited',
+  'wrong_password',
+  'setup_forbidden',
+  'setup_code_invalid',
+  'setup_not_available',
+]);
+
+/** Why a login failed, for the activity log (null: not a failure to record, e.g. the server was busy). */
+function loginFailureReason(err: unknown): LoginFailureReason | null {
+  if (!(err instanceof AuthError)) return null;
+  if (err.code === 'invalid_credentials') return 'wrong_password';
+  if (err.code === 'account_pending') return 'pending';
+  if (err.code === 'account_disabled') return 'disabled';
+  if (err.code === 'rate_limited') return 'rate_limited';
+  return null;
+}
+
+/** A blocked (rate-limited) attempt is recorded at most once per client and account in this interval. */
+const BLOCKED_LOG_INTERVAL_MS = 60_000;
 
 /** An auth failure: HTTP status, stable code, message in both languages, optional Retry-After. */
 export class AuthError extends LocalizedError {
@@ -172,6 +206,8 @@ export interface AuthServiceOptions {
   scrypt?: ScryptParams;
   limits?: Partial<AuthLimits>;
   now?: () => number;
+  /** Where logins, registrations and account changes are recorded (the activity log). */
+  activity?: ActivitySink;
 }
 
 export interface NewAccount {
@@ -220,6 +256,9 @@ export class AuthService {
   private cleanupTimer: NodeJS.Timeout | null = null;
   /** The one-time first-superadmin setup code while no account exists (see setup()), else null. */
   private setupCodeValue: string | null = null;
+  private readonly activity: ActivitySink | null;
+  /** When a blocked attempt was last recorded, per client and account (keeps a flood from flooding the log). */
+  private readonly blockedLogged = new Map<string, number>();
 
   constructor(
     private readonly config: AppConfig,
@@ -237,6 +276,65 @@ export class AuthService {
     this.setupByIp = limiter(this.limits.setupAttempts, this.limits.setupWindowMs);
     this.passwordByUser = limiter(this.limits.passwordFailures, this.limits.passwordWindowMs);
     this.events.setMaxListeners(0);
+    this.activity = options.activity ?? null;
+  }
+
+  // ---- activity log ---------------------------------------------------------------------------------------------
+
+  private audit(
+    action: ActivityAction,
+    actor: ActivityActor,
+    meta: RequestMeta,
+    target: ActivityTarget | null,
+    details?: Record<string, unknown>,
+    outcome: 'success' | 'failure' = 'success',
+  ): void {
+    this.activity?.record({ action, actor, outcome, target, ip: meta.ip, userAgent: meta.userAgent, details });
+  }
+
+  /** False when a blocked attempt of this client/account was recorded within the last minute. */
+  private shouldLogBlocked(key: string): boolean {
+    const now = this.now();
+    const last = this.blockedLogged.get(key);
+    if (last !== undefined && now - last < BLOCKED_LOG_INTERVAL_MS) return false;
+    if (this.blockedLogged.size > 1_000) {
+      for (const [k, at] of this.blockedLogged) if (now - at >= BLOCKED_LOG_INTERVAL_MS) this.blockedLogged.delete(k);
+    }
+    this.blockedLogged.set(key, now);
+    return true;
+  }
+
+  /**
+   * Records a request refused by a route's permission check, before anything ran (e.g. a staff member calling
+   * DELETE /api/users/:id or PUT /api/llm/routes): `action` is what was attempted, `target` what the URL names (no
+   * lookup: the refused caller learns nothing from its own log). At most one entry a minute per account, action and
+   * target, like blocked logins, so a script hammering a route cannot flood the log.
+   */
+  auditForbidden(principal: Principal, meta: RequestMeta, action: ActivityAction, target: ActivityTarget | null, details?: Record<string, unknown>): void {
+    if (!this.activity) return;
+    if (!this.shouldLogBlocked(`forbidden|${principal.id}|${action}|${target?.id ?? ''}`)) return;
+    this.audit(action, principalActor(principal), meta, target, { ...details, reason: 'forbidden' }, 'failure');
+  }
+
+  /**
+   * Runs an account administration and records it when it is refused (the success is recorded by the action itself,
+   * which knows what changed). `audit.action` / `audit.target` may be refined by `op` as it learns more (e.g. the
+   * username of the target, or that activating a pending account is an approval).
+   */
+  private async administered<T>(
+    principal: Principal,
+    meta: RequestMeta,
+    audit: { action: ActivityAction; target: ActivityTarget; details?: Record<string, unknown> },
+    op: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await op();
+    } catch (err) {
+      if (err instanceof AuthError && AUDITED_REFUSALS.has(err.code)) {
+        this.audit(audit.action, principalActor(principal), meta, audit.target, { ...audit.details, reason: err.code }, 'failure');
+      }
+      throw err;
+    }
   }
 
   /** Creates the first superadmin from SOLAR_ADMIN_* when there is no account yet; starts the session cleanup. */
@@ -247,8 +345,12 @@ export class AuthService {
         log.info('SOLAR_ADMIN_* ignored: user accounts already exist');
       } else {
         const account = this.validateAccount(admin);
-        const created = await this.repo.createFirstUser(await this.newUser(account, 'superadmin', 'active', null));
-        if (created) log.info(`Created the first superadmin "${account.username}" from SOLAR_ADMIN_USERNAME / SOLAR_ADMIN_EMAIL / SOLAR_ADMIN_PASSWORD`);
+        const user = await this.newUser(account, 'superadmin', 'active', null);
+        if (await this.repo.createFirstUser(user)) {
+          log.info(`Created the first superadmin "${account.username}" from SOLAR_ADMIN_USERNAME / SOLAR_ADMIN_EMAIL / SOLAR_ADMIN_PASSWORD`);
+          // SOLAR itself created it (from the server's environment), like the other first-superadmin setups recorded
+          this.audit('auth.setup', SYSTEM_ACTOR, NO_META, { type: 'user', id: user.id, label: user.username }, { role: 'superadmin', via: 'env' });
+        }
       }
     }
     if (await this.setupRequired()) await this.issueSetupCode();
@@ -432,8 +534,8 @@ export class AuthService {
     this.users.delete(id);
   }
 
-  /** Deletes every session of a user (except `exceptHash`) and tells open event streams. */
-  private async revokeSessions(userId: string, exceptHash?: string): Promise<void> {
+  /** Deletes every session of a user (except `exceptHash`) and tells open event streams; returns how many ended. */
+  private async revokeSessions(userId: string, exceptHash?: string): Promise<number> {
     this.epoch += 1;
     for (const [hash, cached] of this.sessions) if (cached.value.userId === userId && hash !== exceptHash) this.sessions.delete(hash);
     const hashes = await this.repo.deleteUserSessions(userId, exceptHash);
@@ -441,6 +543,15 @@ export class AuthService {
     this.epoch += 1;
     for (const [hash, cached] of this.sessions) if (cached.value.userId === userId && hash !== exceptHash) this.sessions.delete(hash);
     this.events.emit('revoked', { userId, tokenHashes: hashes } satisfies Revocation);
+    return hashes.length;
+  }
+
+  /** Ends every session of an account because of an administrator's action, and records it when there were any. */
+  private async revokeByAdmin(principal: Principal, meta: RequestMeta, target: StoredUser, reason: string): Promise<void> {
+    const sessions = await this.revokeSessions(target.id);
+    if (sessions > 0) {
+      this.audit('auth.session_revoked', principalActor(principal), meta, { type: 'user', id: target.id, label: target.username }, { sessions, reason });
+    }
   }
 
   // ---- registration, login, logout ---------------------------------------------------------------------------------
@@ -518,6 +629,7 @@ export class AuthService {
     }
     await this.store(user);
     log.info(`New registration "${user.username}" (${user.id}) is waiting for approval`);
+    this.audit('auth.register', userActor(user), meta, { type: 'user', id: user.id, label: user.username });
     await this.announceUsers();
     return publicUser(user);
   }
@@ -533,6 +645,44 @@ export class AuthService {
    * proves the password, or that never got to check one (blocked, server busy), is given back.
    */
   async login(identifier: string, password: string, meta: RequestMeta): Promise<{ principal: Principal; token: string; maxAgeSeconds: number }> {
+    // the account the identifier names, once known (the activity log names it - never the text typed)
+    const seen: { user: StoredUser | null } = { user: null };
+    try {
+      const session = await this.attemptLogin(identifier, password, meta, seen);
+      const user = session.principal.user!;
+      this.audit('auth.login', userActor(user), meta, { type: 'user', id: user.id, label: user.username });
+      return session;
+    } catch (err) {
+      const reason = loginFailureReason(err);
+      if (reason) this.auditLoginFailure(reason, seen.user, meta);
+      throw err;
+    }
+  }
+
+  /**
+   * A failed login in the activity log. The identifier is stored only when it named an existing account, and then as
+   * that account's username: never what was typed, which may be a mistyped password. The actor is the account when its
+   * password was proven (pending, disabled), else nobody.
+   */
+  private auditLoginFailure(reason: LoginFailureReason, user: StoredUser | null, meta: RequestMeta): void {
+    if (reason === 'rate_limited' && !this.shouldLogBlocked(`login|${meta.ip ?? ''}|${user?.id ?? ''}`)) return;
+    const proven = reason === 'pending' || reason === 'disabled';
+    this.audit(
+      'auth.login_failed',
+      proven && user ? userActor(user) : ANONYMOUS_ACTOR,
+      meta,
+      user ? { type: 'user', id: user.id, label: user.username } : null,
+      user ? { reason, identifier: user.username } : { reason },
+      'failure',
+    );
+  }
+
+  private async attemptLogin(
+    identifier: string,
+    password: string,
+    meta: RequestMeta,
+    seen: { user: StoredUser | null },
+  ): Promise<{ principal: Principal; token: string; maxAgeSeconds: number }> {
     const id = normalizeIdentifier(identifier);
     const ipKey = meta.ip ?? 'unknown';
     const byIp = this.loginByIp.consume(ipKey);
@@ -543,6 +693,7 @@ export class AuthService {
     let failed = false;
     try {
       const user = id.includes('@') ? await this.repo.findUserByEmail(id) : await this.repo.findUserByUsername(id);
+      seen.user = user;
       // per account (username and email count together), else per identifier typed; check and count without an
       // await in between (the account is only known after the lookup)
       const key = user ? `user:${user.id}` : `id:${id}`;
@@ -605,10 +756,11 @@ export class AuthService {
     };
   }
 
-  async logout(principal: Principal | null): Promise<void> {
+  async logout(principal: Principal | null, meta: RequestMeta = NO_META): Promise<void> {
     if (!principal?.sessionHash) return;
     await this.dropSession(principal.sessionHash);
     this.events.emit('revoked', { userId: principal.id, tokenHashes: [principal.sessionHash] } satisfies Revocation);
+    this.audit('auth.logout', principalActor(principal), meta, { type: 'user', id: principal.id, label: principal.user?.username ?? null });
   }
 
   /**
@@ -616,8 +768,24 @@ export class AuthService {
    * is counted before the current password is checked (parallel guesses cannot pass the limit) and given back when it
    * was no wrong guess.
    */
-  async changeOwnPassword(principal: Principal, currentPassword: string, newPassword: string): Promise<void> {
+  async changeOwnPassword(principal: Principal, currentPassword: string, newPassword: string, meta: RequestMeta = NO_META): Promise<void> {
     if (principal.kind !== 'user') throw fail(400, 'forbidden', 'auth.sessionOnly');
+    const target: ActivityTarget = { type: 'user', id: principal.id, label: principal.user?.username ?? null };
+    try {
+      const sessionsEnded = await this.attemptPasswordChange(principal, currentPassword, newPassword);
+      this.audit('auth.password_change', principalActor(principal), meta, target, { sessionsEnded });
+    } catch (err) {
+      if (err instanceof AuthError && (err.code === 'wrong_password' || err.code === 'rate_limited')) {
+        if (err.code === 'wrong_password' || this.shouldLogBlocked(`password|${principal.id}`)) {
+          this.audit('auth.password_change', principalActor(principal), meta, target, { reason: err.code }, 'failure');
+        }
+      }
+      throw err;
+    }
+  }
+
+  /** The password change itself; returns the number of other sessions it ended. */
+  private async attemptPasswordChange(principal: Principal, currentPassword: string, newPassword: string): Promise<number> {
     const limit = this.passwordByUser.consume(principal.id);
     if (limit.blocked) throw rateLimited(limit.retryAfterSeconds);
     let failed = false;
@@ -634,7 +802,7 @@ export class AuthService {
       await this.repo.updateUser(user.id, { passwordHash, updatedAt: new Date(this.now()).toISOString() });
       this.invalidateUser(user.id);
       this.passwordByUser.reset(principal.id);
-      await this.revokeSessions(user.id, principal.sessionHash ?? undefined);
+      return await this.revokeSessions(user.id, principal.sessionHash ?? undefined);
     } finally {
       if (!failed) this.passwordByUser.refund(principal.id);
     }
@@ -650,6 +818,33 @@ export class AuthService {
    * Concurrent setups: exactly one wins (the repository creates the first account atomically), the others get 409.
    */
   async setup(
+    input: NewAccount,
+    principal: Principal | null,
+    fromLoopback: boolean,
+    meta: RequestMeta,
+    setupCode?: string,
+  ): Promise<{ principal: Principal; token: string; maxAgeSeconds: number }> {
+    const viaToken = principal?.kind === 'token';
+    try {
+      const session = await this.attemptSetup(input, principal, fromLoopback, meta, setupCode);
+      const user = session.principal.user!;
+      this.audit('auth.setup', viaToken ? TOKEN_ACTOR : userActor(user), meta, { type: 'user', id: user.id, label: user.username }, {
+        role: 'superadmin',
+        via: viaToken ? 'token' : 'setup_code',
+      });
+      return session;
+    } catch (err) {
+      // refused setups are a security signal (someone tried to claim the server); a blocked flood is recorded once a minute
+      if (err instanceof AuthError && AUDITED_REFUSALS.has(err.code)) {
+        if (err.code !== 'rate_limited' || this.shouldLogBlocked(`setup|${meta.ip ?? ''}`)) {
+          this.audit('auth.setup', viaToken ? TOKEN_ACTOR : ANONYMOUS_ACTOR, meta, null, { reason: err.code }, 'failure');
+        }
+      }
+      throw err;
+    }
+  }
+
+  private async attemptSetup(
     input: NewAccount,
     principal: Principal | null,
     fromLoopback: boolean,
@@ -739,17 +934,21 @@ export class AuthService {
   }
 
   /** A superadmin creates an active account directly. */
-  async createUser(principal: Principal, input: NewAccount & { role: Role }): Promise<User> {
-    this.require(principal, 'users.manage');
-    this.assertAssignable(principal, input.role);
-    const account = this.validateAccount(input);
-    return this.exclusive(principal, async () => {
-      await this.assertAvailable(account);
-      const user = await this.newUser(account, input.role, 'active', principal.id);
-      await this.store(user);
-      log.info(`${principal.id} created the account "${user.username}" (${user.id}, ${user.role})`);
-      await this.announceUsers();
-      return publicUser(user);
+  async createUser(principal: Principal, input: NewAccount & { role: Role }, meta: RequestMeta = NO_META): Promise<User> {
+    const audit = { action: 'user.create' as const, target: { type: 'user' as const, id: null, label: normalizeUsername(input.username) || null }, details: { role: input.role } };
+    return this.administered(principal, meta, audit, async () => {
+      this.require(principal, 'users.manage');
+      this.assertAssignable(principal, input.role);
+      const account = this.validateAccount(input);
+      return this.exclusive(principal, async () => {
+        await this.assertAvailable(account);
+        const user = await this.newUser(account, input.role, 'active', principal.id);
+        await this.store(user);
+        log.info(`${principal.id} created the account "${user.username}" (${user.id}, ${user.role})`);
+        this.audit('user.create', principalActor(principal), meta, { type: 'user', id: user.id, label: user.username }, { role: user.role });
+        await this.announceUsers();
+        return publicUser(user);
+      });
     });
   }
 
@@ -757,93 +956,152 @@ export class AuthService {
    * Changes an account's role, status (active/disabled) or name by the role rules. Activating a pending account is
    * an approval. A role change, disabling and deleting end every session of the account.
    */
-  async updateUser(principal: Principal, id: string, patch: { role?: Role; status?: 'active' | 'disabled'; name?: string }): Promise<User> {
+  async updateUser(
+    principal: Principal,
+    id: string,
+    patch: { role?: Role; status?: 'active' | 'disabled'; name?: string },
+    meta: RequestMeta = NO_META,
+  ): Promise<User> {
     if (patch.role === undefined && patch.status === undefined && patch.name === undefined) return this.getUserFor(principal, id);
     const name = patch.name === undefined ? undefined : normalizeName(patch.name);
     if (name !== undefined && !isValidName(name)) throw fail(400, 'invalid_input', 'auth.name.invalid');
-    return this.exclusive(principal, async () => {
-      const target = await this.target(id);
-      const changes: UserPatch = {};
-      const nextRole = patch.role ?? target.role;
-      if (patch.role !== undefined && patch.role !== target.role) {
-        this.assertMay(principal, target, 'role');
-        this.assertAssignable(principal, patch.role);
-        changes.role = patch.role;
-      }
-      if (patch.status !== undefined && patch.status !== target.status) {
-        if (patch.status === 'disabled') this.assertMay(principal, target, 'disable');
-        else if (target.status === 'pending') {
-          this.assertMay(principal, target, 'approve');
-          this.assertAssignable(principal, nextRole);
-          changes.approvedAt = new Date(this.now()).toISOString();
-          changes.approvedBy = principal.id;
-        } else this.assertMay(principal, target, 'enable');
-        changes.status = patch.status;
-      }
-      if (name !== undefined && name !== target.name) {
-        this.assertMay(principal, target, 'rename');
-        changes.name = name;
-      }
-      if (Object.keys(changes).length === 0) return publicUser(target);
-      const demoted = changes.role !== undefined && changes.role !== 'superadmin';
-      const deactivated = changes.status !== undefined && changes.status !== 'active';
-      if (demoted || deactivated) await this.assertNotLastSuperadmin(target);
-      changes.updatedAt = new Date(this.now()).toISOString();
-      const updated = await this.repo.updateUser(id, changes);
-      if (!updated) throw fail(404, 'user_not_found', 'users.notFound');
-      this.invalidateUser(id);
-      if (changes.role !== undefined || changes.status === 'disabled') await this.revokeSessions(id);
-      log.info(`${principal.id} changed the account ${id}: ${Object.keys(changes).filter((k) => k !== 'updatedAt').join(', ')}`);
-      await this.announceUsers();
-      return publicUser(updated);
-    });
+    // what a refusal is recorded as (refined once the account is known)
+    const audit: { action: ActivityAction; target: ActivityTarget; details?: Record<string, unknown> } = {
+      action: patch.role !== undefined ? 'user.role_change' : patch.status === 'disabled' ? 'user.disable' : patch.status === 'active' ? 'user.enable' : 'user.rename',
+      target: { type: 'user', id, label: null },
+      details: patch.role !== undefined ? { to: patch.role } : undefined,
+    };
+    return this.administered(principal, meta, audit, () =>
+      this.exclusive(principal, async () => {
+        const target = await this.target(id);
+        const nextRole = patch.role ?? target.role;
+        // a refusal is recorded as the first change asked for: role, else status, else name
+        audit.target.label = target.username;
+        if (patch.role !== undefined && patch.role !== target.role) {
+          audit.action = 'user.role_change';
+          audit.details = { from: target.role, to: patch.role };
+        } else if (patch.status !== undefined && patch.status !== target.status) {
+          audit.action = patch.status === 'disabled' ? 'user.disable' : target.status === 'pending' ? 'user.approve' : 'user.enable';
+          audit.details = audit.action === 'user.approve' ? { role: nextRole } : undefined;
+        } else if (name !== undefined) {
+          audit.action = 'user.rename';
+          audit.details = { from: target.name, to: name };
+        }
+        const changes: UserPatch = {};
+        if (patch.role !== undefined && patch.role !== target.role) {
+          this.assertMay(principal, target, 'role');
+          this.assertAssignable(principal, patch.role);
+          changes.role = patch.role;
+        }
+        if (patch.status !== undefined && patch.status !== target.status) {
+          if (patch.status === 'disabled') this.assertMay(principal, target, 'disable');
+          else if (target.status === 'pending') {
+            this.assertMay(principal, target, 'approve');
+            this.assertAssignable(principal, nextRole);
+            changes.approvedAt = new Date(this.now()).toISOString();
+            changes.approvedBy = principal.id;
+          } else this.assertMay(principal, target, 'enable');
+          changes.status = patch.status;
+        }
+        if (name !== undefined && name !== target.name) {
+          this.assertMay(principal, target, 'rename');
+          changes.name = name;
+        }
+        if (Object.keys(changes).length === 0) return publicUser(target);
+        const demoted = changes.role !== undefined && changes.role !== 'superadmin';
+        const deactivated = changes.status !== undefined && changes.status !== 'active';
+        if (demoted || deactivated) await this.assertNotLastSuperadmin(target);
+        changes.updatedAt = new Date(this.now()).toISOString();
+        const updated = await this.repo.updateUser(id, changes);
+        if (!updated) throw fail(404, 'user_not_found', 'users.notFound');
+        this.invalidateUser(id);
+        this.auditUserChanges(principal, meta, target, changes, nextRole);
+        if (changes.role !== undefined || changes.status === 'disabled') {
+          await this.revokeByAdmin(principal, meta, target, changes.role !== undefined ? 'role_change' : 'disable');
+        }
+        log.info(`${principal.id} changed the account ${id}: ${Object.keys(changes).filter((k) => k !== 'updatedAt').join(', ')}`);
+        await this.announceUsers();
+        return publicUser(updated);
+      }),
+    );
+  }
+
+  /** One activity entry per kind of change of an account (role, status, name). */
+  private auditUserChanges(principal: Principal, meta: RequestMeta, target: StoredUser, changes: UserPatch, nextRole: Role): void {
+    const actor = principalActor(principal);
+    const ref: ActivityTarget = { type: 'user', id: target.id, label: target.username };
+    if (changes.role !== undefined) this.audit('user.role_change', actor, meta, ref, { from: target.role, to: changes.role });
+    if (changes.status === 'disabled') this.audit('user.disable', actor, meta, ref, target.status === 'pending' ? { from: 'pending' } : undefined);
+    else if (changes.status === 'active' && target.status === 'pending') this.audit('user.approve', actor, meta, ref, { role: nextRole });
+    else if (changes.status === 'active') this.audit('user.enable', actor, meta, ref);
+    if (changes.name !== undefined) this.audit('user.rename', actor, meta, ref, { from: target.name, to: changes.name });
   }
 
   /** Approves a pending registration, as `role` (default staff; the Head of IT may only approve as staff). */
-  async approve(principal: Principal, id: string, role: Role = 'staff'): Promise<User> {
-    this.require(principal, 'users.approve');
-    return this.exclusive(principal, async () => {
-      const target = await this.target(id);
-      if (target.status !== 'pending') throw fail(409, 'not_pending', 'users.notPending');
-      this.assertMay(principal, target, 'approve');
-      this.assertAssignable(principal, role);
-      const now = new Date(this.now()).toISOString();
-      const updated = await this.repo.updateUser(id, { status: 'active', role, approvedAt: now, approvedBy: principal.id, updatedAt: now });
-      if (!updated) throw fail(404, 'user_not_found', 'users.notFound');
-      this.invalidateUser(id);
-      log.info(`${principal.id} approved the account "${target.username}" (${id}) as ${role}`);
-      await this.announceUsers();
-      return publicUser(updated);
+  async approve(principal: Principal, id: string, role: Role = 'staff', meta: RequestMeta = NO_META): Promise<User> {
+    const audit = { action: 'user.approve' as const, target: { type: 'user' as const, id, label: null as string | null }, details: { role } };
+    return this.administered(principal, meta, audit, async () => {
+      this.require(principal, 'users.approve');
+      return this.exclusive(principal, async () => {
+        const target = await this.target(id);
+        audit.target.label = target.username;
+        if (target.status !== 'pending') throw fail(409, 'not_pending', 'users.notPending');
+        this.assertMay(principal, target, 'approve');
+        this.assertAssignable(principal, role);
+        const now = new Date(this.now()).toISOString();
+        const updated = await this.repo.updateUser(id, { status: 'active', role, approvedAt: now, approvedBy: principal.id, updatedAt: now });
+        if (!updated) throw fail(404, 'user_not_found', 'users.notFound');
+        this.invalidateUser(id);
+        log.info(`${principal.id} approved the account "${target.username}" (${id}) as ${role}`);
+        this.audit('user.approve', principalActor(principal), meta, { type: 'user', id, label: target.username }, { role });
+        await this.announceUsers();
+        return publicUser(updated);
+      });
     });
   }
 
   /** A superadmin sets a new password for another account; all its sessions end. */
-  async resetPassword(principal: Principal, id: string, password: string): Promise<void> {
-    this.require(principal, 'users.manage');
-    await this.exclusive(principal, async () => {
-      const target = await this.target(id);
-      this.assertMay(principal, target, 'password');
-      this.checkPassword(password, { username: target.username, email: target.email });
-      const passwordHash = await hashPassword(password, this.scryptParams);
-      await this.repo.updateUser(id, { passwordHash, updatedAt: new Date(this.now()).toISOString() });
-      this.invalidateUser(id);
-      await this.revokeSessions(id);
-      log.info(`${principal.id} reset the password of ${id}`);
+  async resetPassword(principal: Principal, id: string, password: string, meta: RequestMeta = NO_META): Promise<void> {
+    const audit = { action: 'user.password_reset' as const, target: { type: 'user' as const, id, label: null as string | null } };
+    await this.administered(principal, meta, audit, async () => {
+      this.require(principal, 'users.manage');
+      await this.exclusive(principal, async () => {
+        const target = await this.target(id);
+        audit.target.label = target.username;
+        this.assertMay(principal, target, 'password');
+        this.checkPassword(password, { username: target.username, email: target.email });
+        const passwordHash = await hashPassword(password, this.scryptParams);
+        await this.repo.updateUser(id, { passwordHash, updatedAt: new Date(this.now()).toISOString() });
+        this.invalidateUser(id);
+        this.audit('user.password_reset', principalActor(principal), meta, { type: 'user', id, label: target.username });
+        await this.revokeByAdmin(principal, meta, target, 'password_reset');
+        log.info(`${principal.id} reset the password of ${id}`);
+      });
     });
   }
 
   /** A superadmin deletes an account; its tasks keep their ownerId (shown as a deleted user). */
-  async deleteUser(principal: Principal, id: string): Promise<void> {
-    this.require(principal, 'users.manage');
-    await this.exclusive(principal, async () => {
-      const target = await this.target(id);
-      this.assertMay(principal, target, 'delete');
-      await this.assertNotLastSuperadmin(target);
-      await this.revokeSessions(id);
-      await this.repo.deleteUser(id);
-      this.invalidateUser(id);
-      log.info(`${principal.id} deleted the account "${target.username}" (${id})`);
-      await this.announceUsers();
+  async deleteUser(principal: Principal, id: string, meta: RequestMeta = NO_META): Promise<void> {
+    const audit = { action: 'user.delete' as const, target: { type: 'user' as const, id, label: null as string | null } };
+    await this.administered(principal, meta, audit, async () => {
+      this.require(principal, 'users.manage');
+      await this.exclusive(principal, async () => {
+        const target = await this.target(id);
+        audit.target.label = target.username;
+        this.assertMay(principal, target, 'delete');
+        await this.assertNotLastSuperadmin(target);
+        const sessions = await this.revokeSessions(id);
+        await this.repo.deleteUser(id);
+        this.invalidateUser(id);
+        log.info(`${principal.id} deleted the account "${target.username}" (${id})`);
+        this.audit('user.delete', principalActor(principal), meta, { type: 'user', id, label: target.username }, {
+          username: target.username,
+          name: target.name,
+          role: target.role,
+          sessionsEnded: sessions,
+        });
+        await this.announceUsers();
+      });
     });
   }
 

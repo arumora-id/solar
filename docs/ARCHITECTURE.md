@@ -230,11 +230,63 @@ beserta crate Rust di dalam wasm-nya), Liberation Sans (SIL OFL 1.1) - lihat `TH
 
 | Data | Tanpa konfigurasi | Dengan konfigurasi |
 |---|---|---|
-| Task, event timeline, metadata artefak, konfirmasi, metadata lampiran | `data/tasks/*.json` + `*.events.jsonl`, `data/attachments/*.json` | Neon Postgres (`DATABASE_URL`): tabel `solar_tasks`, `solar_task_events`, `solar_artifacts`, `solar_confirmations`, `solar_attachments` (dibuat/dimigrasi otomatis; mis. kolom `solar_tasks.language` ditambahkan dengan `ADD COLUMN IF NOT EXISTS … DEFAULT 'id'`). |
+| Task, event timeline, metadata artefak, konfirmasi, metadata lampiran | `data/tasks/*.json` + `*.events.jsonl`, `data/attachments/*.json` | Neon Postgres (`DATABASE_URL`): tabel `solar_tasks`, `solar_task_events`, `solar_artifacts`, `solar_confirmations`, `solar_attachments` (dibuat/dimigrasi otomatis dari `storage/schema.ts`; mis. kolom `solar_tasks.language` ditambahkan dengan `ADD COLUMN IF NOT EXISTS … DEFAULT 'id'`). |
 | File artefak & lampiran | `data/artifacts/tasks/<task>/<artifact>/<file>`, `data/artifacts/attachments/<id>/…` | Object storage S3-compatible (`S3_*`) dengan prefix `S3_PREFIX`. |
-| Skill pengguna, plugin, status skill | `data/skills/`, `data/plugins.json`, `data/skills-state.json` | sama |
+| Akun pengguna & sesi login | `data/users.json`, `data/sessions.json` (mode 0600) | `solar_users`, `solar_sessions` |
+| Peran | tidak disimpan - dari kode (`packages/shared`) | `solar_roles` (salinan dari kode, di-upsert setiap start) |
+| Log aktivitas (audit) | `data/activity/activity-<YYYY-MM>.jsonl` (mode 0600) | `solar_activity` |
+| Skill pengguna, plugin, status skill, provider & rute LLM | `data/skills/`, `data/plugins.json`, `data/skills-state.json`, `data/llm.json` | sama (file, bukan database) |
 
 Saat server mulai, task yang tertinggal berstatus aktif dari proses sebelumnya ditandai gagal ("server di-restart").
+
+### 5b. Pengguna, peran, sesi & log aktivitas
+
+- **Skema Postgres** ada di satu tempat: `apps/server/src/storage/schema.ts` (`POSTGRES_SCHEMA`, daftar pernyataan SQL
+  berurutan yang idempoten). `PostgresRepository.init()` menjalankan semuanya setiap start dalam satu transaksi dengan
+  *advisory lock* (dua server yang start bersamaan bermigrasi bergantian). `npm run db:schema` mencetaknya sebagai satu
+  file SQL (`npm run -s db:schema > schema.sql`, `-- --json` untuk array pernyataan); `docs/schema.sql` adalah
+  snapshot yang dijaga test agar tidak menyimpang. Aman dijalankan di database kosong maupun yang sudah terisi.
+- **Akun** (`solar_users`): username/email unik tanpa memandang huruf besar (indeks unik `lower(...)`), hash scrypt,
+  status `pending|active|disabled`. **Sesi** (`solar_sessions`): hanya SHA-256 token cookie, dihapus bersama akunnya
+  (`ON DELETE CASCADE`). Task/lampiran menyimpan `owner_id` tanpa foreign key (task akun yang dihapus tetap ada).
+- **Peran**: acuannya kode (`ROLE_PERMISSIONS` + `ROLE_INFO` di `packages/shared`); `solar_roles` adalah salinannya
+  untuk laporan dan untuk integritas: `solar_users.role` → `solar_roles(id)` (foreign key `solar_users_role_fkey`).
+  Urutan di skema: buat `solar_roles` → upsert peran dari kode (`updated_at` hanya berubah bila isinya berubah) →
+  tambah foreign key sekali lewat blok `DO` yang memeriksa `pg_constraint` (Postgres tidak punya `ADD CONSTRAINT IF NOT
+  EXISTS`). Foreign key ditambahkan `NOT VALID` lalu divalidasi; bila ada akun dengan peran yang tidak dikenal kode
+  (diubah manual), server tetap start dengan `WARNING` dan constraint tetap menjaga setiap baris baru/berubah sampai
+  datanya diperbaiki. Penyimpanan file tidak punya tabel peran; `GET /api/roles` menjawab dari kode untuk keduanya.
+- **Log aktivitas** (`apps/server/src/activity/activityLog.ts`): `ActivityLog.record()` hanya menyusun entri (snapshot
+  nama & peran pelaku, teks dipendekkan, `details` tanpa kunci yang tampak rahasia) lalu mengantrekannya; antrean
+  ditulis per batch (100 entri / 250 ms) - satu `INSERT` multi-baris di Postgres, satu append per file di
+  penyimpanan file. Gagal menulis dicoba ulang (3x, jeda 5 detik; membaca selama jeda tidak menghabiskan percobaan) lalu
+  dibuang; setiap entri yang dibuang dihitung di peringatan log server (maks. satu laporan per menit, tanpa ada yang
+  hilang dari hitungan). Permintaan pengguna tidak pernah ikut gagal. Membaca menulis antrean dulu. Id entri diawali
+  waktu (`act_<ms><urutan><acak>`), jadi urutan id = urutan waktu; halaman diurutkan `at DESC, id DESC` dengan cursor
+  `(at, id)`, didukung indeks `(at DESC, id DESC)`, `(actor_id, at DESC, id DESC)`, `(action, at DESC, id DESC)`.
+  **Teks yang disimpan** selalu satu baris yang *well-formed* dan terlihat: karakter kontrol jadi spasi; surrogate
+  UTF-16 tunggal, kontrol bidi (mis. U+202E) dan karakter tak terlihat (zero-width, BOM) jadi U+FFFD - sehingga label
+  tidak bisa dipalsukan secara visual dan jsonb Postgres tidak menolak entri. Kunci `details` yang tampak rahasia
+  dibuang dan dihitung di `details.redactedKeys`; nama yang dipilih orang (mis. nama rute model) disimpan sebagai nilai,
+  bukan kunci. Bila Postgres tetap menolak satu batch karena data (SQLSTATE kelas 22/23/54), baris dimasukkan satu per
+  satu: baris yang bermasalah disimpan dengan `details = {"invalid": true}`, tetangganya utuh.
+  Penyimpanan file: file JSON Lines per bulan (rotasi), masing-masing berurutan naik menurut `(at, id)`; entri yang akan
+  merusak urutan itu (jam mundur - NTP, jam diperbaiki pengguna, dual-boot - juga lintas restart) ditulis ke *run* lain
+  bulan itu (`activity-2026-10.1.jsonl`), dan pembacaan menggabungkan run-run sebulan, jadi halaman selalu terbaru-dulu
+  persis seperti Postgres. Cursor dan `to` dicari dengan binary search, `from` menghentikan pembacaan, filter dicek dulu
+  sebagai teks. Satu permintaan membaca paling banyak 10.000 baris: filter yang jarang cocok (entri milik satu staf di
+  log besar, pencarian teks) menjawab dengan yang sudah ditemukan plus `nextCursor` untuk melanjutkan, sehingga tidak
+  ada permintaan yang membaca seluruh log. Append idempoten: sebelum menulis, baris terakhir yang terpotong (crash, disk
+  penuh) dipotong; append yang gagal di tengah dikembalikan ke ukuran semula; entri yang sudah ditulis proses ini (per
+  id) dilewati, dan bila hanya sebagian batch tersimpan, hanya sisanya yang dicoba ulang.
+  **Retensi** `ACTIVITY_RETENTION_DAYS` (default 365, `0` = selamanya): saat start lalu setiap hari - Postgres `DELETE
+  ... WHERE at < cutoff`; file: file bulan yang lebih tua dihapus, file bulan cutoff ditulis ulang (temp + rename).
+- **Yang dicatat**: login/logout/gagal login, pendaftaran, setup (juga superadmin pertama dari `SOLAR_ADMIN_*` saat
+  start, pelaku `system`), ganti password, sesi yang diakhiri admin, semua perubahan akun (juga penolakannya, termasuk
+  percobaan yang sudah ditolak oleh cek izin route `/api/users` dan pengaturan), task dibuat/dibatalkan, persetujuan, perubahan knowledge & skill, pengaturan LLM
+  & plugin, ekspor Word, publish GitHub, ekspor CSV. Tulisan agen setelah persetujuan pengguna dicatat lewat
+  `TaskRunContext.recordActivity` dengan pelaku = pemilik task (`details.via = "agent"`). Daftar lengkapnya:
+  `ACTIVITY_ACTIONS` dan [docs/API.md](API.md#log-aktivitas).
 
 ## 6. Realtime ke UI
 

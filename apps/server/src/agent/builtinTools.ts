@@ -464,7 +464,22 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
               summary: t(lang, 'tool.github.duplicateName'),
             };
           }
-          const result = await github.publish(repo, input.branch ?? config.github.defaultBranch, input.path, files, input.commit_message, ctx.signal);
+          const branch = input.branch ?? config.github.defaultBranch;
+          const audit = (outcome: 'success' | 'failure', details: Record<string, unknown>) =>
+            ctx.recordActivity?.({
+              action: 'artifact.publish_github',
+              outcome,
+              target: { type: 'artifact', id: input.artifact_ids[0] ?? null, label: `${repo}/${input.path}`.replace(/\/+$/, '') },
+              details: { repository: repo, branch, path: input.path, files: files.length, artifactIds: input.artifact_ids, ...details },
+            });
+          let result;
+          try {
+            result = await github.publish(repo, branch, input.path, files, input.commit_message, ctx.signal);
+          } catch (err) {
+            audit('failure', { reason: 'error', error: err instanceof Error ? err.message : String(err) });
+            throw err;
+          }
+          audit('success', { commitSha: result.commitSha, commitUrl: result.commitUrl, createdBranch: result.createdBranch });
           return {
             content: json({ status: 'committed', repository: repo, ...result }),
             summary: t(lang, 'tool.github.committed', { n: files.length, target: `${repo}@${result.branch}` }),

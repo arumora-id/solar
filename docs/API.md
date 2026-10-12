@@ -47,9 +47,12 @@ Tidak diterjemahkan (data): isi knowledge base, skill, deskripsi plugin dari kon
 | `knowledge.read` / `knowledge.write` - baca / tulis & impor knowledge base | ✓ | ✓ | ✓ |
 | `skills.read` / `skills.manage` - baca / kelola skill | ✓ | ✓ | ✓ |
 | `settings.manage` - provider & rute LLM, tes model, plugin MCP (termasuk membaca daftarnya), konfigurasi & token | ✓ | - | - |
+| `activity.view_all` - log aktivitas **semua** pengguna, filter per pengguna, ekspor CSV | ✓ | ✓ | - |
+| `activity.view_own` - log aktivitas **sendiri** | ✓ | ✓ | ✓ |
 
-Tabelnya ada sekali, di `packages/shared` (`ROLE_PERMISSIONS`, `can(role, permission)`, `canActOnUser`,
-`assignableRoles`) - server dan web memakai yang sama. Aturan tambahan: tidak ada yang bisa mengubah peran,
+Tabelnya ada sekali, di `packages/shared` (`ROLE_PERMISSIONS`, `ROLE_INFO` untuk nama & deskripsi, `can(role,
+permission)`, `canActOnUser`, `assignableRoles`) - server dan web memakai yang sama; dengan Postgres, isinya juga
+disalin ke tabel `solar_roles` setiap server start (kode tetap acuannya, lihat [`GET /roles`](#peran-get-roles)). Aturan tambahan: tidak ada yang bisa mengubah peran,
 menonaktifkan, mereset password (lewat admin) atau menghapus akunnya sendiri; superadmin aktif terakhir tidak bisa
 dinonaktifkan, diturunkan perannya atau dihapus (`409 last_superadmin`). Peran dibaca ulang dari penyimpanan setiap
 permintaan (cache 30 detik yang dikosongkan oleh setiap perubahan akun di server ini).
@@ -167,6 +170,23 @@ enumerasi lambat.
 Setiap pendaftaran baru dan perubahan akun mengirim `{ kind: "users_changed", pendingCount }` di `/stream` kepada
 pengguna dengan `users.view` (untuk badge jumlah pendaftaran yang menunggu).
 
+### Peran: `GET /roles`
+
+Semua pengguna yang masuk (untuk label peran di UI). Jawaban dari kode (`ROLE_INFO` + `ROLE_PERMISSIONS`), sama untuk
+penyimpanan file maupun Postgres:
+
+```json
+[
+  { "id": "superadmin", "name": "Superadmin", "description": "...", "names": { "id": "Superadmin", "en": "Superadmin" },
+    "descriptions": { "id": "...", "en": "..." }, "permissions": ["agent.use", "...", "activity.view_all", "activity.view_own"], "sortOrder": 1 },
+  { "id": "head_of_it", "name": "Head of IT Solar", ... , "sortOrder": 2 },
+  { "id": "staff", "name": "Staf Solar", ... , "sortOrder": 3 }
+]
+```
+
+`name` / `description` dalam bahasa permintaan; `names` / `descriptions` berisi kedua bahasa (kolom `name_id`,
+`name_en`, `description_id`, `description_en` di `solar_roles`). `permissions` dalam urutan `PERMISSIONS`.
+
 ### Kode error
 
 `unauthenticated` (401), `invalid_token` (401), `invalid_credentials` (401), `account_pending` (403),
@@ -190,6 +210,119 @@ curl -s -b cookies.txt http://127.0.0.1:8790/api/tasks
 
 # skrip dengan token akses (bertindak sebagai superadmin)
 curl -s -H "Authorization: Bearer $SOLAR_ACCESS_TOKEN" "http://127.0.0.1:8790/api/users?status=pending"
+```
+
+## Log aktivitas
+
+Jejak audit: siapa melakukan apa dan kapan. Ditulis di latar belakang dalam batch (tidak memperlambat atau
+menggagalkan permintaan; kegagalan menulis hanya dicatat di log server). Nama dan peran pelaku disimpan sebagai
+**snapshot** saat itu (tetap sama walau akun diganti namanya, perannya diubah atau dihapus). Tidak pernah berisi
+password, token, hash, kode penyiapan, atau isi file; user agent dan label dipendekkan. Disimpan
+`ACTIVITY_RETENTION_DAYS` hari (default 365, `0` = selamanya), dibersihkan saat start lalu setiap hari.
+
+| Method | Path | Query | Izin | Jawaban |
+|---|---|---|---|---|
+| GET | `/activity` | `actor`, `action`, `outcome`, `from`, `to`, `q`, `cursor`, `limit` | `activity.view_own` | `ActivityPage { items: ActivityItem[], nextCursor: string \| null }`, terbaru dulu. |
+| GET | `/activity/actions` | | `activity.view_own` | `ActivityActionInfo[]`: `{ action, group, label }` untuk setiap kode aksi (label dalam bahasa permintaan) - untuk dropdown filter. |
+| GET | `/activity.csv` | sama dengan `/activity` tanpa `cursor`/`limit` | `activity.view_all` | File CSV (UTF-8 dengan BOM, `\r\n`, maks. 100.000 baris), `Content-Disposition: attachment; filename="solar-activity-YYYYMMDD.csv"`. Ekspor ini sendiri dicatat (`activity.export`). |
+
+**Siapa melihat apa.** `superadmin` dan `head_of_it` (`activity.view_all`, juga `SOLAR_ACCESS_TOKEN`) melihat semua
+entri; `actor=<id pengguna>` atau `actor=me` menyaringnya. `staff` hanya melihat entri **miliknya sendiri** (pelaku =
+dirinya), apa pun isi `actor`.
+
+**Query.**
+- `actor` - id pengguna (`usr_...`), `system:access-token`, atau `me`.
+- `action` - satu atau beberapa kode dipisah koma (`auth.login,auth.logout`); `user.*` = semua kode berawalan `user.`.
+  Kode yang tidak dikenal → `400`.
+- `outcome` - `success` | `failure`.
+- `from` / `to` - ISO 8601. Tanggal saja (`2026-10-12`) = awal hari itu (UTC); untuk `to` tanggal saja berarti
+  **sampai akhir** hari itu. `from` inklusif, `to` eksklusif. Tidak valid → `400`.
+- `q` - teks (tidak peka huruf besar) di nama pelaku, label/id target, kode aksi, atau `details`.
+- `limit` - 1-200 (default 50). `cursor` - `nextCursor` halaman sebelumnya (opaque); tidak valid → `400`.
+
+**Halaman.** Lanjutkan selama `nextCursor` tidak `null`. Sebuah halaman bisa berisi **kurang dari `limit` entri, bahkan
+nol, dengan `nextCursor`**: di penyimpanan file satu permintaan membaca paling banyak 10.000 baris log, jadi filter yang
+jarang cocok (mis. entri milik seorang staf di log yang besar, atau `q`) menjawab dengan yang sudah ditemukan dan cursor
+untuk melanjutkan. UI sebaiknya menampilkan "muat lagi" alih-alih menyimpulkan bahwa log sudah habis.
+
+**`ActivityItem`** (`packages/shared`):
+
+```json
+{
+  "id": "act_mg5x0k2q8000a1b2c3d4e5",
+  "at": "2026-10-12T08:15:02.123Z",
+  "actorId": "usr_...", "actorName": "Budi Santoso", "actorRole": "staff", "actorKind": "user",
+  "action": "knowledge.write",
+  "targetType": "knowledge", "targetId": "systems/AD1GATE.md", "targetLabel": "systems/AD1GATE.md",
+  "outcome": "success",
+  "ip": "10.0.0.12", "userAgent": "Mozilla/5.0 ...",
+  "details": { "title": "AD1GATE API Gateway", "type": "system", "replaced": null, "via": "agent", "taskId": "task_..." },
+  "summary": "Budi Santoso menyimpan knowledge systems/AD1GATE.md (lewat agen)"
+}
+```
+
+`actorKind`: `user` (akun), `token` (`SOLAR_ACCESS_TOKEN`; `actorId` = `system:access-token`), `anonymous` (belum
+masuk, mis. login gagal), `system`. `id` diawali waktu sehingga urutannya = urutan waktu. `action` adalah kode (UI
+menerjemahkannya); `summary` adalah satu kalimat dalam bahasa permintaan. Tulisan agen atas nama pengguna (setelah
+pengguna menyetujui) dicatat dengan pelaku = **pemilik task**, `details.via = "agent"`, `details.taskId`, tanpa IP.
+
+**Kode aksi** (`ACTIVITY_ACTIONS` di `packages/shared`):
+
+| Kode | Dicatat saat | `details` (contoh) |
+|---|---|---|
+| `auth.login` | login berhasil | |
+| `auth.login_failed` (`failure`) | login gagal | `reason`: `wrong_password` \| `pending` \| `disabled` \| `rate_limited`; `identifier` = **username** akun hanya bila yang diketik cocok dengan akun yang ada (tidak pernah teks yang diketik - bisa jadi password yang salah ketik). Pelaku = akun bila password terbukti (`pending`/`disabled`), selain itu `anonymous`. Percobaan yang diblokir dicatat paling banyak sekali per menit per IP/akun. |
+| `auth.logout` | logout | |
+| `auth.register` | pendaftaran mandiri (pelaku = akun baru) | |
+| `auth.setup` | superadmin pertama dibuat (juga dari `SOLAR_ADMIN_*` saat server mulai: pelaku `system`); juga `failure` untuk setup yang ditolak | `role`; `via`: `setup_code` \| `token` \| `env`; `reason`: `setup_code_invalid`, `setup_forbidden`, `setup_not_available`, `rate_limited` |
+| `auth.password_change` | ganti password sendiri; `failure` bila password lama salah / diblokir | `sessionsEnded`; `reason` |
+| `auth.session_revoked` | sesi akun diakhiri oleh tindakan admin | `sessions`, `reason`: `role_change` \| `disable` \| `password_reset` |
+| `user.create` | admin membuat akun | `role` |
+| `user.approve` | pendaftaran disetujui (juga `PATCH status: active` pada akun `pending`) | `role` |
+| `user.role_change` | peran diubah | `from`, `to` |
+| `user.disable` / `user.enable` | akun dinonaktifkan / diaktifkan | |
+| `user.password_reset` | admin mereset password | |
+| `user.delete` | akun dihapus | `username`, `name`, `role`, `sessionsEnded` |
+| `user.rename` | nama tampilan diubah | `from`, `to` |
+| `task.create` / `task.cancel` | task dibuat / dibatalkan | `language`, `attachments`, `sessionId` / `status` |
+| `confirmation.approve` / `confirmation.reject` | persetujuan dijawab | `tool`, `taskId`, `taskTitle`, `pluginId?` |
+| `knowledge.write` | file knowledge disimpan (form, impor banyak file: `via: "import"`, agen: `via: "agent"`) | `title`, `type`, `replaced?` |
+| `knowledge.import_artifact` | artefak disimpan sebagai knowledge (route atau agen) | `artifactId`, `artifactName`, `replaced` |
+| `knowledge.delete` / `knowledge.revert` | file pengguna dihapus / override dihapus sehingga versi bawaan kembali | |
+| `knowledge.table_import` / `knowledge.document_import` | impor tabel / dokumen | `file`, `sheet`/`split`, `written`, `removed` |
+| `skill.create` / `skill.update` / `skill.delete` / `skill.enable` / `skill.disable` | skill dibuat (juga impor: `via: "import"`), isinya diubah, dihapus (`result`: `deleted` \| `reverted`), diaktifkan / dinonaktifkan | `fields` |
+| `settings.llm.provider_create` / `_update` / `_delete` | provider AI | `kind`, `models`, `fields` (nama field saja - API key dan header tidak pernah dicatat) |
+| `settings.llm.route_change` | rute model diubah | `from`, `to`: daftar `{ name, models }` (nama rute sebagai nilai, jadi rute seperti `token-saver` tidak pernah tersaring) |
+| `settings.llm.provider_test` | tes koneksi (`failure` bila gagal) | `models` |
+| `settings.plugin.create` / `_update` / `_delete` / `_reconnect` | plugin MCP | `preset`, `transport`, `fields`, `state` (tanpa `env`/`headers`) |
+| `artifact.docx_export` | `POST /artifacts/:id/docx` membuat file Word | `sourceArtifactId`, `taskId` |
+| `artifact.publish_github` | tool agen `publish_artifacts_to_github` dijalankan (`failure` bila gagal) | `repository`, `branch`, `path`, `files`, `commitSha` |
+| `activity.export` | ekspor CSV | `rows`, `filters` |
+
+Penolakan tindakan admin (`forbidden`, `self_action`, `last_superadmin`, `not_pending`, `user_not_found`) dicatat
+dengan aksi yang dicoba, `outcome: "failure"` dan `details.reason`. Ini termasuk percobaan yang sudah ditolak oleh cek
+izin route (`403`) sebelum apa pun berjalan: perubahan di `/api/users` (`user.create`, `user.approve`,
+`user.role_change`, `user.disable`/`enable`/`rename`, `user.password_reset`, `user.delete`), perubahan pengaturan
+(`settings.llm.*`, `settings.plugin.*`) dan ekspor CSV (`activity.export`), dengan `details.reason = "forbidden"`.
+Target-nya adalah id di URL apa adanya (tanpa dicari namanya: staf melihat entri miliknya sendiri), isi permintaan
+tidak pernah dicatat, dan percobaan yang sama (akun + aksi + target) dicatat paling banyak sekali per menit. Penolakan
+membaca (mis. `GET /api/plugins`) dan kesalahan isian (username dipakai, password lemah) tidak dicatat.
+
+**Teks yang disimpan.** Satu baris, dipendekkan, selalu *well-formed* dan terlihat: karakter kontrol jadi spasi;
+surrogate UTF-16 tunggal, kontrol bidi (mis. U+202E yang membuat `invoice\u202efdp.exe` tampil sebagai
+`invoiceexe.pdf`) dan karakter tak terlihat (zero-width, BOM) jadi `U+FFFD` (sambungan emoji tetap utuh). Kunci
+`details` yang tampak rahasia (`password`, `token`, `secret`, `hash`, `content`, ...) dibuang dan jumlahnya dicatat di
+`details.redactedKeys`. Entri yang `details`-nya tetap ditolak Postgres disimpan dengan `details: { "invalid": true }`
+(entri lain di batch yang sama tidak terpengaruh).
+
+**CSV** - kolom: `id, at, actor_id, actor_name, actor_role, actor_kind, action, action_label, outcome, target_type,
+target_id, target_label, summary, ip, user_agent, details` (label & ringkasan dalam bahasa permintaan, `details` JSON).
+Setiap sel diberi tanda kutip; sel yang diawali `=`, `+`, `-`, `@` (juga setelah spasi), tab atau CR diberi awalan `'`
+agar spreadsheet tidak menjalankannya sebagai formula (CSV injection).
+
+```bash
+curl -s -b cookies.txt "http://127.0.0.1:8790/api/activity?action=auth.login_failed&from=2026-10-01&limit=100"
+curl -s -b cookies.txt -H "X-Solar-Language: en" -o activity.csv "http://127.0.0.1:8790/api/activity.csv?action=user.*"
 ```
 
 ## Sistem

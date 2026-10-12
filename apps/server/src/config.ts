@@ -95,6 +95,8 @@ const EnvSchema = z.object({
   TASK_CONCURRENCY: z.coerce.number().int().min(1).max(10).default(2),
   ATTACHMENT_MAX_MB: z.coerce.number().int().min(1).max(200).default(25),
   CONFIRMATION_TIMEOUT_MINUTES: z.coerce.number().int().min(1).max(1440).default(60),
+  // activity log (audit trail): entries older than this many days are removed daily; 0 = keep forever
+  ACTIVITY_RETENTION_DAYS: z.coerce.number().int().min(0).max(36_500).default(365),
 
   DATABASE_URL: optionalString,
 
@@ -172,6 +174,10 @@ export interface AppConfig {
   };
   taskConcurrency: number;
   confirmationTimeoutMs: number;
+  activity: {
+    /** Days the activity log keeps an entry (ACTIVITY_RETENTION_DAYS); 0 = forever. */
+    retentionDays: number;
+  };
   attachments: {
     maxFileBytes: number;
     maxPerTask: number;
@@ -266,6 +272,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     },
     taskConcurrency: e.TASK_CONCURRENCY,
     confirmationTimeoutMs: e.CONFIRMATION_TIMEOUT_MINUTES * 60_000,
+    activity: { retentionDays: e.ACTIVITY_RETENTION_DAYS },
     attachments: {
       maxFileBytes: e.ATTACHMENT_MAX_MB * 1024 * 1024,
       maxPerTask: 10,

@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
+import { ActivityLog } from './activity/activityLog.js';
 import { createAgentRunner, type ResponsesStreamer } from './agent/agent.js';
 import { AuthService, type AuthServiceOptions } from './auth/authService.js';
 import { createBuiltinTools } from './agent/builtinTools.js';
@@ -44,6 +45,8 @@ export interface StartOptions {
   extraTools?: AgentTool[];
   /** Password hashing parameters and rate limits of the login (tests). */
   auth?: AuthServiceOptions;
+  /** Batching of the activity log (tests: a short delay). */
+  activity?: { flushDelayMs?: number; now?: () => number };
 }
 
 export interface RunningServer {
@@ -66,17 +69,20 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
 
   const repo: Repository = config.databaseUrl ? new PostgresRepository(config.databaseUrl) : new FileRepository(config.dataDir);
   await repo.init();
+  // the audit trail: logins, account changes, tasks, approvals, knowledge/skill/settings changes (written in batches)
+  const activity = new ActivityLog(repo, { retentionDays: config.activity.retentionDays, ...options.activity });
   const objects: ObjectStore = config.s3 ? new S3ObjectStore(config.s3) : new LocalObjectStore(config.dataDir);
 
   const bus = new EventBus();
   const artifacts = new ArtifactService(repo, objects);
   const attachments = new AttachmentService(repo, objects, { maxFileBytes: config.attachments.maxFileBytes });
-  const auth = new AuthService(config, repo, bus, options.auth);
+  const auth = new AuthService(config, repo, bus, { ...options.auth, activity });
   try {
     // SOLAR_ADMIN_* bootstrap; an invalid one stops the start (the operator asked for that account)
     await auth.init();
   } catch (err) {
     auth.close();
+    await activity.close();
     await repo.close().catch(() => undefined);
     throw err;
   }
@@ -88,6 +94,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     model: () => models.primaryLabel(),
     confirmationTimeoutMs: config.confirmationTimeoutMs,
     resolveRequester: (ownerId) => auth.requesterOf(ownerId),
+    activity,
   });
   await tasks.recoverInterrupted();
 
@@ -116,7 +123,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   app.disable('x-powered-by');
   // X-Forwarded-For / -Proto / -Host are believed only from TRUST_PROXY hops (client address, Secure cookies)
   app.set('trust proxy', config.auth.trustProxy > 0 ? config.auth.trustProxy : false);
-  app.use('/api', createApiRouter({ config, repo, objectsKind: objects.kind, tasks, artifacts, attachments, bus, skills, plugins, mcp, knowledge, llm, models, auth }));
+  app.use('/api', createApiRouter({ config, repo, objectsKind: objects.kind, tasks, artifacts, attachments, bus, skills, plugins, mcp, knowledge, llm, models, auth, activity }));
 
   if (existsSync(join(config.webDistDir, 'index.html'))) {
     app.use(
@@ -172,6 +179,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   } catch (err) {
     // nothing listens: release what was opened above (database pool) before the caller retries or gives up
     auth.close();
+    await activity.close();
     await repo.close().catch(() => undefined);
     throw err;
   }
@@ -192,6 +200,8 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   }
 
   mcp.startAll();
+  // entries older than ACTIVITY_RETENTION_DAYS are removed now and then once a day
+  activity.start();
   // documents uploaded but never sent with a request are removed after a day
   const ATTACHMENT_GC_AGE = 24 * 3_600_000;
   const gc = () => void attachments.collectGarbage(ATTACHMENT_GC_AGE).catch((err) => log.warn(`Attachment cleanup failed: ${String(err)}`));
@@ -200,6 +210,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   gcTimer.unref();
   log.info(`${APP_NAME} ${APP_VERSION} listening on ${url}`);
   log.info(`Storage: ${repo.kind} database, ${objects.kind} artifacts (data dir: ${config.dataDir})`);
+  log.info(`Activity log: kept ${config.activity.retentionDays > 0 ? `${config.activity.retentionDays} day(s)` : 'forever'} (ACTIVITY_RETENTION_DAYS)`);
   log.info(`Model route: ${llm.route().join(' -> ')}${models.primaryReady() ? '' : ' - WARNING: the primary model has no API key (OPENAI_API_KEY in .env, or Settings → AI models)'}`);
   log.info(`Knowledge base: ${(await knowledge.list()).length} file(s) in ${config.userKnowledgeDir}`);
 
@@ -214,6 +225,8 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
       server.closeAllConnections?.();
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await mcp.shutdown();
+      // what is still queued is written before the database closes
+      await activity.close();
       await repo.close();
     },
   };

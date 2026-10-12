@@ -1,4 +1,4 @@
-import type { Artifact, Attachment, Confirmation, Task, TaskEvent, TaskStats, TaskStatus, User, UserStatus } from '@solar/shared';
+import type { ActivityEntry, ActivityOutcome, Artifact, Attachment, Confirmation, Task, TaskEvent, TaskStats, TaskStatus, User, UserStatus } from '@solar/shared';
 
 export interface ListTasksOptions {
   limit: number;
@@ -32,6 +32,48 @@ export interface StoredSession {
 }
 
 export type CreateUserResult = 'created' | 'username-taken' | 'email-taken';
+
+/** Position in the activity log: entries strictly older than this one (newest first = by `at`, then `id`, descending). */
+export interface ActivityCursor {
+  at: string;
+  id: string;
+}
+
+/** Filters of the activity log; all optional, combined with AND. */
+export interface ActivityQuery {
+  /** Only entries of this actor (user id, or ACCESS_TOKEN_PRINCIPAL_ID). */
+  actorId?: string;
+  /** Exact action codes (any of them). */
+  actions?: string[];
+  /** Action codes starting with this prefix, e.g. "user." (any of them). */
+  actionPrefixes?: string[];
+  outcome?: ActivityOutcome;
+  /** `at >= from` (ISO). */
+  from?: string;
+  /** `at < to` (ISO). */
+  to?: string;
+  /** Case-insensitive text in the actor name, target label/id, action or details. */
+  q?: string;
+  /** Entries older than this one (the next page). */
+  before?: ActivityCursor;
+  /** 1..1000. */
+  limit: number;
+}
+
+/**
+ * What `appendActivity` throws when it stored only part of a batch (e.g. one month file of the file backend could not
+ * be written): the ids it did store - the caller retries only the others and does not count the stored ones as lost -
+ * and, as `cause`, the failure of the rest.
+ */
+export class ActivityPartialWriteError extends Error {
+  constructor(
+    readonly storedIds: ReadonlySet<string>,
+    cause: unknown,
+  ) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = 'ActivityPartialWriteError';
+  }
+}
 
 export type UserPatch = Partial<Pick<StoredUser, 'name' | 'role' | 'status' | 'passwordHash' | 'lastLoginAt' | 'approvedAt' | 'approvedBy' | 'updatedAt'>>;
 
@@ -96,6 +138,17 @@ export interface Repository {
   deleteUserSessions(userId: string, exceptTokenHash?: string): Promise<string[]>;
   /** Deletes sessions whose expiry is before `nowIso`; returns how many. */
   deleteExpiredSessions(nowIso: string): Promise<number>;
+
+  // ---- activity log (audit trail) --------------------------------------------------------------------------------
+  /**
+   * Appends entries (a batch, in id order); an entry whose id is already stored is skipped. When only part of the batch
+   * could be stored, throws an ActivityPartialWriteError naming what was.
+   */
+  appendActivity(entries: ActivityEntry[]): Promise<void>;
+  /** Newest first (`at`, then `id`, descending); `next` is the cursor of the next page, null when there is none. */
+  listActivity(query: ActivityQuery): Promise<{ items: ActivityEntry[]; next: ActivityCursor | null }>;
+  /** Deletes entries with `at` before `cutoffIso` (retention); returns how many. */
+  deleteActivityBefore(cutoffIso: string): Promise<number>;
 }
 
 export function emptyStats(): TaskStats {

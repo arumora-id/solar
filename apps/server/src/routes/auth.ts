@@ -1,6 +1,6 @@
 import express, { type Request, type Response, type Router } from 'express';
 import { z } from 'zod';
-import { can, ROLES, USER_STATUSES, type AuthState, type Role } from '@solar/shared';
+import { can, ROLES, USER_STATUSES, type ActivityAction, type AuthState, type Role } from '@solar/shared';
 import { APP_NAME, APP_VERSION, type AppConfig } from '../config.js';
 import { langOf, t, type Lang } from '../i18n.js';
 import { formatZodIssues, zodErrorMap } from '../i18n/zodIssues.js';
@@ -97,7 +97,7 @@ export function createAuthRouter({ config, auth }: AuthRouteDeps): Router {
   });
 
   r.post('/logout', async (req, res) => {
-    await auth.logout(req.principal ?? null);
+    await auth.logout(req.principal ?? null, requestMeta(req));
     res.append('Set-Cookie', clearedSessionCookie(isSecure(req)));
     res.status(204).end();
   });
@@ -115,7 +115,7 @@ export function createAuthRouter({ config, auth }: AuthRouteDeps): Router {
 
   r.post('/password', requireUser, async (req, res) => {
     const body = parse(z.object({ currentPassword: text(1024).min(1), newPassword: text(1024) }), req.body, req.lang);
-    await call(req, () => auth.changeOwnPassword(principalOf(req), body.currentPassword, body.newPassword));
+    await call(req, () => auth.changeOwnPassword(principalOf(req), body.currentPassword, body.newPassword, requestMeta(req)));
     res.status(204).end();
   });
 
@@ -136,6 +136,14 @@ export function createUsersRouter({ auth }: AuthRouteDeps): Router {
     return id;
   };
 
+  /** Records an attempt refused by the route's permission check (the account the URL names, when it is an id). */
+  const refused = (action: ActivityAction) => (req: Request) => {
+    const id = typeof req.params.id === 'string' && USER_ID.test(req.params.id) ? req.params.id : null;
+    auth.auditForbidden(principalOf(req), requestMeta(req), action, { type: 'user', id, label: null });
+  };
+  /** A permission check that records who was refused. */
+  const allowed = (permission: Parameters<typeof requirePermission>[0], action: ActivityAction) => requirePermission(permission, refused(action));
+
   r.get('/', requirePermission('users.view'), async (req, res) => {
     const q = parse(z.object({ status: z.enum(USER_STATUSES as [string, ...string[]]).optional() }), req.query, req.lang);
     res.json(await call(req, () => auth.listUsers(principalOf(req), { status: q.status as (typeof USER_STATUSES)[number] | undefined })));
@@ -149,9 +157,9 @@ export function createUsersRouter({ auth }: AuthRouteDeps): Router {
     res.json(await call(req, () => auth.getUserFor(principalOf(req), userId(req))));
   });
 
-  r.post('/', requirePermission('users.manage'), async (req, res) => {
+  r.post('/', allowed('users.manage', 'user.create'), async (req, res) => {
     const body = parse(accountBody.extend({ role: roleField.default('staff') }), req.body, req.lang);
-    res.status(201).json(await call(req, () => auth.createUser(principalOf(req), body)));
+    res.status(201).json(await call(req, () => auth.createUser(principalOf(req), body, requestMeta(req))));
   });
 
   r.patch('/:id', async (req, res) => {
@@ -167,28 +175,31 @@ export function createUsersRouter({ auth }: AuthRouteDeps): Router {
     // without any user permission there is nothing this route can do
     const principal = principalOf(req);
     if (!(['users.approve', 'users.disable', 'users.manage'] as const).some((p) => can(principal.role, p))) {
+      const action: ActivityAction =
+        body.role !== undefined ? 'user.role_change' : body.status === 'disabled' ? 'user.disable' : body.status === 'active' ? 'user.enable' : 'user.rename';
+      auth.auditForbidden(principal, requestMeta(req), action, { type: 'user', id, label: null }, body.role !== undefined ? { to: body.role } : undefined);
       throw new HttpError(403, t(req.lang, 'auth.forbidden'), 'forbidden');
     }
     const status = body.status as 'active' | 'disabled' | undefined;
-    res.json(await call(req, () => auth.updateUser(principal, id, { role: body.role, status, name: body.name })));
+    res.json(await call(req, () => auth.updateUser(principal, id, { role: body.role, status, name: body.name }, requestMeta(req))));
   });
 
-  r.post('/:id/approve', requirePermission('users.approve'), async (req, res) => {
+  r.post('/:id/approve', allowed('users.approve', 'user.approve'), async (req, res) => {
     const id = userId(req);
     const body = parse(z.object({ role: roleField.optional() }), req.body, req.lang);
-    res.json(await call(req, () => auth.approve(principalOf(req), id, body.role)));
+    res.json(await call(req, () => auth.approve(principalOf(req), id, body.role, requestMeta(req))));
   });
 
-  r.post('/:id/password', requirePermission('users.manage'), async (req, res) => {
+  r.post('/:id/password', allowed('users.manage', 'user.password_reset'), async (req, res) => {
     const id = userId(req);
     const body = parse(z.object({ password: text(1024) }), req.body, req.lang);
-    await call(req, () => auth.resetPassword(principalOf(req), id, body.password));
+    await call(req, () => auth.resetPassword(principalOf(req), id, body.password, requestMeta(req)));
     res.status(204).end();
   });
 
-  r.delete('/:id', requirePermission('users.manage'), async (req, res) => {
+  r.delete('/:id', allowed('users.manage', 'user.delete'), async (req, res) => {
     const id = userId(req);
-    await call(req, () => auth.deleteUser(principalOf(req), id));
+    await call(req, () => auth.deleteUser(principalOf(req), id, requestMeta(req)));
     res.status(204).end();
   });
 

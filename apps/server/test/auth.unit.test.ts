@@ -143,12 +143,29 @@ describe('rate limiter', () => {
 describe('roles and permissions (shared table)', () => {
   const has = (role: Role) => PERMISSIONS.filter((p) => can(role, p));
 
-  it('superadmin has everything; head of IT everything but user management and system settings; staff the agent, knowledge and skills', () => {
+  it('superadmin has everything; head of IT everything but user management and system settings; staff the agent, knowledge, skills and own activity', () => {
     expect(has('superadmin')).toEqual([...PERMISSIONS]);
     expect(has('head_of_it').sort()).toEqual(
-      (['agent.use', 'tasks.all', 'users.view', 'users.approve', 'users.disable', 'knowledge.read', 'knowledge.write', 'skills.read', 'skills.manage'] as Permission[]).sort(),
+      (
+        [
+          'agent.use',
+          'tasks.all',
+          'users.view',
+          'users.approve',
+          'users.disable',
+          'knowledge.read',
+          'knowledge.write',
+          'skills.read',
+          'skills.manage',
+          'activity.view_all',
+          'activity.view_own',
+        ] as Permission[]
+      ).sort(),
     );
-    expect(has('staff').sort()).toEqual((['agent.use', 'knowledge.read', 'knowledge.write', 'skills.read', 'skills.manage'] as Permission[]).sort());
+    expect(has('staff').sort()).toEqual(
+      (['agent.use', 'knowledge.read', 'knowledge.write', 'skills.read', 'skills.manage', 'activity.view_own'] as Permission[]).sort(),
+    );
+    expect(ROLE_PERMISSIONS.staff).not.toContain('activity.view_all');
     expect(ROLE_PERMISSIONS.staff).not.toContain('settings.manage');
     expect(can(undefined, 'agent.use')).toBe(false);
   });

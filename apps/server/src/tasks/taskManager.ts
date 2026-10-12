@@ -10,6 +10,8 @@ import type {
   TaskUsage,
 } from '@solar/shared';
 import { ACCESS_TOKEN_PRINCIPAL_ID, can, EMPTY_USAGE, TERMINAL_TASK_STATUSES, type Role } from '@solar/shared';
+import { taskOwnerActor, type ActivityInput, type ActivitySink } from '../activity/activityLog.js';
+import { truncate, wellFormed } from '../documents/safe.js';
 import { DEFAULT_LANG, t, taskLang, type Lang } from '../i18n.js';
 import { createLogger } from '../logger.js';
 import type { Repository } from '../storage/repository.js';
@@ -44,6 +46,9 @@ export interface TaskRequester {
   role: Role;
 }
 
+/** What a tool records in the activity log; the actor (the task's owner) is added by the task manager. */
+export type TaskActivityInput = Omit<ActivityInput, 'actor' | 'ip' | 'userAgent'>;
+
 /** Everything the agent needs while executing one task. */
 export interface TaskRunContext {
   readonly task: Task;
@@ -68,6 +73,12 @@ export interface TaskRunContext {
   createArtifact(input: Omit<NewArtifact, 'taskId'>): Promise<Artifact>;
   listArtifacts(): Promise<Artifact[]>;
   confirm(request: ConfirmationRequest): Promise<ConfirmationDecision>;
+  /**
+   * Records what a tool did in the activity log (a knowledge file saved after the user's approval, artifacts published):
+   * the actor is the task's owner, and `details.via = "agent"` and `details.taskId` are added. Optional so that contexts
+   * built by tests need not have it.
+   */
+  recordActivity?(input: TaskActivityInput): void;
 }
 
 export type TaskRunner = (ctx: TaskRunContext) => Promise<{ result: string }>;
@@ -102,6 +113,8 @@ export class TaskManager {
       confirmationTimeoutMs: number;
       /** Name and role of a task's owner (user accounts); without it tasks run without a requester. */
       resolveRequester?: (ownerId: string | undefined) => Promise<TaskRequester | null>;
+      /** The activity log, for what the agent's tools do on the owner's behalf. */
+      activity?: ActivitySink;
     },
   ) {}
 
@@ -135,8 +148,9 @@ export class TaskManager {
    * `ownerId`: the user (or ACCESS_TOKEN_PRINCIPAL_ID) the task belongs to.
    */
   async create(prompt: string, sessionId: string, attachmentIds: string[] = [], language: Lang = DEFAULT_LANG, ownerId?: string): Promise<Task> {
-    const firstLine = prompt.trim().split(/\r?\n/)[0] ?? '';
-    const title = firstLine.length > 90 ? `${firstLine.slice(0, 87)}...` : firstLine || t(language, 'task.untitled');
+    // well-formed and cut between characters: the title becomes the label of activity-log entries and lists
+    const firstLine = wellFormed(prompt.trim().split(/\r?\n/)[0] ?? '');
+    const title = firstLine.length > 90 ? `${truncate(firstLine, 87)}...` : firstLine || t(language, 'task.untitled');
     const task: Task = {
       id: newId('task'),
       sessionId,
@@ -431,6 +445,12 @@ export class TaskManager {
       },
       listArtifacts: () => this.artifacts.list(id),
       confirm: (request) => this.requestConfirmation(active, request),
+      recordActivity: (input) =>
+        this.options.activity?.record({
+          ...input,
+          actor: taskOwnerActor(ownerId, requester),
+          details: { ...input.details, via: 'agent', taskId: id },
+        }),
     };
   }
 

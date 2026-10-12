@@ -206,7 +206,7 @@ Semua kredensial berada di `.env` (tidak pernah di-commit). Nilai kosong = fitur
 | `SOLAR_PRICE_PER_MTOK` | | Opsional `input,cached_input,output` (USD per 1 juta token) untuk estimasi biaya bila harga berubah. |
 | `PORT`, `HOST` | | Default `8790`, `127.0.0.1` (hanya komputer ini). |
 | `SOLAR_ACCESS_TOKEN` | jika `HOST=0.0.0.0` | Token akses UI/API saat dibuka dari jaringan. |
-| `DATABASE_URL` | | Connection string **Neon** (`postgresql://…neon.tech/neondb?sslmode=require`). Tabel dibuat otomatis. |
+| `DATABASE_URL` | | Connection string **Neon** (`postgresql://…neon.tech/neondb?sslmode=require`). Tabel (task, akun, sesi, peran, log aktivitas, …) dibuat otomatis saat start; skema lengkapnya di [`docs/schema.sql`](docs/schema.sql) (`npm run -s db:schema`). |
 | `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_FORCE_PATH_STYLE`, `S3_PREFIX` | | Object storage S3-compatible untuk file artefak. |
 | `GITHUB_TOKEN` | | Fine-grained PAT (Contents RW, Pull requests, Issues, Metadata). Mengaktifkan plugin MCP GitHub dan tool publish. |
 | `GITHUB_DEFAULT_REPO`, `GITHUB_DEFAULT_BRANCH` | | Repo tujuan publish default (`owner/repo`) dan branch. |
@@ -217,6 +217,7 @@ Semua kredensial berada di `.env` (tidak pernah di-commit). Nilai kosong = fitur
 | `PLANE_CONFIRM` | | `never` (default) atau `always`. |
 | `VP_MCP_URL`, `VP_MCP_TOKEN` | | Endpoint MCP Visual Paradigm. **Setiap** pemanggilan selalu dikonfirmasi. |
 | `ATTACHMENT_MAX_MB` | | Ukuran maksimum satu dokumen lampiran (default `25`). |
+| `ACTIVITY_RETENTION_DAYS` | | Lama log aktivitas (audit) disimpan, dalam hari (default `365`; `0` = selamanya). |
 | `TASK_CONCURRENCY`, `CONFIRMATION_TIMEOUT_MINUTES`, `SOLAR_MAX_TOKENS`, `SOLAR_MAX_TURNS`, `LOG_LEVEL` | | Penyetelan lanjutan. |
 
 Tanpa `DATABASE_URL`/`S3_*`, SOLAR tetap berjalan penuh dengan penyimpanan file lokal (`data/`). Begitu kredensial Neon
@@ -543,6 +544,7 @@ npm run typecheck   # TypeScript semua workspace
 npm test            # unit + end-to-end agent (model tiruan) - tidak memanggil API berbayar
 npm run build       # build web + server
 npm run check       # ketiganya sekaligus
+npm run -s db:schema > schema.sql   # skema Postgres lengkap (sama dengan docs/schema.sql; -- --json = array pernyataan)
 ```
 
 Pengujian opsional tambahan:
@@ -553,6 +555,9 @@ ARCHIMATE_XSD_DIR=/path/ke/xsd npm test
 
 # jalankan skenario end-to-end terhadap Postgres/Neon (tabel solar_* di database tersebut akan DIHAPUS lalu dibuat ulang)
 SOLAR_TEST_DATABASE_URL="postgresql://user:pass@host/db_test?sslmode=require" npm test
+
+# akun, sesi, peran (tabel solar_roles + foreign key) dan log aktivitas di Postgres (juga database yang boleh dihapus)
+SOLAR_TEST_AUTH_DATABASE_URL="postgresql://user:pass@host/db_auth_test?sslmode=require" npm test
 ```
 
 Yang sudah diuji otomatis: validator & renderer ArchiMate/sequence/TSD (termasuk dokumen Word TSD yang dibaca ulang,

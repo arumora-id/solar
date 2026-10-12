@@ -276,7 +276,14 @@ export function createKnowledgeTools(knowledge: KnowledgeStore, artifacts?: Arti
             dryRun,
             approvedState: asked.get(input),
           });
-          return dryRun ? stateChanged(lang) : saved(result, lang);
+          if (dryRun) return stateChanged(lang);
+          // approved by the user and written: in the activity log as the task owner's write, through the agent
+          ctx.recordActivity?.({
+            action: 'knowledge.write',
+            target: { type: 'knowledge', id: result.entry.path, label: result.entry.path },
+            details: { title: result.entry.title, type: result.entry.type, replaced: result.replaced },
+          });
+          return saved(result, lang);
         } catch (err) {
           return refused(err, lang);
         }
@@ -338,7 +345,13 @@ export function createKnowledgeTools(knowledge: KnowledgeStore, artifacts?: Arti
               dryRun,
               approvedState: asked.get(input),
             });
-            return dryRun ? stateChanged(lang) : saved(result, lang, { source_artifact: { id: result.artifact.id, name: result.artifact.name } });
+            if (dryRun) return stateChanged(lang);
+            ctx.recordActivity?.({
+              action: 'knowledge.import_artifact',
+              target: { type: 'knowledge', id: result.entry.path, label: result.entry.path },
+              details: { artifactId: result.artifact.id, artifactName: result.artifact.name, title: result.entry.title, replaced: result.replaced },
+            });
+            return saved(result, lang, { source_artifact: { id: result.artifact.id, name: result.artifact.name } });
           } catch (err) {
             return refused(err, lang);
           }

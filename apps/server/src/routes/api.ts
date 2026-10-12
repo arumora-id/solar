@@ -5,6 +5,7 @@ import {
   ATTACHMENT_EXTENSIONS,
   can,
   LANGUAGES,
+  type ActivityAction,
   type Artifact,
   type Attachment,
   type KnowledgeType,
@@ -15,8 +16,9 @@ import {
   type TaskOwner,
   type TaskStatus,
 } from '@solar/shared';
+import type { ActivityInput, ActivityLog, ActivityTarget } from '../activity/activityLog.js';
 import type { AuthService, Principal } from '../auth/authService.js';
-import { authenticate, principalOf, requirePermission, requireUser, sameOriginGuard } from '../auth/http.js';
+import { authenticate, principalOf, requestMeta, requirePermission, requireUser, sameOriginGuard } from '../auth/http.js';
 import { APP_NAME, APP_VERSION, type AppConfig } from '../config.js';
 import { errorMessage, langOf, t, taskLang, type Lang } from '../i18n.js';
 import { formatZodIssues, zodErrorMap } from '../i18n/zodIssues.js';
@@ -37,6 +39,7 @@ import type { AttachmentService } from '../tasks/attachmentService.js';
 import type { EventBus, MessageScope } from '../tasks/eventBus.js';
 import type { TaskManager } from '../tasks/taskManager.js';
 import { exportTechSpecDocx, TechSpecDocxError } from '../tasks/techSpecDocx.js';
+import { registerActivityRoutes, requestActivity } from './activity.js';
 import { createAuthRouter, createUsersRouter } from './auth.js';
 import { HttpError } from './httpError.js';
 
@@ -57,6 +60,7 @@ export interface ApiDeps {
   llm: LlmProviderStore;
   models: ModelRouter;
   auth: AuthService;
+  activity: ActivityLog;
 }
 
 declare global {
@@ -161,7 +165,7 @@ export function streamVisible(principal: Principal, scope: MessageScope | undefi
 }
 
 export function createApiRouter(deps: ApiDeps): Router {
-  const { config, tasks, artifacts, attachments, skills, plugins, mcp, bus, knowledge, llm, models, auth } = deps;
+  const { config, tasks, artifacts, attachments, skills, plugins, mcp, bus, knowledge, llm, models, auth, activity } = deps;
   const r = express.Router();
   r.use(languageMiddleware);
   const jsonBody = express.json({ limit: '4mb' });
@@ -181,6 +185,19 @@ export function createApiRouter(deps: ApiDeps): Router {
   r.use('/auth', createAuthRouter({ config, auth }));
   r.use('/users', createUsersRouter({ config, auth }));
   r.use(requireUser);
+
+  /** Records what the request's principal did (in the background: never slows or fails the request). */
+  const record = (req: Request, input: Omit<ActivityInput, 'actor' | 'ip' | 'userAgent'>) => activity.record({ ...requestActivity(req), ...input });
+  /**
+   * Records an attempt refused by a route's permission check (`requirePermission(permission, refused(...))`): the action
+   * tried and the target the URL names. Throttled per account, action and target by the AuthService.
+   */
+  const refused = (action: ActivityAction, target: (req: Request) => ActivityTarget | null) => (req: Request) =>
+    auth.auditForbidden(principalOf(req), requestMeta(req), action, target(req));
+  const paramId = (req: Request) => (typeof req.params.id === 'string' ? req.params.id : null);
+
+  // roles (every logged-in user) and the activity log (own entries; everyone's with activity.view_all)
+  registerActivityRoutes(r, { activity, refused });
 
   // ---- who may see what --------------------------------------------------------------------------------------------
   /** Roles with tasks.all see every task; everybody else only their own (never the ownerless tasks from before accounts). */
@@ -327,6 +344,11 @@ export function createApiRouter(deps: ApiDeps): Router {
       }
       return tasks.create(body.prompt, body.sessionId, ids, body.language ?? req.lang, owner);
     });
+    record(req, {
+      action: 'task.create',
+      target: { type: 'task', id: task.id, label: task.title },
+      details: { language: task.language, attachments: ids.length, sessionId: task.sessionId },
+    });
     res.status(201).json(task);
   });
 
@@ -374,6 +396,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     if (!task || !mayAccess(req, task.ownerId)) throw new HttpError(409, t(req.lang, 'api.taskNotActive'));
     const ok = await tasks.cancel(req.params.id);
     if (!ok) throw new HttpError(409, t(req.lang, 'api.taskNotActive'));
+    record(req, { action: 'task.cancel', target: { type: 'task', id: task.id, label: task.title }, details: { status: task.status } });
     res.json({ ok: true });
   });
 
@@ -415,6 +438,11 @@ export function createApiRouter(deps: ApiDeps): Router {
     if (!pending || !pending.task || !mayAccess(req, pending.task.ownerId)) throw new HttpError(404, t(req.lang, 'api.confirmationNotFound'));
     const c = tasks.resolveConfirmation(req.params.id, body.approved, body.note?.trim() || null);
     if (!c) throw new HttpError(404, t(req.lang, 'api.confirmationNotFound'));
+    record(req, {
+      action: body.approved ? 'confirmation.approve' : 'confirmation.reject',
+      target: { type: 'confirmation', id: c.id, label: c.displayName },
+      details: { tool: c.tool, taskId: c.taskId, taskTitle: pending.task.title, ...(c.pluginId ? { pluginId: c.pluginId } : {}) },
+    });
     res.json({ ok: true });
   });
 
@@ -442,7 +470,7 @@ export function createApiRouter(deps: ApiDeps): Router {
    * 500 when rendering failed or timed out (it runs in a worker thread, see tasks/techSpecDocxIsolated.ts).
    */
   r.post('/artifacts/:id/docx', requirePermission('agent.use'), async (req, res) => {
-    await visibleArtifact(req, req.params.id);
+    const source = await visibleArtifact(req, req.params.id);
     try {
       // errors and warnings in the language of the request, the new artifact's description in the task's
       const result = await exportTechSpecDocx(
@@ -452,6 +480,13 @@ export function createApiRouter(deps: ApiDeps): Router {
         req.lang,
         async (taskId) => taskLang({ task: await tasks.get(taskId) }),
       );
+      if (result.created) {
+        record(req, {
+          action: 'artifact.docx_export',
+          target: { type: 'artifact', id: result.artifact.id, label: result.artifact.name },
+          details: { sourceArtifactId: source.id, sourceName: source.name, taskId: source.taskId },
+        });
+      }
       res.status(result.created ? 201 : 200).json(result);
     } catch (err) {
       if (err instanceof TechSpecDocxError) throw new HttpError(err.status, err.in(req.lang));
@@ -552,37 +587,55 @@ export function createApiRouter(deps: ApiDeps): Router {
   });
 
   r.post('/skills', manageSkills, async (req, res) => {
+    let created;
     try {
-      res.status(201).json(await skills.create(parse(skillBody, req.body, req.lang)));
+      created = await skills.create(parse(skillBody, req.body, req.lang));
     } catch (err) {
       throw httpError(409, err, req.lang);
     }
+    record(req, { action: 'skill.create', target: { type: 'skill', id: created.id, label: created.name }, details: { enabled: created.enabled } });
+    res.status(201).json(created);
   });
 
   r.post('/skills/import', manageSkills, async (req, res) => {
     const body = parse(z.object({ markdown: z.string().min(1).max(200_000) }), req.body, req.lang);
+    let imported;
     try {
-      res.status(201).json(await skills.importMarkdown(body.markdown));
+      imported = await skills.importMarkdown(body.markdown);
     } catch (err) {
       throw httpError(409, err, req.lang);
     }
+    record(req, { action: 'skill.create', target: { type: 'skill', id: imported.id, label: imported.name }, details: { via: 'import', enabled: imported.enabled } });
+    res.status(201).json(imported);
   });
 
   r.put('/skills/:id', manageSkills, async (req, res) => {
     const body = onlySent(parse(skillBody.partial(), req.body, req.lang), req.body);
+    const before = await skills.get(req.params.id);
+    let updated;
     try {
-      res.json(await skills.update(req.params.id, body));
+      updated = await skills.update(req.params.id, body);
     } catch (err) {
       throw httpError(404, err, req.lang);
     }
+    const target = { type: 'skill' as const, id: updated.id, label: updated.name };
+    // a change of the text and switching on/off are separate entries (the UI's toggle sends only `enabled`)
+    const fields = (['name', 'description', 'content'] as const).filter((k) => body[k] !== undefined);
+    if (fields.length) record(req, { action: 'skill.update', target, details: { fields, source: updated.source } });
+    if (body.enabled !== undefined && before?.enabled !== updated.enabled) record(req, { action: updated.enabled ? 'skill.enable' : 'skill.disable', target });
+    res.json(updated);
   });
 
   r.delete('/skills/:id', manageSkills, async (req, res) => {
+    const before = await skills.get(req.params.id);
+    let result;
     try {
-      res.json({ result: await skills.remove(req.params.id) });
+      result = await skills.remove(req.params.id);
     } catch (err) {
       throw httpError(404, err, req.lang);
     }
+    record(req, { action: 'skill.delete', target: { type: 'skill', id: req.params.id, label: before?.name ?? req.params.id }, details: { result } });
+    res.json({ result });
   });
 
   // ---- MCP plugins ----------------------------------------------------------
@@ -596,12 +649,15 @@ export function createApiRouter(deps: ApiDeps): Router {
   // MCP plugins can run commands and hold credentials: system settings, superadmin only (reading included); every
   // logged-in user still sees the plugins' connection status in the event stream
   const settings = requirePermission('settings.manage');
+  /** settings.manage for a change; a refused attempt is recorded as `action` on the plugin/provider the URL names. */
+  const changeSetting = (action: ActivityAction, type: 'plugin' | 'llm_provider' | 'llm_route') =>
+    requirePermission('settings.manage', refused(action, (req) => ({ type, id: type === 'llm_route' ? 'routes' : paramId(req), label: null })));
 
   r.get('/plugins', settings, (req, res) => {
     res.json(plugins.list().map((p) => view(p.id, req.lang)));
   });
 
-  r.post('/plugins', settings, async (req, res) => {
+  r.post('/plugins', changeSetting('settings.plugin.create', 'plugin'), async (req, res) => {
     let created;
     try {
       created = await plugins.create(req.body);
@@ -609,34 +665,56 @@ export function createApiRouter(deps: ApiDeps): Router {
       throw httpError(400, err, req.lang);
     }
     void mcp.connect(created.id).catch(() => undefined);
+    // field names only: a plugin's env and headers hold credentials
+    record(req, {
+      action: 'settings.plugin.create',
+      target: { type: 'plugin', id: created.id, label: created.name },
+      details: { preset: created.preset, transport: created.transport, enabled: created.enabled, confirm: created.confirm },
+    });
     res.status(201).json(view(created.id, req.lang));
   });
 
-  r.put('/plugins/:id', settings, async (req, res) => {
+  r.put('/plugins/:id', changeSetting('settings.plugin.update', 'plugin'), async (req, res) => {
     const patch = onlySent(parse(PluginConfigBaseSchema.omit({ id: true }).partial(), req.body, req.lang), req.body);
+    let updated;
     try {
-      await plugins.update(req.params.id, patch);
+      updated = await plugins.update(req.params.id, patch);
     } catch (err) {
       throw httpError(400, err, req.lang);
     }
     void mcp.connect(req.params.id).catch(() => undefined);
+    record(req, {
+      action: 'settings.plugin.update',
+      target: { type: 'plugin', id: updated.id, label: updated.name },
+      details: { fields: Object.keys(patch), enabled: updated.enabled },
+    });
     res.json(view(req.params.id, req.lang));
   });
 
-  r.post('/plugins/:id/reconnect', settings, async (req, res) => {
-    if (!plugins.get(req.params.id)) throw new HttpError(404, t(req.lang, 'api.pluginNotFound'));
+  r.post('/plugins/:id/reconnect', changeSetting('settings.plugin.reconnect', 'plugin'), async (req, res) => {
+    const plugin = plugins.get(req.params.id);
+    if (!plugin) throw new HttpError(404, t(req.lang, 'api.pluginNotFound'));
     try {
       await mcp.connect(req.params.id);
     } catch {
       // the error is reported in the plugin status
     }
+    const state = mcp.status(req.params.id, req.lang).state;
+    record(req, {
+      action: 'settings.plugin.reconnect',
+      outcome: state === 'error' ? 'failure' : 'success',
+      target: { type: 'plugin', id: plugin.id, label: plugin.name },
+      details: { state },
+    });
     res.json(view(req.params.id, req.lang));
   });
 
-  r.delete('/plugins/:id', settings, async (req, res) => {
-    if (!plugins.get(req.params.id)) throw new HttpError(404, t(req.lang, 'api.pluginNotFound'));
+  r.delete('/plugins/:id', changeSetting('settings.plugin.delete', 'plugin'), async (req, res) => {
+    const plugin = plugins.get(req.params.id);
+    if (!plugin) throw new HttpError(404, t(req.lang, 'api.pluginNotFound'));
     await mcp.disconnect(req.params.id);
     await plugins.remove(req.params.id);
+    record(req, { action: 'settings.plugin.delete', target: { type: 'plugin', id: plugin.id, label: plugin.name } });
     res.json({ ok: true });
   });
 
@@ -645,46 +723,77 @@ export function createApiRouter(deps: ApiDeps): Router {
     res.json(llm.view());
   });
 
-  r.post('/llm/providers', settings, async (req, res) => {
+  r.post('/llm/providers', changeSetting('settings.llm.provider_create', 'llm_provider'), async (req, res) => {
+    let created;
     try {
-      await llm.create(req.body);
+      created = await llm.create(req.body);
     } catch (err) {
       throw httpError(400, err, req.lang);
     }
+    // never the API key or headers (values may be secrets): the provider's kind and models only
+    record(req, {
+      action: 'settings.llm.provider_create',
+      target: { type: 'llm_provider', id: created.id, label: created.name },
+      details: { kind: created.kind, enabled: created.enabled, models: created.models.map((m) => m.id) },
+    });
     res.status(201).json(llm.view());
   });
 
-  r.put('/llm/providers/:id', settings, async (req, res) => {
+  r.put('/llm/providers/:id', changeSetting('settings.llm.provider_update', 'llm_provider'), async (req, res) => {
     const patch = onlySent(parse(LlmProviderBaseSchema.omit({ id: true }).partial(), req.body, req.lang), req.body);
+    let updated;
     try {
-      await llm.update(req.params.id, patch);
+      updated = await llm.update(req.params.id, patch);
     } catch (err) {
       throw httpError(400, err, req.lang);
     }
+    record(req, {
+      action: 'settings.llm.provider_update',
+      target: { type: 'llm_provider', id: updated.id, label: updated.name },
+      details: { fields: Object.keys(patch), enabled: updated.enabled },
+    });
     res.json(llm.view());
   });
 
-  r.delete('/llm/providers/:id', settings, async (req, res) => {
+  r.delete('/llm/providers/:id', changeSetting('settings.llm.provider_delete', 'llm_provider'), async (req, res) => {
+    const provider = llm.get(req.params.id)?.config;
     try {
       await llm.remove(req.params.id);
     } catch (err) {
       throw httpError(404, err, req.lang);
     }
+    record(req, { action: 'settings.llm.provider_delete', target: { type: 'llm_provider', id: req.params.id, label: provider?.name ?? req.params.id } });
     res.json(llm.view());
   });
 
-  r.post('/llm/providers/:id/test', settings, async (req, res) => {
+  r.post('/llm/providers/:id/test', changeSetting('settings.llm.provider_test', 'llm_provider'), async (req, res) => {
     // Settings -> AI models "Test connection": the result in the language of the request
-    res.json(await models.test(req.params.id, req.lang));
+    const result = await models.test(req.params.id, req.lang);
+    record(req, {
+      action: 'settings.llm.provider_test',
+      outcome: result.ok ? 'success' : 'failure',
+      target: { type: 'llm_provider', id: req.params.id, label: llm.get(req.params.id)?.config.name ?? req.params.id },
+      details: result.ok ? { models: result.models?.length ?? 0 } : { reason: 'error' },
+    });
+    res.json(result);
   });
 
-  r.put('/llm/routes', settings, async (req, res) => {
+  r.put('/llm/routes', changeSetting('settings.llm.route_change', 'llm_route'), async (req, res) => {
     const body = parse(z.object({ routes: RoutesSchema }), req.body, req.lang);
+    const before = llm.view().routes;
+    let routes;
     try {
-      await llm.setRoutes(body.routes);
+      routes = await llm.setRoutes(body.routes);
     } catch (err) {
       throw httpError(400, err, req.lang);
     }
+    // route names are chosen by the admin: stored as values (a key like "token-saver" would be taken for a secret)
+    const asList = (r: Record<string, string[]>) => Object.entries(r).map(([name, models]) => ({ name, models }));
+    record(req, {
+      action: 'settings.llm.route_change',
+      target: { type: 'llm_route', id: 'routes', label: Object.keys(routes).join(', ') },
+      details: { from: asList(before), to: asList(routes) },
+    });
     res.json(llm.view());
   });
 
@@ -722,20 +831,27 @@ export function createApiRouter(deps: ApiDeps): Router {
 
   r.put('/knowledge/file', writeKnowledge, async (req, res) => {
     const body = parse(z.object({ path: knowledgePath, content: z.string().max(MAX_KNOWLEDGE_FILE_BYTES) }), req.body, req.lang);
+    let entry;
     try {
-      res.json(await knowledge.write(body.path, body.content));
+      entry = await knowledge.write(body.path, body.content);
     } catch (err) {
       throw knowledgeError(err, req.lang);
     }
+    record(req, { action: 'knowledge.write', target: { type: 'knowledge', id: entry.path, label: entry.path }, details: { title: entry.title, type: entry.type, size: entry.size } });
+    res.json(entry);
   });
 
   r.delete('/knowledge/file', writeKnowledge, async (req, res) => {
     const q = parse(z.object({ path: knowledgePath }), req.query, req.lang);
+    let result;
     try {
-      res.json({ result: await knowledge.remove(q.path) });
+      result = await knowledge.remove(q.path);
     } catch (err) {
       throw knowledgeError(err, req.lang, 404);
     }
+    // deleting the user's copy of a built-in file brings the built-in one back
+    record(req, { action: result === 'reverted' ? 'knowledge.revert' : 'knowledge.delete', target: { type: 'knowledge', id: q.path, label: q.path } });
+    res.json({ result });
   });
 
   /** Bulk import (e.g. a whole folder of .md files picked in the browser). */
@@ -749,7 +865,9 @@ export function createApiRouter(deps: ApiDeps): Router {
     const failed: Array<{ path: string; error: string }> = [];
     for (const f of body.files) {
       try {
-        imported.push(await knowledge.write(f.path, f.content));
+        const entry = await knowledge.write(f.path, f.content);
+        imported.push(entry);
+        record(req, { action: 'knowledge.write', target: { type: 'knowledge', id: entry.path, label: entry.path }, details: { title: entry.title, type: entry.type, via: 'import' } });
       } catch (err) {
         failed.push({ path: f.path, error: errorMessage(err, req.lang) });
       }
@@ -776,13 +894,18 @@ export function createApiRouter(deps: ApiDeps): Router {
       req.lang,
     );
     // only an artifact of a task the requester may see (the same 404 as an unknown one)
-    await visibleArtifact(req, body.artifactId);
+    const source = await visibleArtifact(req, body.artifactId);
     try {
       const { entry, replaced } = await importArtifactToKnowledge(knowledge, artifacts, {
         artifactId: body.artifactId,
         path: body.path,
         overwrite: body.overwrite,
         meta: { ...body, type: body.type as KnowledgeType },
+      });
+      record(req, {
+        action: 'knowledge.import_artifact',
+        target: { type: 'knowledge', id: entry.path, label: entry.path },
+        details: { artifactId: source.id, artifactName: source.name, title: entry.title, replaced },
       });
       res.status(201).json({ entry, replaced });
     } catch (err) {
@@ -843,20 +966,25 @@ export function createApiRouter(deps: ApiDeps): Router {
     const { name, tables } = await readTables(req);
     const table = tables.find((x) => x.name === opts.sheet);
     if (!table) throw new HttpError(400, t(req.lang, 'api.sheetMissing', { sheet: opts.sheet }));
+    let result;
     try {
-      res.status(201).json(
-        await importTable(knowledge, table, name, {
-          ...opts,
-          titleColumn: opts.titleColumn || undefined,
-          statusColumn: opts.statusColumn || undefined,
-          type: opts.type as KnowledgeType | undefined,
-          // the notices, errors and the generated index in the language of the request
-          lang: req.lang,
-        }),
-      );
+      result = await importTable(knowledge, table, name, {
+        ...opts,
+        titleColumn: opts.titleColumn || undefined,
+        statusColumn: opts.statusColumn || undefined,
+        type: opts.type as KnowledgeType | undefined,
+        // the notices, errors and the generated index in the language of the request
+        lang: req.lang,
+      });
     } catch (err) {
       throw knowledgeError(err, req.lang);
     }
+    record(req, {
+      action: 'knowledge.table_import',
+      target: { type: 'knowledge', id: opts.folder, label: opts.folder },
+      details: { file: name, sheet: opts.sheet, written: result.written.length, removed: result.removed.length, skipped: result.skipped.length },
+    });
+    res.status(201).json(result);
   });
 
   /** Word, PDF, PowerPoint, Markdown or text kept as knowledge (whole, or one file per chapter). */
@@ -887,12 +1015,18 @@ export function createApiRouter(deps: ApiDeps): Router {
       if (err instanceof DocumentError) throw new HttpError(err.status, err.message);
       throw err;
     }
+    let result;
     try {
-      const result = await importDocument(knowledge, doc.markdown, q.name, { ...opts, type: opts.type as KnowledgeType | undefined, lang: req.lang });
-      res.status(201).json({ ...result, warnings: [...doc.warnings, ...result.warnings] });
+      result = await importDocument(knowledge, doc.markdown, q.name, { ...opts, type: opts.type as KnowledgeType | undefined, lang: req.lang });
     } catch (err) {
       throw knowledgeError(err, req.lang);
     }
+    record(req, {
+      action: 'knowledge.document_import',
+      target: { type: 'knowledge', id: opts.folder, label: opts.folder },
+      details: { file: q.name, split: opts.split, written: result.written.length, removed: result.removed.length },
+    });
+    res.status(201).json({ ...result, warnings: [...doc.warnings, ...result.warnings] });
   });
 
   return r;

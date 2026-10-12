@@ -1,9 +1,12 @@
 import { appendFile, mkdir, readdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Artifact, Attachment, Confirmation, Task, TaskEvent, TaskStats, User, UserStatus } from '@solar/shared';
+import type { ActivityEntry, Artifact, Attachment, Confirmation, Task, TaskEvent, TaskStats, User, UserStatus } from '@solar/shared';
 import { KeyedQueue, writeFileAtomic } from '../util/fs.js';
+import { FileActivityStore } from './fileActivityStore.js';
 import {
   emptyStats,
+  type ActivityCursor,
+  type ActivityQuery,
   type CreateUserResult,
   type ListTasksOptions,
   type Repository,
@@ -26,7 +29,9 @@ const PRIVATE_FILE = 0o600;
  * Zero-configuration storage used when DATABASE_URL is not set.
  * Layout: <dataDir>/tasks/<taskId>.json, .events.jsonl, .artifacts.json, .confirmations.json,
  * <dataDir>/attachments/<attachmentId>.json (metadata; the files themselves live in the object store),
- * <dataDir>/users.json (accounts with password hashes) and <dataDir>/sessions.json (hashes of login sessions).
+ * <dataDir>/users.json (accounts with password hashes), <dataDir>/sessions.json (hashes of login sessions) and
+ * <dataDir>/activity/activity-<YYYY-MM>.jsonl (the activity log, one file per month - see FileActivityStore). Roles are
+ * not stored: they are the code's (packages/shared ROLE_PERMISSIONS).
  */
 export class FileRepository implements Repository {
   readonly kind = 'local-file' as const;
@@ -40,8 +45,10 @@ export class FileRepository implements Repository {
   private readonly users = new Map<string, StoredUser>();
   private readonly sessions = new Map<string, StoredSession>();
   private readonly queue = new KeyedQueue();
+  private readonly activity: FileActivityStore;
 
   constructor(dataDir: string) {
+    this.activity = new FileActivityStore(join(dataDir, 'activity'));
     this.dir = join(dataDir, 'tasks');
     this.attachmentDir = join(dataDir, 'attachments');
     this.usersFile = join(dataDir, 'users.json');
@@ -51,6 +58,7 @@ export class FileRepository implements Repository {
   async init(): Promise<void> {
     await mkdir(this.dir, { recursive: true });
     await mkdir(this.attachmentDir, { recursive: true });
+    await this.activity.init();
     // accounts must load or the server must not start: an unreadable users.json silently treated as "no users" would
     // reopen the first-superadmin setup to whoever comes first
     for (const u of await readJsonFile<StoredUser[]>(this.usersFile, [], true)) this.users.set(u.id, u);
@@ -376,6 +384,20 @@ export class FileRepository implements Repository {
     }
     if (n) await this.persistSessions();
     return n;
+  }
+
+  // ---- activity log ---------------------------------------------------------------------------------------------
+
+  appendActivity(entries: ActivityEntry[]): Promise<void> {
+    return this.activity.append(entries);
+  }
+
+  listActivity(query: ActivityQuery): Promise<{ items: ActivityEntry[]; next: ActivityCursor | null }> {
+    return this.activity.list(query);
+  }
+
+  deleteActivityBefore(cutoffIso: string): Promise<number> {
+    return this.activity.deleteBefore(cutoffIso);
   }
 }
 

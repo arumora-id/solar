@@ -101,7 +101,7 @@ describe('registration, approval and login (file storage, superadmin from SOLAR_
     const ok = await budi.login('BUDI@solar.test');
     expect(ok.status).toBe(200);
     expect(ok.body).toMatchObject({ role: 'staff', via: 'session', user: { username: 'budi.santoso' } });
-    expect(ok.body.permissions).toEqual(['agent.use', 'knowledge.read', 'knowledge.write', 'skills.read', 'skills.manage']);
+    expect(ok.body.permissions).toEqual(['agent.use', 'knowledge.read', 'knowledge.write', 'skills.read', 'skills.manage', 'activity.view_own']);
     const cookie = ok.setCookies.find((c) => c.startsWith('solar_session='))!;
     expect(cookie).toMatch(/^solar_session=[A-Za-z0-9_-]{43};/);
     expect(cookie).toContain('; HttpOnly');

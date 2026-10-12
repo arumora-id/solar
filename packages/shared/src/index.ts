@@ -491,7 +491,11 @@ export type Permission =
   /** Create, edit, import, enable/disable and delete skills. */
   | 'skills.manage'
   /** LLM providers and routes, model tests, MCP plugins, configuration and tokens. */
-  | 'settings.manage';
+  | 'settings.manage'
+  /** Read every user's activity log (audit trail), filter it by user and export it as CSV. */
+  | 'activity.view_all'
+  /** Read one's own activity log (what one did: logins, tasks, approvals, knowledge and skill changes). */
+  | 'activity.view_own';
 
 export const PERMISSIONS: readonly Permission[] = [
   'agent.use',
@@ -505,14 +509,73 @@ export const PERMISSIONS: readonly Permission[] = [
   'skills.read',
   'skills.manage',
   'settings.manage',
+  'activity.view_all',
+  'activity.view_own',
 ];
 
 /** The one table of what each role may do (server checks and UI both use it). */
 export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly Permission[]>> = {
   superadmin: PERMISSIONS,
-  head_of_it: ['agent.use', 'tasks.all', 'users.view', 'users.approve', 'users.disable', 'knowledge.read', 'knowledge.write', 'skills.read', 'skills.manage'],
-  staff: ['agent.use', 'knowledge.read', 'knowledge.write', 'skills.read', 'skills.manage'],
+  head_of_it: [
+    'agent.use',
+    'tasks.all',
+    'users.view',
+    'users.approve',
+    'users.disable',
+    'knowledge.read',
+    'knowledge.write',
+    'skills.read',
+    'skills.manage',
+    'activity.view_all',
+    'activity.view_own',
+  ],
+  staff: ['agent.use', 'knowledge.read', 'knowledge.write', 'skills.read', 'skills.manage', 'activity.view_own'],
 };
+
+/**
+ * Names and descriptions of the roles in both interface languages, and their order in lists. With ROLE_PERMISSIONS this
+ * is the authoritative definition of the roles: the server upserts it into the `solar_roles` table at every start
+ * (Postgres) and answers `GET /api/roles` from it.
+ */
+export const ROLE_INFO: Readonly<Record<Role, { name: Readonly<Record<Language, string>>; description: Readonly<Record<Language, string>>; sortOrder: number }>> = {
+  superadmin: {
+    name: { id: 'Superadmin', en: 'Superadmin' },
+    description: {
+      id: 'Semua akses: semua task, semua akun pengguna, pengaturan sistem (model AI, plugin MCP) dan log aktivitas semua pengguna.',
+      en: "Full access: every task, every user account, system settings (AI models, MCP plugins) and every user's activity log.",
+    },
+    sortOrder: 1,
+  },
+  head_of_it: {
+    name: { id: 'Head of IT Solar', en: 'Head of IT Solar' },
+    description: {
+      id: 'Melihat dan menangani task semua pengguna, menyetujui pendaftaran (sebagai staf), menonaktifkan/mengaktifkan akun staf, dan melihat log aktivitas semua pengguna.',
+      en: "Sees and acts on every user's tasks, approves registrations (as staff), disables/enables staff accounts and reads every user's activity log.",
+    },
+    sortOrder: 2,
+  },
+  staff: {
+    name: { id: 'Staf Solar', en: 'Solar Staff' },
+    description: {
+      id: 'Memakai agent untuk task sendiri, menulis knowledge base dan mengelola skill, serta melihat log aktivitas sendiri.',
+      en: 'Uses the agent for their own tasks, writes the knowledge base, manages skills and reads their own activity log.',
+    },
+    sortOrder: 3,
+  },
+};
+
+/** A role as `GET /api/roles` returns it (from the code, for both storage backends). */
+export interface RoleInfo {
+  id: Role;
+  /** Name and description in the language of the request. */
+  name: string;
+  description: string;
+  /** Both languages (as stored in `solar_roles.name_id` / `name_en` / `description_id` / `description_en`). */
+  names: Record<Language, string>;
+  descriptions: Record<Language, string>;
+  permissions: Permission[];
+  sortOrder: number;
+}
 
 export function can(role: Role | null | undefined, permission: Permission): boolean {
   return Boolean(role && ROLE_PERMISSIONS[role]?.includes(permission));
@@ -619,6 +682,137 @@ export interface LoginRequest {
   /** Username or email. */
   identifier: string;
   password: string;
+}
+
+// ---------------------------------------------------------------------------
+// Activity log (audit trail)
+// ---------------------------------------------------------------------------
+
+/**
+ * Every action the activity log records. Codes are stable (stored and filtered by); the UI translates them (the server
+ * also sends a localized `summary` per entry, and `GET /api/activity/actions` gives a label per code).
+ */
+export const ACTIVITY_ACTIONS = [
+  // logins and own account
+  'auth.login',
+  'auth.login_failed',
+  'auth.logout',
+  'auth.register',
+  'auth.setup',
+  'auth.password_change',
+  'auth.session_revoked',
+  // account administration
+  'user.create',
+  'user.approve',
+  'user.role_change',
+  'user.disable',
+  'user.enable',
+  'user.password_reset',
+  'user.delete',
+  'user.rename',
+  // tasks and approvals
+  'task.create',
+  'task.cancel',
+  'confirmation.approve',
+  'confirmation.reject',
+  // knowledge base (also the agent's writes after the user's approval: details.via = "agent")
+  'knowledge.write',
+  'knowledge.import_artifact',
+  'knowledge.delete',
+  'knowledge.revert',
+  'knowledge.table_import',
+  'knowledge.document_import',
+  // skills
+  'skill.create',
+  'skill.update',
+  'skill.delete',
+  'skill.enable',
+  'skill.disable',
+  // system settings
+  'settings.llm.provider_create',
+  'settings.llm.provider_update',
+  'settings.llm.provider_delete',
+  'settings.llm.route_change',
+  'settings.llm.provider_test',
+  'settings.plugin.create',
+  'settings.plugin.update',
+  'settings.plugin.delete',
+  'settings.plugin.reconnect',
+  // artifacts
+  'artifact.docx_export',
+  'artifact.publish_github',
+  // the activity log itself
+  'activity.export',
+] as const;
+
+export type ActivityAction = (typeof ACTIVITY_ACTIONS)[number];
+
+/**
+ * Who acted: `user` = an account (its id, and its name and role at that moment), `token` = SOLAR_ACCESS_TOKEN,
+ * `anonymous` = nobody logged in (e.g. a failed login), `system` = SOLAR itself.
+ */
+export type ActivityActorKind = 'user' | 'token' | 'anonymous' | 'system';
+
+export type ActivityOutcome = 'success' | 'failure';
+
+export type ActivityTargetType =
+  | 'user'
+  | 'session'
+  | 'task'
+  | 'confirmation'
+  | 'artifact'
+  | 'knowledge'
+  | 'skill'
+  | 'llm_provider'
+  | 'llm_route'
+  | 'plugin'
+  | 'activity';
+
+/** Why a login failed (`details.reason` of `auth.login_failed`). */
+export type LoginFailureReason = 'wrong_password' | 'pending' | 'disabled' | 'rate_limited';
+
+/**
+ * One entry of the activity log. The actor's name and role are a snapshot of the moment (they stay as they were when the
+ * account is renamed, its role changed or deleted). Never holds passwords, tokens, hashes, setup codes or file contents.
+ */
+export interface ActivityEntry {
+  /** Time-prefixed, so sorting by id sorts by time (`act_<time><sequence><random>`). */
+  id: string;
+  at: string;
+  actorId: string | null;
+  actorName: string | null;
+  actorRole: Role | null;
+  actorKind: ActivityActorKind;
+  action: ActivityAction;
+  targetType: ActivityTargetType | null;
+  targetId: string | null;
+  /** Human name of the target at that moment (title, username, path...), shortened. */
+  targetLabel: string | null;
+  outcome: ActivityOutcome;
+  ip: string | null;
+  /** Shortened. */
+  userAgent: string | null;
+  /** Action-specific facts, e.g. `{ from, to }` of a role change, `{ reason }` of a failure, `{ via: "agent", taskId }`. */
+  details: Record<string, unknown> | null;
+}
+
+/** An entry as `GET /api/activity` returns it: with a one-line description in the language of the request. */
+export interface ActivityItem extends ActivityEntry {
+  summary: string;
+}
+
+/** `GET /api/activity`: newest first; pass `nextCursor` as `cursor` for the next (older) page, null = no more. */
+export interface ActivityPage {
+  items: ActivityItem[];
+  nextCursor: string | null;
+}
+
+/** `GET /api/activity/actions`: every action code with its group (the part before the last dot) and a label. */
+export interface ActivityActionInfo {
+  action: ActivityAction;
+  group: string;
+  /** In the language of the request. */
+  label: string;
 }
 
 // ---------------------------------------------------------------------------

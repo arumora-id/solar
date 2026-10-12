@@ -1,8 +1,27 @@
 import pg from 'pg';
-import type { Artifact, Attachment, Confirmation, Role, Task, TaskEvent, TaskStats, TaskStatus, TaskUsage, User, UserStatus } from '@solar/shared';
+import type {
+  ActivityActorKind,
+  ActivityEntry,
+  ActivityOutcome,
+  ActivityTargetType,
+  Artifact,
+  Attachment,
+  Confirmation,
+  Role,
+  Task,
+  TaskEvent,
+  TaskStats,
+  TaskStatus,
+  TaskUsage,
+  User,
+  UserStatus,
+} from '@solar/shared';
 import { EMPTY_USAGE } from '@solar/shared';
 import {
+  ActivityPartialWriteError,
   emptyStats,
+  type ActivityCursor,
+  type ActivityQuery,
   type CreateUserResult,
   type ListTasksOptions,
   type Repository,
@@ -10,125 +29,10 @@ import {
   type StoredUser,
   type UserPatch,
 } from './repository.js';
+import { createLogger } from '../logger.js';
+import { POSTGRES_SCHEMA, SCHEMA_LOCK } from './schema.js';
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS solar_tasks (
-  id            text PRIMARY KEY,
-  session_id    text NOT NULL,
-  title         text NOT NULL,
-  prompt        text NOT NULL,
-  status        text NOT NULL,
-  progress      integer NOT NULL DEFAULT 0,
-  current_step  text,
-  model         text NOT NULL,
-  created_at    timestamptz NOT NULL,
-  started_at    timestamptz,
-  finished_at   timestamptz,
-  result        text,
-  error         text,
-  usage         jsonb NOT NULL DEFAULT '{}'::jsonb
-);
-CREATE INDEX IF NOT EXISTS solar_tasks_created_idx ON solar_tasks (created_at DESC);
-CREATE INDEX IF NOT EXISTS solar_tasks_session_idx ON solar_tasks (session_id, created_at DESC);
-
-CREATE TABLE IF NOT EXISTS solar_task_events (
-  id       text PRIMARY KEY,
-  task_id  text NOT NULL REFERENCES solar_tasks(id) ON DELETE CASCADE,
-  seq      integer NOT NULL,
-  type     text NOT NULL,
-  at       timestamptz NOT NULL,
-  payload  jsonb NOT NULL
-);
-CREATE INDEX IF NOT EXISTS solar_task_events_task_idx ON solar_task_events (task_id, seq);
-
-CREATE TABLE IF NOT EXISTS solar_artifacts (
-  id           text PRIMARY KEY,
-  task_id      text NOT NULL REFERENCES solar_tasks(id) ON DELETE CASCADE,
-  name         text NOT NULL,
-  title        text NOT NULL,
-  kind         text NOT NULL,
-  mime_type    text NOT NULL,
-  size         integer NOT NULL,
-  storage_key  text NOT NULL,
-  bundle       text NOT NULL,
-  description  text,
-  created_at   timestamptz NOT NULL
-);
-CREATE INDEX IF NOT EXISTS solar_artifacts_task_idx ON solar_artifacts (task_id, created_at);
-
-CREATE TABLE IF NOT EXISTS solar_confirmations (
-  id            text PRIMARY KEY,
-  task_id       text NOT NULL REFERENCES solar_tasks(id) ON DELETE CASCADE,
-  tool_use_id   text NOT NULL,
-  tool          text NOT NULL,
-  display_name  text NOT NULL,
-  plugin_id     text,
-  plugin_name   text,
-  reason        text NOT NULL,
-  input         jsonb,
-  status        text NOT NULL,
-  created_at    timestamptz NOT NULL,
-  resolved_at   timestamptz,
-  note          text
-);
-CREATE INDEX IF NOT EXISTS solar_confirmations_status_idx ON solar_confirmations (status, created_at);
-
-ALTER TABLE solar_tasks ADD COLUMN IF NOT EXISTS attachment_ids jsonb NOT NULL DEFAULT '[]'::jsonb;
--- interface language of the client that created the task; tasks from before languages existed are Indonesian
-ALTER TABLE solar_tasks ADD COLUMN IF NOT EXISTS language text NOT NULL DEFAULT 'id';
-
-CREATE TABLE IF NOT EXISTS solar_attachments (
-  id           text PRIMARY KEY,
-  session_id   text NOT NULL,
-  name         text NOT NULL,
-  kind         text NOT NULL,
-  mime_type    text NOT NULL,
-  size         integer NOT NULL,
-  parts        integer,
-  chars        integer NOT NULL,
-  outline      jsonb NOT NULL DEFAULT '[]'::jsonb,
-  warnings     jsonb NOT NULL DEFAULT '[]'::jsonb,
-  storage_key  text NOT NULL,
-  text_key     text NOT NULL,
-  created_at   timestamptz NOT NULL
-);
-CREATE INDEX IF NOT EXISTS solar_attachments_session_idx ON solar_attachments (session_id, created_at);
-
--- user accounts: owner of tasks and attachments (null on rows from before accounts existed)
-ALTER TABLE solar_tasks ADD COLUMN IF NOT EXISTS owner_id text;
-CREATE INDEX IF NOT EXISTS solar_tasks_owner_idx ON solar_tasks (owner_id, created_at DESC);
-ALTER TABLE solar_attachments ADD COLUMN IF NOT EXISTS owner_id text;
-
-CREATE TABLE IF NOT EXISTS solar_users (
-  id             text PRIMARY KEY,
-  username       text NOT NULL,
-  email          text NOT NULL,
-  name           text NOT NULL,
-  role           text NOT NULL,
-  status         text NOT NULL,
-  password_hash  text NOT NULL,
-  created_at     timestamptz NOT NULL,
-  updated_at     timestamptz NOT NULL,
-  last_login_at  timestamptz,
-  approved_at    timestamptz,
-  approved_by    text
-);
-CREATE UNIQUE INDEX IF NOT EXISTS solar_users_username_key ON solar_users (lower(username));
-CREATE UNIQUE INDEX IF NOT EXISTS solar_users_email_key ON solar_users (lower(email));
-CREATE INDEX IF NOT EXISTS solar_users_status_idx ON solar_users (status, created_at);
-
-CREATE TABLE IF NOT EXISTS solar_sessions (
-  token_hash    text PRIMARY KEY,
-  user_id       text NOT NULL REFERENCES solar_users(id) ON DELETE CASCADE,
-  created_at    timestamptz NOT NULL,
-  last_seen_at  timestamptz NOT NULL,
-  expires_at    timestamptz NOT NULL,
-  user_agent    text,
-  ip            text
-);
-CREATE INDEX IF NOT EXISTS solar_sessions_user_idx ON solar_sessions (user_id);
-CREATE INDEX IF NOT EXISTS solar_sessions_expires_idx ON solar_sessions (expires_at);
-`;
+const log = createLogger('postgres');
 
 /** Key of the transaction-level advisory lock that serialises the creation of the first account. */
 const FIRST_USER_LOCK = 0x501a_0001;
@@ -260,6 +164,36 @@ function toConfirmation(r: Row): Confirmation {
   };
 }
 
+/** An error about the values of a statement (SQLSTATE class 22, 23 or 54), not about the connection or the server. */
+function isDataError(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && /^(22|23|54)[0-9A-Z]{3}$/.test(code);
+}
+
+/** Escapes LIKE / ILIKE wildcards (the default escape character is the backslash). */
+function escapeLike(text: string): string {
+  return text.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
+function toActivity(r: Row): ActivityEntry {
+  return {
+    id: r.id as string,
+    at: iso(r.at as Date)!,
+    actorId: (r.actor_id as string | null) ?? null,
+    actorName: (r.actor_name as string | null) ?? null,
+    actorRole: (r.actor_role as Role | null) ?? null,
+    actorKind: r.actor_kind as ActivityActorKind,
+    action: r.action as ActivityEntry['action'],
+    targetType: (r.target_type as ActivityTargetType | null) ?? null,
+    targetId: (r.target_id as string | null) ?? null,
+    targetLabel: (r.target_label as string | null) ?? null,
+    outcome: r.outcome as ActivityOutcome,
+    ip: (r.ip as string | null) ?? null,
+    userAgent: (r.user_agent as string | null) ?? null,
+    details: (r.details as Record<string, unknown> | null) ?? null,
+  };
+}
+
 /** Neon (serverless Postgres) storage. Any Postgres 13+ works the same way. */
 export class PostgresRepository implements Repository {
   readonly kind = 'neon-postgres' as const;
@@ -276,8 +210,29 @@ export class PostgresRepository implements Repository {
     this.pool.on('error', () => undefined);
   }
 
+  /**
+   * Creates or updates the schema (storage/schema.ts): every statement in order, in one transaction under an advisory
+   * lock, so servers starting at the same time migrate one after the other and a failed start leaves nothing half done.
+   */
   async init(): Promise<void> {
-    await this.pool.query(SCHEMA);
+    const client = await this.pool.connect();
+    // the schema's own warnings (e.g. accounts with a role the code does not know) go to the server log
+    const onNotice = (notice: { severity?: string; message?: string }) => {
+      if (notice.severity === 'WARNING') log.warn(`Database schema: ${notice.message ?? ''}`);
+    };
+    client.on('notice', onNotice);
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock($1)', [SCHEMA_LOCK]);
+      for (const statement of POSTGRES_SCHEMA) await client.query(statement);
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.off('notice', onNotice);
+      client.release();
+    }
   }
 
   async close(): Promise<void> {
@@ -637,6 +592,117 @@ export class PostgresRepository implements Repository {
 
   async deleteExpiredSessions(nowIso: string): Promise<number> {
     const { rowCount } = await this.pool.query('DELETE FROM solar_sessions WHERE expires_at <= $1', [nowIso]);
+    return rowCount ?? 0;
+  }
+
+  // ---- activity log ---------------------------------------------------------------------------------------------
+
+  /**
+   * One multi-row insert per batch. When it fails on the data of a row (SQLSTATE class 22 data exception, 23 integrity
+   * constraint or 54 program limit, e.g. a value jsonb refuses), the rows are inserted one by one so that one bad row
+   * cannot sink the others; a row that still fails is stored with `details` replaced by `{ invalid: true }`, and only
+   * when even that fails is it dropped (with a warning). Other errors (connection, timeout) are thrown: the batch is
+   * retried as a whole, and rows already stored are skipped (ON CONFLICT DO NOTHING).
+   */
+  async appendActivity(entries: ActivityEntry[]): Promise<void> {
+    if (entries.length === 0) return;
+    try {
+      await this.insertActivity(entries);
+      return;
+    } catch (err) {
+      if (!isDataError(err)) throw err;
+      if (entries.length > 1) log.warn(`An activity log batch was refused (${String(err)}); storing its ${entries.length} entries one by one`);
+    }
+    // what is stored (or given up) so far: a connection lost half-way only makes the rest be written again
+    const done = new Set<string>();
+    const fail = (err: unknown) => (done.size > 0 ? new ActivityPartialWriteError(done, err) : err);
+    for (const e of entries) {
+      try {
+        await this.insertActivity([e]);
+        done.add(e.id);
+        continue;
+      } catch (err) {
+        if (!isDataError(err)) throw fail(err);
+      }
+      try {
+        await this.insertActivity([{ ...e, details: { invalid: true } }]);
+        log.warn(`Activity log entry ${e.id} (${e.action}) was stored without its details: Postgres refused them`);
+      } catch (err) {
+        if (!isDataError(err)) throw fail(err);
+        log.warn(`Activity log entry ${e.id} (${e.action}) could not be stored and was dropped: ${String(err)}`);
+      }
+      done.add(e.id);
+    }
+  }
+
+  private async insertActivity(entries: ActivityEntry[]): Promise<void> {
+    // 14 parameters per row, far below the 65535 limit for the batch sizes used
+    const params: unknown[] = [];
+    const rows: string[] = [];
+    for (const e of entries) {
+      const values = [
+        e.id,
+        e.at,
+        e.actorId,
+        e.actorName,
+        e.actorRole,
+        e.actorKind,
+        e.action,
+        e.targetType,
+        e.targetId,
+        e.targetLabel,
+        e.outcome,
+        e.ip,
+        e.userAgent,
+        e.details === null ? null : JSON.stringify(e.details),
+      ];
+      const placeholders = values.map((v) => {
+        params.push(v);
+        return `$${params.length}`;
+      });
+      rows.push(`(${placeholders.join(',')})`);
+    }
+    await this.pool.query(
+      `INSERT INTO solar_activity (id, at, actor_id, actor_name, actor_role, actor_kind, action, target_type, target_id, target_label,
+         outcome, ip, user_agent, details) VALUES ${rows.join(',')} ON CONFLICT (id) DO NOTHING`,
+      params,
+    );
+  }
+
+  async listActivity(q: ActivityQuery): Promise<{ items: ActivityEntry[]; next: ActivityCursor | null }> {
+    const where: string[] = [];
+    const params: unknown[] = [];
+    const param = (value: unknown) => {
+      params.push(value);
+      return `$${params.length}`;
+    };
+    if (q.actorId !== undefined) where.push(`actor_id = ${param(q.actorId)}`);
+    const actionTests: string[] = [];
+    if (q.actions?.length) actionTests.push(`action = ANY(${param(q.actions)}::text[])`);
+    for (const prefix of q.actionPrefixes ?? []) actionTests.push(`action LIKE ${param(`${escapeLike(prefix)}%`)}`);
+    if (actionTests.length) where.push(`(${actionTests.join(' OR ')})`);
+    if (q.outcome) where.push(`outcome = ${param(q.outcome)}`);
+    if (q.from) where.push(`at >= ${param(q.from)}::timestamptz`);
+    if (q.to) where.push(`at < ${param(q.to)}::timestamptz`);
+    if (q.q) {
+      const pattern = param(`%${escapeLike(q.q)}%`);
+      where.push(
+        `(actor_name ILIKE ${pattern} OR target_label ILIKE ${pattern} OR target_id ILIKE ${pattern} OR action ILIKE ${pattern} OR details::text ILIKE ${pattern})`,
+      );
+    }
+    if (q.before) where.push(`(at, id) < (${param(q.before.at)}::timestamptz, ${param(q.before.id)})`);
+    const limit = Math.max(1, Math.min(1000, Math.floor(q.limit)));
+    const { rows } = await this.pool.query(
+      `SELECT * FROM solar_activity ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY at DESC, id DESC LIMIT ${param(limit + 1)}`,
+      params,
+    );
+    const items = (rows as Row[]).slice(0, limit).map(toActivity);
+    const last = items[items.length - 1];
+    return { items, next: rows.length > limit && last ? { at: last.at, id: last.id } : null };
+  }
+
+  async deleteActivityBefore(cutoffIso: string): Promise<number> {
+    const { rowCount } = await this.pool.query('DELETE FROM solar_activity WHERE at < $1', [cutoffIso]);
     return rowCount ?? 0;
   }
 }

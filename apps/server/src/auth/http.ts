@@ -174,11 +174,22 @@ export function requireUser(req: Request, res: Response, next: NextFunction): vo
   next(new HttpError(401, t(langOf(req), 'auth.unauthenticated'), 'unauthenticated'));
 }
 
-/** 403 unless the principal's role has the permission (use after requireUser). */
-export function requirePermission(permission: Permission) {
+/**
+ * 403 unless the principal's role has the permission (use after requireUser). `onDenied` is told about a logged-in
+ * principal refused here (the activity log records refused attempts at admin and settings routes); it must not throw
+ * and is never awaited.
+ */
+export function requirePermission(permission: Permission, onDenied?: (req: Request) => void) {
   // generic in the route parameters, so a route keeps its typed req.params
   return <P>(req: Request<P>, _res: Response, next: NextFunction) => {
     if (can(req.principal?.role, permission)) return next();
+    if (req.principal && onDenied) {
+      try {
+        onDenied(req as unknown as Request);
+      } catch {
+        // recording must never change the answer
+      }
+    }
     next(new HttpError(req.principal ? 403 : 401, t(langOf(req), req.principal ? 'auth.forbidden' : 'auth.unauthenticated'), req.principal ? 'forbidden' : 'unauthenticated'));
   };
 }

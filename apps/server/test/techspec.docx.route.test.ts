@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { strFromU8, unzipSync } from 'fflate';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { EMPTY_USAGE, type Artifact, type Task, type TaskDetail } from '@solar/shared';
+import { EMPTY_USAGE, type ActivityPage, type Artifact, type Task, type TaskDetail } from '@solar/shared';
 import { loadConfig } from '../src/config.js';
 import { buildArchimate } from '../src/generators/archimate/index.js';
 import { buildSequence } from '../src/generators/sequence/index.js';
@@ -148,6 +148,12 @@ describe('POST /api/artifacts/:id/docx', () => {
     expect(detail.artifacts.filter((a) => a.kind === 'tsd-docx').map((a) => a.id)).toEqual([docx.id]);
     expect(detail.events.filter((e) => e.type === 'artifact').map((e) => (e.type === 'artifact' ? e.artifact.id : ''))).toEqual([docx.id]);
     expect(detail.task.status).toBe('completed');
+
+    // in the activity log once (the answers that found the file already there are no export)
+    const log = (await (await authFetch(`${server.url}/api/activity?action=artifact.docx_export`, { headers: { 'X-Solar-Language': 'en' } })).json()) as ActivityPage;
+    expect(log.items).toHaveLength(1);
+    expect(log.items[0]).toMatchObject({ actorKind: 'token', targetType: 'artifact', targetId: docx.id, targetLabel: 'order-platform.docx', details: { taskId: ids.taskId } });
+    expect(log.items[0]!.summary).toBe('Access token (SOLAR_ACCESS_TOKEN) exported order-platform.docx as a Word file');
 
     for (let i = 0; i < 50 && !streamed.includes(docx.id); i++) await new Promise((r) => setTimeout(r, 20));
     controller.abort();
