@@ -24,7 +24,7 @@ const server = spawn(process.execPath, ['apps/server/dist/index.js'], {
     DATA_DIR: tempData,
     SOLAR_ADMIN_USERNAME: 'layoutsmoke',
     SOLAR_ADMIN_EMAIL: 'layoutsmoke@example.test',
-    SOLAR_ADMIN_PASSWORD: 'SafeLayoutSmoke2026!',
+    SOLAR_ADMIN_PASSWORD: 'Horizon#8241RoadSafe',
     SOLAR_ADMIN_NAME: 'Layout Smoke Tester',
     ELECTRON_SKIP_BINARY_DOWNLOAD: '1',
   },
@@ -66,7 +66,7 @@ try {
   const pageErrors = [];
   await page.goto(origin, { waitUntil: 'domcontentloaded' });
   await page.locator('.auth-form input[name="username"]').fill('layoutsmoke');
-  await page.locator('.auth-form input[name="password"]').fill('SafeLayoutSmoke2026!');
+  await page.locator('.auth-form input[name="password"]').fill('Horizon#8241RoadSafe');
   await page.locator('.auth-form button[type="submit"]').click();
   await page.locator('.agent-page .chat').waitFor({ timeout: 20000 });
 
