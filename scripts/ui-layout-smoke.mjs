@@ -88,7 +88,14 @@ try {
     const chat = ensureBox(await page.locator('.chat').boundingBox(), `${name} chat`);
     const composer = ensureBox(await page.locator('.chat .composer').boundingBox(), `${name} composer`);
     const textarea = ensureBox(await page.locator('.composer textarea').boundingBox(), `${name} textarea`);
-    if (width <= 640) assert(textarea.height >= 80, `${name}: narrow textarea clips the placeholder`);
+    const placeholder = await page.locator('.composer textarea').getAttribute('placeholder');
+    if (width <= 640) {
+      assert(placeholder && !placeholder.includes('Shift+Enter') && placeholder.length < 32,
+        `${name}: mobile placeholder must fit on one line (got ${placeholder})`);
+    } else {
+      assert(placeholder?.includes('Shift+Enter'), `${name}: desktop keyboard hint lost`);
+    }
+    assert(textarea.height >= 40, `${name}: textarea is too short`);
     assert(stage.y + stage.height <= chat.y + 2, `${name}: stage should be above the conversation`);
     assert(robot.width <= 135 && robot.height <= 125, `${name}: robot not compact ${JSON.stringify(robot)}`);
     assert(chat.width >= width - 35, `${name}: chat does not fill viewport (width ${chat.width})`);
@@ -135,13 +142,16 @@ try {
   await page.locator('.topbar a[href="/"]').click();
   await page.locator('.chat').waitFor();
   await checkConversation(390, 780, 'mobile-dark');
+  await page.locator('.topbar .lang-switch button').first().click();
+  assert.equal(await page.locator('.composer textarea').getAttribute('placeholder'), 'Ketik perintah…');
+  await page.locator('.topbar .lang-switch button').last().click();
   await page.locator('.topbar a[href="/monitor"]').click();
   await page.locator('.monitor-grid').waitFor();
   const firstFilter = page.locator('.filters .seg button').nth(1);
   await firstFilter.click();
   assert.equal(await firstFilter.getAttribute('aria-pressed'), 'true', 'Task filter did not activate');
   assert.equal(pageErrors.length, 0, `Browser runtime errors: ${pageErrors.join('; ')}`);
-  console.log('Responsive UI smoke passed: desktop/tablet/mobile conversation including clipped-placeholder guard, character picker, quick prompt, monitor desktop/mobile, dark mobile views, filter, no horizontal overflow.');
+  console.log('Responsive UI smoke passed: desktop/tablet/mobile conversation including localized compact-placeholder guard, character picker, quick prompt, monitor desktop/mobile, dark mobile views, filter, no horizontal overflow.');
   console.log('Screenshots:', screenshots);
 } catch (error) {
   console.error('Responsive UI smoke FAILED:', error);

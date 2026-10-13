@@ -95,6 +95,7 @@ export const agent = {
   composer: {
     promptLabel: 'Perintah untuk SOLAR',
     placeholder: 'Ketik perintah… (Enter kirim, Shift+Enter baris baru)',
+    placeholderCompact: 'Ketik perintah…',
     placeholderWithFiles: 'Apa yang harus dibuat dari dokumen ini?',
     micStart: 'Bicara (input suara)',
     micStop: 'Berhenti mendengarkan',
