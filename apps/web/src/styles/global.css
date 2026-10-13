@@ -357,34 +357,50 @@ a {
   display: none;
 }
 
-/* ---- agent page ------------------------------------------------------------ */
+/* ---- agent page: the animated character sits above a full-width conversation ---- */
 .agent-page {
-  display: grid;
-  grid-template-columns: minmax(320px, 1fr) minmax(380px, 560px);
-  gap: 16px;
-  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
   min-height: 0;
+  overflow: hidden;
 }
 .stage-card {
   position: relative;
-  border-radius: 22px;
+  z-index: 2;
+  flex: none;
+  border-radius: 16px;
   background: linear-gradient(180deg, var(--stage-top), var(--stage-bottom));
   border: 1px solid var(--line);
-  overflow: hidden;
-  min-height: 420px;
+  /* The character picker opens over the chat; clipping would make it inaccessible. */
+  overflow: visible;
   display: flex;
   flex-direction: column;
+}
+.stage-main {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-width: 0;
+  padding: 8px 16px;
 }
 .stage-area {
-  flex: 1;
-  min-height: 300px;
   position: relative;
-  display: flex;
-  flex-direction: column;
+  flex: 0 0 124px;
+  width: 124px;
+  height: 112px;
+  min-width: 0;
+  min-height: 0;
 }
 .character-stage {
-  flex: 1;
-  min-height: 300px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
   position: relative;
 }
 .character-stage canvas {
@@ -399,32 +415,23 @@ a {
   background: none;
   cursor: pointer;
 }
+.character-fallback img {
+  max-width: 100%;
+  max-height: 100%;
+}
 .speech {
-  position: absolute;
-  top: 18px;
-  left: 50%;
-  transform: translateX(-50%);
-  max-width: min(86%, 520px);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  box-shadow: var(--shadow);
-  border-radius: 16px;
-  padding: 10px 14px;
+  position: static;
+  transform: none;
+  flex: 0 1 560px;
+  min-width: 0;
+  max-width: 560px;
+  padding: 8px 10px;
   font-weight: 550;
-  text-align: center;
-  z-index: 2;
+  text-align: left;
+  overflow-wrap: anywhere;
 }
 .speech::after {
-  content: '';
-  position: absolute;
-  bottom: -7px;
-  left: 50%;
-  width: 12px;
-  height: 12px;
-  background: var(--surface);
-  border-right: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-  transform: translateX(-50%) rotate(45deg);
+  display: none;
 }
 .speech .sub {
   display: block;
@@ -436,7 +443,7 @@ a {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 12px 14px 14px;
+  padding: 0 14px 10px;
   justify-content: center;
 }
 .chip {
@@ -451,6 +458,11 @@ a {
 .chip:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+/* The original upwards-opening picker would be clipped by the short stage. */
+.stage-card .character-menu {
+  top: calc(100% + 6px);
+  bottom: auto;
 }
 
 /* ---- character picker ---------------------------------------------------- */
@@ -545,6 +557,8 @@ a {
 .chat {
   display: flex;
   flex-direction: column;
+  flex: 1 1 0;
+  min-width: 0;
   min-height: 0;
   background: var(--surface);
   border: 1px solid var(--line);
@@ -565,6 +579,7 @@ a {
 }
 .chat-log {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 14px;
   display: flex;
@@ -1333,9 +1348,29 @@ button.att-open:hover .att-name {
   display: grid;
   gap: 16px;
   align-content: start;
-  max-width: 1400px;
   width: 100%;
-  margin: 0 auto;
+  min-width: 0;
+}
+.monitor-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  min-width: 0;
+}
+.monitor-header > .row {
+  flex: 1;
+  min-width: 180px;
+  flex-wrap: wrap;
+}
+.monitor-robot {
+  flex: 0 0 96px;
+  width: 96px;
+  height: 96px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: linear-gradient(180deg, var(--stage-top), var(--stage-bottom));
+  overflow: hidden;
 }
 .monitor h1 {
   margin: 0;
@@ -1405,9 +1440,11 @@ button.att-open:hover .att-name {
   display: grid;
   grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
   gap: 16px;
+  min-width: 0;
   align-items: start;
 }
 .panel {
+  min-width: 0;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -1530,28 +1567,29 @@ button.att-open:hover .att-name {
 }
 
 @media (max-width: 1020px) {
-  .agent-page {
-    grid-template-columns: 1fr;
-  }
-  .stage-card {
-    min-height: 360px;
-  }
-  .chat {
-    min-height: 560px;
-  }
   .monitor-grid {
     grid-template-columns: 1fr;
   }
 }
 
 @media (max-width: 640px) {
-  .stage-card {
-    min-height: 440px;
+  .stage-main {
+    gap: 8px;
+    padding: 6px 8px;
+  }
+  .stage-area {
+    flex-basis: 90px;
+    width: 90px;
+    height: 96px;
   }
   .speech {
     font-size: 13px;
-    padding: 8px 12px;
-    top: 12px;
+    padding: 4px 6px;
+  }
+  .monitor-robot {
+    flex-basis: 76px;
+    width: 76px;
+    height: 76px;
   }
   .stage-footer {
     flex-wrap: nowrap;
