@@ -1605,6 +1605,10 @@ button.att-open:hover .att-name {
     width: 76px;
     height: 76px;
   }
+  /* The mobile composer is narrower: reserve enough height for its wrapped placeholder. */
+  .composer textarea {
+    min-height: 86px;
+  }
   .stage-footer {
     flex-wrap: nowrap;
     justify-content: flex-start;
