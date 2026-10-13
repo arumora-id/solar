@@ -1646,6 +1646,55 @@ button.att-open:hover .att-name {
   }
 }
 
+/* Compact landscape and short desktop windows: keep usable chat height without hiding the robot or quick prompts. */
+@media (max-height: 540px) {
+  .agent-page {
+    gap: 6px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+  .stage-main {
+    gap: 8px;
+    padding: 2px 8px;
+  }
+  .stage-area {
+    flex-basis: 64px;
+    width: 64px;
+    height: 56px;
+  }
+  .stage-info {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+  }
+  .speech {
+    font-size: 12px;
+    line-height: 1.25;
+    padding: 4px 6px;
+  }
+  .stage-card .character-switch {
+    margin: 0;
+  }
+  .stage-footer {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    justify-content: flex-start;
+    gap: 6px;
+    padding: 0 8px 4px;
+  }
+  .stage-footer .chip {
+    flex: none;
+    padding: 3px 8px;
+    font-size: 12px;
+  }
+  .chat-head {
+    padding: 6px 10px;
+  }
+  .chat-log {
+    padding: 8px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .mic.on::after {
     animation: none;
