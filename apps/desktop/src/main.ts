@@ -1,15 +1,38 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell, type MenuItemConstructorOptions } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  ipcMain,
+  Menu,
+  session,
+  shell,
+  type IpcMainEvent,
+  type IpcMainInvokeEvent,
+  type MenuItemConstructorOptions,
+  type MessageBoxOptions,
+  type MessageBoxReturnValue,
+} from 'electron';
 import envTemplate from '../../../.env.example';
 import { isLang, langFromLocale, readStoredLang, STRINGS, storeLang, type Lang } from './i18n';
 
 interface RunningServer {
   url: string;
   port: number;
+  /**
+   * The one-time first-superadmin setup code while no user account exists, else null (apps/server/src/server.ts).
+   * Optional: a server bundle from before user accounts has none.
+   */
+  setupCode?(): string | null;
   close(): Promise<void>;
 }
+
+/** IPC channels of the preload bridge (preload.ts). */
+const IPC_SET_LANGUAGE = 'solar:set-language';
+const IPC_GET_SETUP_CODE = 'solar:get-setup-code';
 
 // user data (settings, .env, tasks, artifacts) in %APPDATA%/SOLAR instead of the package name; the folder keeps the
 // pre-rename name so existing settings and data stay where they are
@@ -39,6 +62,9 @@ let win: BrowserWindow | null = null;
 let mini = false;
 /** Set once the app is ready (app.getLocale() needs it). */
 let lang: Lang = 'id';
+/** Whether the menu currently offers the setup code (rebuilt when that changes, see syncSetupMenu). */
+let menuOffersSetupCode = false;
+let setupWatch: NodeJS.Timeout | null = null;
 
 function prepareEnvironment(): boolean {
   mkdirSync(dataDir, { recursive: true });
@@ -88,6 +114,7 @@ function setMini(on: boolean): void {
 
 function buildMenu(url: string): void {
   const m = STRINGS[lang].menu;
+  menuOffersSetupCode = currentSetupCode() !== null;
   const template: MenuItemConstructorOptions[] = [
     {
       label: m.file,
@@ -123,6 +150,8 @@ function buildMenu(url: string): void {
       submenu: [
         { label: m.openInBrowser, click: () => void shell.openExternal(url) },
         { label: m.openMonitorInBrowser, click: () => void shell.openExternal(`${url}/monitor`) },
+        // only while no account exists: for creating the first superadmin in a browser on this computer
+        { label: m.setupCode, visible: menuOffersSetupCode, click: () => void showSetupCode(url) },
         { type: 'separator' },
         { label: `SOLAR AI AGENT ${app.getVersion()}`, enabled: false },
       ],
@@ -131,22 +160,103 @@ function buildMenu(url: string): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+/**
+ * True only for a message from the SOLAR UI itself: the top frame of the SOLAR window, showing a page of the local
+ * server (URL and security origin), and not one of the server's API responses (artifact files and downloads live under
+ * /api/ and are served with a sandbox CSP, i.e. an opaque origin). Never a page the window navigated to, an iframe, or
+ * any other window.
+ */
+function fromSolarUi(event: IpcMainEvent | IpcMainInvokeEvent, origin: string): boolean {
+  const frame = event.senderFrame;
+  if (!win || win.isDestroyed() || event.sender !== win.webContents) return false;
+  if (!frame || frame.detached || frame.parent !== null || frame.origin !== origin) return false;
+  try {
+    const at = new URL(frame.url);
+    return at.origin === origin && !at.pathname.toLowerCase().startsWith('/api/');
+  } catch {
+    return false;
+  }
+}
+
 /** The SOLAR UI reports its language (preload: solarDesktop.setLanguage): remember it and rebuild the menu. */
 function listenForLanguage(url: string): void {
   const origin = new URL(url).origin;
-  ipcMain.on('solar:set-language', (event, value: unknown) => {
-    let from = '';
-    try {
-      from = new URL(event.senderFrame?.url ?? '').origin;
-    } catch {
-      return;
-    }
+  ipcMain.on(IPC_SET_LANGUAGE, (event, value: unknown) => {
     // only the SOLAR UI itself, never a page it navigated to
-    if (from !== origin || !isLang(value) || value === lang) return;
+    if (!fromSolarUi(event, origin) || !isLang(value) || value === lang) return;
     lang = value;
     storeLang(languageFile, value);
     buildMenu(url);
   });
+}
+
+// ---- first superadmin --------------------------------------------------------------------------------------------
+
+/**
+ * The server's one-time setup code while no account exists, else null. Read live from the running server every time
+ * and never kept here: the server forgets it (and deletes DATA_DIR/setup-code.txt) once the first superadmin exists.
+ */
+function currentSetupCode(): string | null {
+  try {
+    const code = server?.setupCode?.();
+    return typeof code === 'string' && code.length > 0 ? code : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The SOLAR UI asks for the setup code to prefill the first-superadmin form (preload: solarDesktop.getSetupCode).
+ * Answered only for the SOLAR UI in this window (fromSolarUi); everyone else, and everyone once an account exists,
+ * gets null.
+ */
+function serveSetupCode(url: string): void {
+  const origin = new URL(url).origin;
+  ipcMain.handle(IPC_GET_SETUP_CODE, (event): string | null => {
+    const code = fromSolarUi(event, origin) ? currentSetupCode() : null;
+    syncSetupMenu(url);
+    return code;
+  });
+}
+
+/** Rebuilds the menu when the setup code appeared or went away; while it exists, keeps checking (it goes with setup). */
+function syncSetupMenu(url: string): void {
+  const pending = currentSetupCode() !== null;
+  if (pending !== menuOffersSetupCode) buildMenu(url);
+  if (pending && !setupWatch) {
+    setupWatch = setInterval(() => syncSetupMenu(url), 2_000);
+    setupWatch.unref();
+  } else if (!pending && setupWatch) {
+    clearInterval(setupWatch);
+    setupWatch = null;
+  }
+}
+
+function messageBox(options: MessageBoxOptions): Promise<MessageBoxReturnValue> {
+  return win && !win.isDestroyed() ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options);
+}
+
+/** Help -> setup code: for creating the first superadmin in a browser on this computer (the window fills it itself). */
+async function showSetupCode(url: string): Promise<void> {
+  const s = STRINGS[lang].setupCode;
+  const code = currentSetupCode();
+  if (!code) {
+    syncSetupMenu(url);
+    await messageBox({ type: 'info', title: s.title, message: s.doneMessage, detail: s.doneDetail, buttons: [s.close] });
+    return;
+  }
+  const res = await messageBox({
+    type: 'info',
+    title: s.title,
+    message: code,
+    detail: s.detail(url),
+    buttons: [s.copy, s.close],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  });
+  // still the same code (not used up while the dialog was open)
+  if (res.response === 0 && currentSetupCode() === code) clipboard.writeText(code);
 }
 
 function createWindow(url: string): void {
@@ -218,6 +328,8 @@ if (!gotLock) {
     }
     buildMenu(server.url);
     listenForLanguage(server.url);
+    serveSetupCode(server.url);
+    syncSetupMenu(server.url);
     createWindow(server.url);
     if (firstRun) {
       const s = STRINGS[lang].firstRun;
@@ -244,6 +356,8 @@ if (!gotLock) {
     event.preventDefault();
     const s = server;
     server = null;
+    if (setupWatch) clearInterval(setupWatch);
+    setupWatch = null;
     void s.close().finally(() => app.quit());
   });
 }

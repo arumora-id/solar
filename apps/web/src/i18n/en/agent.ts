@@ -39,6 +39,7 @@ export const agent: Dict['agent'] = {
     connecting: 'Connecting to the SOLAR AI AGENT server…',
     llmMissing: 'The AI model is not ready yet',
     llmMissingSub: 'Set OPENAI_API_KEY in .env, or add a provider in Settings → AI models.',
+    llmMissingAsk: 'Ask a superadmin to set up an AI model.',
     listening: "I'm listening…",
     listeningSub: "Go ahead and speak. I'll stop automatically when you go quiet.",
     done: 'Done! All deliverables are ready.',

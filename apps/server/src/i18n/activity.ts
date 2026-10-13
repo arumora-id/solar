@@ -156,8 +156,14 @@ export const ACTIVITY_MESSAGES = {
     en: (p: S) => (p.outcome === 'failure' ? `${p.actor} could not change their password (${reasonEn(p)})` : `${p.actor} changed their password`),
   },
   'activity.summary.auth.session_revoked': {
-    id: (p: S) => `${num(p.d.sessions)} sesi login ${p.target} diakhiri`,
-    en: (p: S) => `Ended ${count(num(p.d.sessions), 'login session')} of ${p.target}`,
+    id: (p: S) =>
+      p.d.reason === 'replaced_by_login'
+        ? `Sesi login ${p.target} diakhiri: ${p.actor} masuk di browser yang sama`
+        : `${num(p.d.sessions)} sesi login ${p.target} diakhiri`,
+    en: (p: S) =>
+      p.d.reason === 'replaced_by_login'
+        ? `Login session of ${p.target} ended: ${p.actor} logged in on the same browser`
+        : `Ended ${count(num(p.d.sessions), 'login session')} of ${p.target}`,
   },
   'activity.summary.user.create': {
     id: (p: S) => refusedId(p, `${p.actor} membuat akun ${p.target} (${p.role(p.d.role)})`),

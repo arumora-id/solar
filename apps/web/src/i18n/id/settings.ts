@@ -56,14 +56,12 @@ export const settings = {
       githubConnected: (repo: string, branch: string) => `Terhubung · repo default: ${repo} (${branch})`,
       githubMissing: 'Belum (GITHUB_TOKEN)',
       plane: 'Plane',
-      accessToken: 'Token akses',
-      tokenRequired: 'Wajib',
-      tokenNotRequired: 'Tidak wajib (hanya localhost)',
+      accessToken: 'Token akses API',
+      tokenRequired: 'Aktif (SOLAR_ACCESS_TOKEN, untuk skrip dan CI)',
+      tokenNotRequired: 'Tidak di-set',
     },
     credentialsHint:
       'Provider LLM diatur di tab Model AI; kredensial lain (Neon, S3, GitHub, Plane, Visual Paradigm) di file .env - lihat README.',
-    tokenLabel: 'Token akses SOLAR (SOLAR_ACCESS_TOKEN)',
-    saveToken: 'Simpan token',
   },
 
   /** Settings → Model AI (LLM providers and the default model route). */

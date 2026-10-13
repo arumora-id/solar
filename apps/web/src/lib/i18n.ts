@@ -8,8 +8,8 @@ import { readPref, writePref } from './session';
  * Interface language of SOLAR: Bahasa Indonesia ('id') or English ('en'), switchable at any time without a reload.
  *
  * Dictionaries
- * - Every user-visible text lives in src/i18n/{id,en}/<namespace>.ts, one file pair per namespace (common, app, agent,
- *   character, monitor, artifacts, settings, voice, api), joined in src/i18n/{id,en}/index.ts.
+ * - Every user-visible text lives in src/i18n/{id,en}/<namespace>.ts, one file pair per namespace (common, app, auth,
+ *   agent, character, monitor, artifacts, settings, users, activity, voice, api), joined in src/i18n/{id,en}/index.ts.
  * - The Indonesian file is the source of the type (`Dict = typeof id`): write plain objects, no `as const`. The English
  *   file is typed `Dict['<namespace>']`, so a missing or extra key is a compile error right in that file.
  * - Adding a key: add it to i18n/id/<ns>.ts, then the same key to i18n/en/<ns>.ts (the compiler lists what is missing).
@@ -54,6 +54,13 @@ declare global {
       versions: { electron: string; chrome: string };
       /** Tells the desktop shell the interface language (its menu and dialogs follow it). */
       setLanguage?: (lang: Lang) => void;
+      /**
+       * The one-time first-superadmin setup code of the server the desktop app runs (RunningServer.setupCode()), so the
+       * setup form can fill it in. Never rejects; null once an account exists, or for any caller other than the SOLAR
+       * UI top frame. Keep the code in memory only and ask again after a 403 setup_code_invalid. Optional: older
+       * desktop builds do not offer it.
+       */
+      getSetupCode?: () => Promise<string | null>;
     };
   }
 }

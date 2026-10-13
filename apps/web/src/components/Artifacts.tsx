@@ -9,6 +9,7 @@ import { TYPE_FOLDERS, TYPES } from '../lib/knowledgeTypes';
 import { renderMarkdown } from '../lib/markdown';
 import { useSolar } from '../lib/store';
 import { BookIcon, DownloadIcon, EyeIcon, SpinnerIcon, WordIcon, XIcon } from './Icons';
+import { reducedMotion } from '../lib/motion';
 
 function family(a: Artifact): string {
   return a.kind.split('-')[0] ?? 'other';
@@ -543,7 +544,7 @@ export function ArtifactPreview({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onCloseRef.current();
     window.addEventListener('keydown', onKey);
-    if (modalRef.current) gsap.fromTo(modalRef.current, { y: 16, opacity: 0 }, { y: 0, opacity: 1, duration: 0.25, ease: 'power2.out', overwrite: true });
+    if (modalRef.current && !reducedMotion()) gsap.fromTo(modalRef.current, { y: 16, opacity: 0 }, { y: 0, opacity: 1, duration: 0.25, ease: 'power2.out', overwrite: true });
     return () => window.removeEventListener('keydown', onKey);
   }, []);
   useDialogFocus(modalRef);

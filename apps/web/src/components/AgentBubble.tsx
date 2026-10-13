@@ -1,13 +1,15 @@
 import gsap from 'gsap';
 import { useEffect, useMemo, useRef } from 'react';
 import type { Task, TaskEvent } from '@solar/shared';
-import { formatDuration, formatUsd, isActive } from '../lib/format';
+import { useAuth } from '../lib/auth';
+import { formatDuration, formatUsd, isActive, ownerLabel } from '../lib/format';
 import { useT, type Dict } from '../lib/i18n';
 import { renderMarkdown } from '../lib/markdown';
 import { useSolar } from '../lib/store';
 import { ArtifactList } from './Artifacts';
 import { StopIcon } from './Icons';
 import { ProgressMeter, StatusBadge } from './Status';
+import { reducedMotion } from '../lib/motion';
 
 interface ActivityItem {
   id: string;
@@ -51,7 +53,10 @@ const MARK: Record<ActivityItem['state'], string> = { running: '…', ok: '✓',
 
 export function AgentBubble({ task }: { task: Task }) {
   const { events, artifacts, drafts, loadTask, cancel } = useSolar();
+  const { user } = useAuth();
   const t = useT();
+  // someone else's task (seen by roles with tasks.all): say whose it is, also when the account was deleted
+  const foreign = task.owner !== undefined && task.ownerId !== user?.id;
   const ref = useRef<HTMLDivElement>(null);
   const taskEvents = events[task.id] ?? [];
   const draft = drafts[task.id];
@@ -59,7 +64,7 @@ export function AgentBubble({ task }: { task: Task }) {
 
   useEffect(() => {
     void loadTask(task.id);
-    if (ref.current) gsap.fromTo(ref.current, { y: 12, opacity: 0 }, { y: 0, opacity: 1, duration: 0.35, ease: 'power2.out', overwrite: true });
+    if (ref.current && !reducedMotion()) gsap.fromTo(ref.current, { y: 12, opacity: 0 }, { y: 0, opacity: 1, duration: 0.35, ease: 'power2.out', overwrite: true });
   }, [task.id, loadTask]);
 
   const activity = useMemo(() => activityFromEvents(taskEvents, t), [taskEvents, t]);
@@ -76,6 +81,11 @@ export function AgentBubble({ task }: { task: Task }) {
       <div className="agent-meta">
         <StatusBadge status={task.status} />
         <span className="step">{active ? (task.currentStep ?? '') : formatDuration(task.startedAt, task.finishedAt)}</span>
+        {foreign && (
+          <span className="owner-chip" data-deleted={task.owner?.deleted ? 'true' : undefined}>
+            {t.monitor.owner.detail(ownerLabel(task, t, user?.id ?? null))}
+          </span>
+        )}
         {task.usage.costUsd > 0 && <span title={t.agent.bubble.costTitle}>{formatUsd(task.usage.costUsd)}</span>}
         {active && (
           <button type="button" className="btn ghost small" onClick={() => void cancel(task.id)}>

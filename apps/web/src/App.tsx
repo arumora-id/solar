@@ -1,47 +1,18 @@
-import { useState } from 'react';
+import gsap from 'gsap';
+import { useLayoutEffect, useRef, useState } from 'react';
+import { AuthScreen, AuthSplash } from './components/auth/AuthScreen';
 import { ConfirmationDialog } from './components/ConfirmationDialog';
-import { SettingsDrawer } from './components/SettingsDrawer';
+import { SettingsDrawer, type SettingsTab } from './components/SettingsDrawer';
 import { TopBar } from './components/TopBar';
+import { Announcer } from './lib/announce';
+import { AuthProvider, useAuth } from './lib/auth';
 import { useLang, useT } from './lib/i18n';
+import { reducedMotion } from './lib/motion';
 import { applyUpdate, dismissUpdate, usePwa } from './lib/pwa';
 import { usePath } from './lib/router';
-import { SolarProvider, useSolar } from './lib/store';
+import { SolarProvider } from './lib/store';
 import { AgentPage } from './pages/AgentPage';
 import { MonitorPage } from './pages/MonitorPage';
-
-function TokenGate() {
-  const { submitToken } = useSolar();
-  const t = useT();
-  const [value, setValue] = useState('');
-  return (
-    <div className="backdrop">
-      <form
-        className="modal"
-        onSubmit={(e) => {
-          e.preventDefault();
-          submitToken(value);
-        }}
-      >
-        <h3>{t.app.tokenGate.title}</h3>
-        <p className="hint">{t.app.tokenGate.hint}</p>
-        <input
-          className="input"
-          type="password"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          autoFocus
-          autoComplete="off"
-          aria-label={t.app.tokenGate.tokenLabel}
-        />
-        <div className="modal-actions">
-          <button type="submit" className="btn primary" disabled={!value.trim()}>
-            {t.app.tokenGate.submit}
-          </button>
-        </div>
-      </form>
-    </div>
-  );
-}
 
 /** A newer version of the UI was downloaded (installed app / service worker): offer to switch to it. */
 function UpdateNotice() {
@@ -61,21 +32,66 @@ function UpdateNotice() {
   );
 }
 
+export interface SettingsRequest {
+  open: boolean;
+  tab?: SettingsTab;
+  /** Opened from the pending-approvals badge: the user list starts on "waiting". */
+  usersFilter?: 'pending';
+  /** Changes on every open, so the drawer applies `tab` again. */
+  nonce: number;
+}
+
 function Shell() {
   const path = usePath();
-  const { authRequired } = useSolar();
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const { justEntered, markEntered } = useAuth();
+  const [settings, setSettings] = useState<SettingsRequest>({ open: false, nonce: 0 });
   const monitorMatch = /^\/monitor(?:\/([A-Za-z0-9_-]+))?\/?$/.exec(path);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // coming from the login screen: the app slides in (top bar from above, the page from below)
+  useLayoutEffect(() => {
+    if (!justEntered) return;
+    markEntered();
+    if (reducedMotion() || !ref.current) return;
+    const ctx = gsap.context(() => {
+      gsap
+        .timeline({ defaults: { ease: 'power3.out' } })
+        .from('.topbar', { y: -24, opacity: 0, duration: 0.5, clearProps: 'all' }, 0)
+        .from('.app > main', { y: 22, opacity: 0, duration: 0.6, clearProps: 'all' }, 0.08);
+    }, ref);
+    return () => ctx.revert();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const openSettings = (tab?: SettingsTab, usersFilter?: 'pending') => setSettings((s) => ({ open: true, tab, usersFilter, nonce: s.nonce + 1 }));
 
   return (
-    <div className="app">
-      <TopBar path={path} onOpenSettings={() => setSettingsOpen(true)} />
+    <div className="app" ref={ref}>
+      <TopBar path={path} onOpenSettings={openSettings} />
       {monitorMatch ? <MonitorPage selectedId={monitorMatch[1] ?? null} /> : <AgentPage />}
       <ConfirmationDialog />
-      <SettingsDrawer open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsDrawer request={settings} onClose={() => setSettings((s) => ({ ...s, open: false }))} />
       <UpdateNotice />
-      {authRequired && <TokenGate />}
     </div>
+  );
+}
+
+/** Login screens until someone is logged in; then the app, with its live stream, for that account. */
+function Gate() {
+  const auth = useAuth();
+  if (auth.status === 'loading') return <AuthSplash />;
+  if (auth.status !== 'signedIn' || !auth.me) return <AuthScreen />;
+  return (
+    // a new account (or the same one after logging in again) starts with fresh state: nothing of the previous one stays
+    <SolarProvider
+      key={auth.user?.id ?? 'token'}
+      userId={auth.user?.id ?? null}
+      watchUsers={auth.can('users.view')}
+      onSignedOut={auth.sessionEnded}
+      onAccountsChanged={auth.refreshMe}
+    >
+      <Shell />
+    </SolarProvider>
   );
 }
 
@@ -84,8 +100,9 @@ export function App() {
   // lib/format.ts while rendering follow it too (components that hold texts in state or memos use useT())
   useLang();
   return (
-    <SolarProvider>
-      <Shell />
-    </SolarProvider>
+    <AuthProvider>
+      <Gate />
+      <Announcer />
+    </AuthProvider>
   );
 }

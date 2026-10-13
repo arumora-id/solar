@@ -8,8 +8,8 @@ Dokumen ini menjelaskan cara kerja internal SOLAR untuk pengembang dan reviewer.
 |---|---|---|
 | Web UI | `apps/web` | React 19 + Vite + TypeScript. Karakter 3D yang bisa dipilih (`src/character/`: Robo (default), Mochi, Cocoa Kelapa, Kelinci; three.js, animasi GSAP), chat + komposer suara, monitor, pengaturan. Semua teks dalam Bahasa Indonesia dan English (`src/i18n/{id,en}/`, `src/lib/i18n.ts`, lihat bagian 9). Berkomunikasi lewat REST dan Server-Sent Events. PWA: `public/manifest.webmanifest`, service worker `pwa/`, ikon PNG (`public/icons/`, juga ikon installer `apps/desktop/build/icon.png`) yang dibuat dari `public/favicon.svg` oleh `scripts/generate-icons.mjs`. |
 | Server | `apps/server` | Express 5. `TaskManager` (antrean, status, progres, konfirmasi), agent loop OpenAI, generator + validator, `SkillStore`, `PluginStore` + `McpManager`, penyimpanan. Pesan untuk manusia dalam dua bahasa (`src/i18n.ts` + katalog `src/i18n/*.ts`). |
-| Desktop | `apps/desktop` | Electron 44. Memuat bundle server (`server.mjs`) di main process (pembacaan lampiran dan render Word berjalan di *worker thread* `extract-worker.mjs` / `docx-worker.mjs` yang ikut di resources), membuka jendela ke UI lokal, mengatur izin mikrofon, mode mini, `.env` di `%APPDATA%\SOLAR`. Menu & dialog ID/EN (`src/i18n.ts`) mengikuti bahasa UI. |
-| Shared | `packages/shared` | Kontrak tipe antara server dan UI (`Task`, `TaskEvent`, `Artifact`, `PluginView`, `StreamMessage`, ...), termasuk `Language` (`'id' \| 'en'`), `LANGUAGES` dan `LANGUAGE_HEADER` (`X-Solar-Language`). |
+| Desktop | `apps/desktop` | Electron 44. Memuat bundle server (`server.mjs`) di main process (pembacaan lampiran dan render Word berjalan di *worker thread* `extract-worker.mjs` / `docx-worker.mjs` yang ikut di resources), membuka jendela ke UI lokal, mengatur izin mikrofon, mode mini, `.env` di `%APPDATA%\SOLAR`. Menu & dialog ID/EN (`src/i18n.ts`) mengikuti bahasa UI. Preload `solarDesktop` (bahasa UI, kode penyiapan superadmin pertama - lihat bagian 10). |
+| Shared | `packages/shared` | Kontrak tipe antara server dan UI (`Task`, `TaskEvent`, `Artifact`, `PluginView`, `StreamMessage`, ...), termasuk `Language` (`'id' \| 'en'`), `LANGUAGES` dan `LANGUAGE_HEADER` (`X-Solar-Language`), serta akun & izin (`User`, `Role`, `ROLE_PERMISSIONS`, `can()`, `AuthState`, `AuthMe`, kode error auth, `ActivityItem`). |
 
 ## 2. Alur sebuah task ("sekali proses")
 
@@ -287,6 +287,7 @@ Saat server mulai, task yang tertinggal berstatus aktif dari proses sebelumnya d
   & plugin, ekspor Word, publish GitHub, ekspor CSV. Tulisan agen setelah persetujuan pengguna dicatat lewat
   `TaskRunContext.recordActivity` dengan pelaku = pemilik task (`details.via = "agent"`). Daftar lengkapnya:
   `ACTIVITY_ACTIONS` dan [docs/API.md](API.md#log-aktivitas).
+- Alur login, sesi, izin dan superadmin pertama (termasuk aplikasi desktop): [bagian 10](#10-autentikasi-sesi--izin).
 
 ## 6. Realtime ke UI
 
@@ -403,7 +404,108 @@ Tipe bersama: `Language`, `LANGUAGES`, `LANGUAGE_HEADER` (`X-Solar-Language`) da
   `<userData>/language.json` (`%APPDATA%\SOLAR\language.json`), selain itu dari `app.getLocale()` (`en…` → `en`, lainnya
   `id`).
 - Preload menambahkan `solarDesktop.setLanguage(lang)`; web UI memanggilnya saat start dan setiap pergantian bahasa.
-  Main process (IPC `solar:set-language`) hanya menerima pesan dari origin UI SOLAR sendiri, menyimpan bahasanya ke
-  `language.json` dan membangun ulang menu.
+  Main process (IPC `solar:set-language`) hanya menerima pesan dari UI SOLAR sendiri (`fromSolarUi`, lihat bagian 10),
+  menyimpan bahasanya ke `language.json` dan membangun ulang menu (termasuk menu kode penyiapan).
 - Installer NSIS: `multiLanguageInstaller` dengan `installerLanguages: ["en_US", "id_ID"]` - installer tampil dalam
   bahasa Windows bila Indonesia, selain itu English.
+
+## 10. Autentikasi, sesi & izin
+
+Setiap permintaan ke `/api` punya satu **principal**: akun dari cookie sesi, `SOLAR_ACCESS_TOKEN` (bertindak sebagai
+superadmin, bukan akun), atau tidak ada. Izin selalu diperiksa di server; web UI hanya menyembunyikan apa yang toh akan
+ditolak. Penyimpanan akun, sesi, peran dan log aktivitas: bagian [5b](#5b-pengguna-peran-sesi--log-aktivitas); kontrak
+endpoint: [API.md](API.md#autentikasi--pengguna).
+
+| Bagian | Lokasi | Tanggung jawab |
+|---|---|---|
+| Peran & izin | `packages/shared` | `Role`, `Permission`, `ROLE_PERMISSIONS`, `ROLE_INFO`, `can(role, permission)`, `canActOnUser`, `assignableRoles` - satu tabel untuk server dan web UI. |
+| Layanan akun | `apps/server/src/auth/authService.ts` | Akun, login/logout, pendaftaran, persetujuan, sesi (buat, perpanjang, cabut), kode penyiapan, batas percobaan, aturan siapa boleh mengubah akun siapa, cache sesi/akun 30 detik. |
+| HTTP | `apps/server/src/auth/http.ts` | Middleware `authenticate` (principal), `requireUser`, `requirePermission`, `sameOriginGuard` (CSRF), cookie, `isLoopbackRequest`. |
+| Password & identitas | `auth/password.ts`, `auth/identity.ts`, `auth/rateLimit.ts` | scrypt + gerbang hash (`503 busy`), normalisasi username/email/password (NFKC, huruf kecil), rate limiter sliding window di memori. |
+| Route | `routes/auth.ts` (`/auth/*`, `/users/*`), `routes/activity.ts` (`/roles`, `/activity*`) | Validasi isian dan pemetaan error ke `{ error, code }`. |
+
+**Urutan middleware** (`routes/api.ts`): `languageMiddleware` → body JSON → `GET /health` (publik) →
+`localOnlyMiddleware` (tanpa `SOLAR_ACCESS_TOKEN`: hanya Host/Origin lokal - perlindungan DNS rebinding) →
+`authenticate` → `sameOriginGuard` → router `/auth` (publik: `state`, `login`, `register`, `setup`, `logout`) → router
+`/users` → `requireUser` (401 untuk sisanya) → route lain, masing-masing dengan `requirePermission(...)` bila perlu.
+
+- **`authenticate`:** token di `Authorization: Bearer` atau `?token=` dibandingkan waktu-konstan dengan
+  `SOLAR_ACCESS_TOKEN`. Cocok → principal token. Salah → `401 invalid_token`, kecuali di rute publik `/auth` (token
+  dianggap tidak ada, agar token lama di browser tidak mengunci form login). Tanpa token: cookie `solar_session` →
+  `sessionPrincipal()`: token 32 byte base64url → SHA-256 → sesi (tidak ada / kedaluwarsa / akun tidak `active` = sesi
+  dihapus, principal `null`).
+- **Sesi bergeser:** `expiresAt = min(sekarang + SESSION_TTL_HOURS, dibuat + SESSION_MAX_DAYS)`, ditulis paling sering
+  tiap 5 menit per sesi (atau sepersepuluh masa idle bila lebih pendek). Setiap pencabutan (logout, ganti/reset
+  password, ubah peran, nonaktif, hapus) menaikkan `epoch`: nilai yang dibaca sebelum pencabutan dipakai untuk
+  permintaan itu saja dan tidak pernah masuk cache, sehingga permintaan yang berpapasan dengan pencabutan tidak bisa
+  menghidupkan sesi lagi.
+- **CSRF (`sameOriginGuard`):** `POST/PUT/PATCH/DELETE` yang tidak diautentikasi dengan token yang **valid** harus
+  membawa `Origin` sama dengan `Host` (atau `X-Forwarded-Host` bila `TRUST_PROXY`); tanpa `Origin`, `Sec-Fetch-Site`
+  tidak boleh `cross-site`/`same-site`.
+- **Perubahan akun** berjalan satu per satu (antrean dalam proses) dan memeriksa ulang peran pelaku dari penyimpanan,
+  sehingga pengaman superadmin terakhir dan keunikan username/email tidak bisa dibalap permintaan paralel.
+- **Satu browser, satu akun:** semua tab berbagi cookie. `POST /auth/login` dari browser yang masih membawa sesi sah
+  mengakhiri sesi lama itu (`AuthService.endReplacedSession`: stream-nya menerima `signed_out`, log
+  `auth.session_revoked` dengan `reason: replaced_by_login`). Di web UI (`apps/web/src/lib/auth.tsx`) login dan logout
+  diumumkan ke tab lain lewat `BroadcastChannel('solar-auth')`, dan setiap tab memeriksa `GET /auth/me` lagi saat
+  terlihat atau mendapat fokus (cadangan bila BroadcastChannel tidak ada): tab yang menemukan akun lain beralih ke akun
+  itu, tab di layar masuk ikut masuk. Logout baru mengubah layar setelah server menjawab `204` (atau `401`).
+- **Kepemilikan:** task dan lampiran menyimpan `ownerId`. Tanpa `tasks.all` hanya milik sendiri yang terlihat (milik
+  orang lain = `404`); agen juga hanya membaca artefak/riwayat dari task yang boleh dilihat peminta
+  (`agent/access.ts`). Pesan `/stream` membawa `scope` (`owner` atau `permission`) dan disaring per koneksi
+  (`streamVisible`); stream sesi yang dicabut menerima `signed_out` lalu ditutup; pengguna dengan `users.view` menerima
+  `users_changed { pendingCount }`.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as Pengguna
+    participant UI as Web UI
+    participant API as /api (Express)
+    participant AS as AuthService
+    participant DB as users / sessions
+    UI->>API: GET /auth/state
+    API-->>UI: setupRequired, setupCodeRequired, registrationOpen, me
+    U->>UI: username/email + password
+    UI->>API: POST /auth/login { identifier, password }
+    API->>AS: login (batas per IP & per akun dihitung dulu)
+    AS->>DB: akun (username atau email, huruf kecil)
+    AS->>AS: scrypt verify (akun tak dikenal tetap di-hash)
+    alt password benar & akun active
+        AS->>DB: sesi baru (hanya SHA-256 token)
+        API-->>UI: 200 AuthMe + Set-Cookie solar_session (HttpOnly)
+    else pending / disabled
+        API-->>UI: 403 account_pending / account_disabled
+    else salah / dibatasi
+        API-->>UI: 401 invalid_credentials / 429 + Retry-After
+    end
+    UI->>API: request lain (cookie ikut otomatis)
+    API->>AS: sessionPrincipal(cookie) - cache 30 s
+    API->>API: requirePermission(can(role, permission))
+```
+
+**Superadmin pertama.** Saat `AuthService.init()`: bila `SOLAR_ADMIN_*` lengkap dan belum ada akun, akun superadmin
+dibuat (nilai tidak valid menghentikan start); lalu bila masih belum ada akun, kode penyiapan dibuat (16 simbol dari 32
+huruf/angka tanpa 0/O/1/I = 80 bit, `XXXX-XXXX-XXXX-XXXX`), dicetak di log dan ditulis ke `DATA_DIR/setup-code.txt`
+(mode 0600). `POST /auth/setup` diterima bila membawa token akses, **atau** bila `isLoopbackRequest` (peer loopback,
+tanpa `TRUST_PROXY`, tanpa header proxy, `Host`/`Origin` lokal) **dan** kodenya cocok (perbandingan waktu-konstan,
+huruf besar/kecil, spasi dan `-` diabaikan). Repository membuat akun pertama secara atomik (tepat satu setup paralel
+yang menang); setelah itu kode dilupakan dan file-nya dihapus. Bila semua akun hilang saat server berjalan, kode baru
+dibuat pada percobaan setup berikutnya.
+
+**Aplikasi desktop** (`apps/desktop/src/main.ts`, `preload.ts`). Server berjalan di proses Electron, jadi shell bisa
+membaca kodenya langsung lewat `RunningServer.setupCode()` - tanpa membaca log atau file:
+
+- Preload menambahkan `solarDesktop.getSetupCode(): Promise<string | null>` (`ipcRenderer.invoke('solar:get-setup-code')`;
+  tipe `SolarDesktopApi` di `preload.ts`). Hasilnya kode selama belum ada akun, selain itu `null`; tidak pernah
+  *reject*. Web UI memanggil `window.solarDesktop?.getSetupCode?.()` saat menampilkan form superadmin pertama untuk
+  mengisi kolom kode, dan memintanya lagi setelah `setup_code_invalid`.
+- Main process (`ipcMain.handle`) menjawab hanya bila pengirimnya **UI SOLAR sendiri** (`fromSolarUi`): `webContents`
+  jendela SOLAR, *top frame* (bukan iframe), `origin` keamanan frame **dan** origin URL-nya sama dengan origin server
+  lokal, dan path-nya bukan `/api/...` (respons API dan artefak disajikan dengan CSP `sandbox`). Selain itu `null`.
+  Pengecekan yang sama dipakai untuk `solar:set-language`. Preload sendiri hanya berjalan di top frame.
+- Kode tidak pernah disimpan oleh shell: setiap panggilan membaca `server.setupCode()`, yang menjadi `null` begitu
+  superadmin pertama dibuat. Menu **Bantuan → Kode penyiapan superadmin pertama…** (hanya terlihat selama kode ada;
+  diperiksa ulang tiap 2 detik selama setup belum selesai) menampilkan kode di dialog native dan bisa menyalinnya, untuk
+  membuat akun lewat browser di komputer yang sama.
+- Server desktop selalu `HOST=127.0.0.1`, jadi form setup dari jendela lolos `isLoopbackRequest`.

@@ -92,7 +92,11 @@ export function createAuthRouter({ config, auth }: AuthRouteDeps): Router {
 
   r.post('/login', async (req, res) => {
     const body = parse(z.object({ identifier: text(320).min(1), password: text(1024).min(1) }), req.body, req.lang);
+    // the session this browser held until now (another account, or the same one logging in again)
+    const previous = req.principal?.kind === 'user' ? req.principal : null;
     const session = await call(req, () => auth.login(body.identifier, body.password, requestMeta(req)));
+    // its cookie is replaced below: that session ends too (see AuthService.endReplacedSession)
+    if (previous) await auth.endReplacedSession(previous, session.principal, requestMeta(req));
     signIn(req, res, auth, session);
   });
 

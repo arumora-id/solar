@@ -1,19 +1,12 @@
 /**
- * The app shell: page metadata, access-token gate, "new version" notice, top bar, language switch, settings drawer
- * and the status badge / progress meter (App.tsx, TopBar.tsx, SettingsDrawer.tsx, Status.tsx).
+ * The app shell: page metadata, "new version" notice, top bar, language switch, settings drawer and the status badge /
+ * progress meter (App.tsx, TopBar.tsx, SettingsDrawer.tsx, Status.tsx). Login screens and the user menu: `auth`.
  */
 export const app = {
   meta: {
     /** <meta name="description">; the English one is used while the interface is in English. */
     description:
       'SOLAR AI AGENT - asisten AI solution architect dengan karakter 3D (Robo, Mochi, Cocoa Kelapa, Kelinci): ArchiMate, sequence diagram dan Technical Specification Document.',
-  },
-
-  tokenGate: {
-    title: 'Token akses diperlukan',
-    hint: 'Server SOLAR ini dilindungi SOLAR_ACCESS_TOKEN. Masukkan token untuk melanjutkan.',
-    tokenLabel: 'Token akses',
-    submit: 'Masuk',
   },
 
   update: {
@@ -53,6 +46,8 @@ export const app = {
       skills: 'Skills',
       plugins: 'Plugin MCP',
       voice: 'Suara',
+      users: 'Pengguna',
+      activity: 'Aktivitas',
       system: 'Sistem',
     },
     characterIntro:

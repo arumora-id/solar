@@ -1,14 +1,20 @@
 import gsap from 'gsap';
 import { useEffect, useRef, useState } from 'react';
+import { useAuth } from '../lib/auth';
 import { useT } from '../lib/i18n';
 import { useSolar } from '../lib/store';
 import { HandIcon } from './Icons';
+import { reducedMotion } from '../lib/motion';
 
 /** Human-in-the-loop: the first pending approval request (e.g. every Visual Paradigm call). */
 export function ConfirmationDialog() {
   const { confirmations, resolveConfirmation, tasks } = useSolar();
+  const { user, can } = useAuth();
   const t = useT();
-  const current = confirmations[0];
+  // roles that see every task also receive other users' approval requests: those are answered in the monitor
+  // (task detail), only the user's own requests interrupt them here
+  const mine = can('tasks.all') ? confirmations.filter((c) => tasks[c.taskId]?.ownerId === user?.id) : confirmations;
+  const current = mine[0];
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -17,7 +23,7 @@ export function ConfirmationDialog() {
   useEffect(() => {
     setNote('');
     setError('');
-    if (current && ref.current) gsap.fromTo(ref.current, { scale: 0.94, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.3, ease: 'back.out(2)', overwrite: true });
+    if (current && ref.current && !reducedMotion()) gsap.fromTo(ref.current, { scale: 0.94, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.3, ease: 'back.out(2)', overwrite: true });
   }, [current?.id]);
 
   if (!current) return null;
@@ -42,7 +48,7 @@ export function ConfirmationDialog() {
           <span className="badge" data-status="awaiting_confirmation">
             <HandIcon /> {t.agent.confirmation.badge}
           </span>
-          {confirmations.length > 1 && <span className="hint">{t.agent.confirmation.more(confirmations.length - 1)}</span>}
+          {mine.length > 1 && <span className="hint">{t.agent.confirmation.more(mine.length - 1)}</span>}
         </div>
         <h3 id="confirm-title">{current.displayName}</h3>
         <p style={{ marginTop: 0, color: 'var(--ink-2)' }}>

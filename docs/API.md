@@ -77,7 +77,8 @@ Task yang dibuat dengan `SOLAR_ACCESS_TOKEN` memiliki `ownerId: "system:access-t
 - Masa berlaku bergeser: habis setelah `SESSION_TTL_HOURS` (default 168 = 7 hari) tanpa dipakai, dan paling lama
   `SESSION_MAX_DAYS` (default 30) sejak login. Sesi kedaluwarsa dibersihkan tiap jam.
 - Logout menghapus sesi itu. Ganti password sendiri mengakhiri sesi **lain** milik pengguna itu; reset password oleh
-  admin, nonaktif, hapus akun dan perubahan peran mengakhiri **semua** sesinya. Stream `/stream` sesi yang berakhir
+  admin, nonaktif, hapus akun dan perubahan peran mengakhiri **semua** sesinya. Login baru dari browser yang masih
+  membawa cookie sesi yang sah mengakhiri sesi lama itu (cookie-nya diganti). Stream `/stream` sesi yang berakhir
   menerima `{ kind: "signed_out" }` lalu ditutup.
 - **CSRF**: permintaan yang mengubah data (`POST/PUT/PATCH/DELETE`) tanpa token akses yang **valid** harus berasal dari
   origin SOLAR sendiri (sekadar mengirim token apa pun, mis. `?token=` di form situs lain, tidak melewati cek ini): header `Origin` harus sama dengan `Host` (atau `X-Forwarded-Host` bila `TRUST_PROXY`), dan tanpa `Origin`,
@@ -125,7 +126,7 @@ pertama dibuat dengan salah satu cara:
 |---|---|---|---|
 | GET | `/auth/state` | | Publik. `AuthState`: `{ appName, version, setupRequired, setupCodeRequired, registrationOpen, me: AuthMe \| null, passwordPolicy: { minLength: 10, maxLength: 128 } }`. `setupCodeRequired` = setup menunggu dan permintaan tidak membawa token akses (form setup perlu kolom kode). |
 | POST | `/auth/register` | `{ username, email, name, password }` | Publik. `201 { status: "pending" }` - akun `staff` berstatus `pending`, **tidak** login (tanpa cookie). `400 invalid_input` (username/email/nama tidak valid) / `weak_password`; `409 username_taken` / `email_taken`; `409 registration_closed` (belum ada superadmin); `429 rate_limited` (5 per IP per jam) + `Retry-After`; `503 busy`. |
-| POST | `/auth/login` | `{ identifier, password }` (`identifier` = username **atau** email, tidak peka huruf besar) | Publik. `200 AuthMe` + `Set-Cookie`. `401 invalid_credentials` (pesan sama untuk akun tak dikenal dan password salah; akun tak dikenal tetap menjalankan scrypt penuh); `403 account_pending` / `account_disabled` (hanya setelah password terbukti benar); `429 rate_limited` + `Retry-After` (10 kegagalan per 15 menit per IP, dan per akun/identifier - juga untuk percobaan yang dikirim paralel, lihat di bawah); `503 busy` + `Retry-After`. |
+| POST | `/auth/login` | `{ identifier, password }` (`identifier` = username **atau** email, tidak peka huruf besar) | Publik. `200 AuthMe` + `Set-Cookie`. `401 invalid_credentials` (pesan sama untuk akun tak dikenal dan password salah; akun tak dikenal tetap menjalankan scrypt penuh); `403 account_pending` / `account_disabled` (hanya setelah password terbukti benar); `429 rate_limited` + `Retry-After` (10 kegagalan per 15 menit per IP, dan per akun/identifier - juga untuk percobaan yang dikirim paralel, lihat di bawah); `503 busy` + `Retry-After`. Bila permintaan masih membawa cookie sesi yang sah (browser yang sama, akun lain atau akun yang sama), sesi lama itu **diakhiri** setelah login berhasil: cookie-nya diganti, dan event stream tab lain yang masih memakai sesi lama menerima `signed_out` (log aktivitas: `auth.session_revoked`, `reason: replaced_by_login`). |
 | POST | `/auth/logout` | | `204`, cookie dihapus (`Max-Age=0`). |
 | GET | `/auth/me` | | `200 AuthMe { user, role, permissions, via: "session" \| "token" }`; `401 unauthenticated`. |
 | POST | `/auth/password` | `{ currentPassword, newPassword }` | `204`, sesi lain diakhiri. `400 wrong_password` / `weak_password`; `400 forbidden` untuk token akses; `429` setelah 10 password lama salah per 15 menit (juga paralel); `503 busy`. |
@@ -276,7 +277,7 @@ pengguna menyetujui) dicatat dengan pelaku = **pemilik task**, `details.via = "a
 | `auth.register` | pendaftaran mandiri (pelaku = akun baru) | |
 | `auth.setup` | superadmin pertama dibuat (juga dari `SOLAR_ADMIN_*` saat server mulai: pelaku `system`); juga `failure` untuk setup yang ditolak | `role`; `via`: `setup_code` \| `token` \| `env`; `reason`: `setup_code_invalid`, `setup_forbidden`, `setup_not_available`, `rate_limited` |
 | `auth.password_change` | ganti password sendiri; `failure` bila password lama salah / diblokir | `sessionsEnded`; `reason` |
-| `auth.session_revoked` | sesi akun diakhiri oleh tindakan admin | `sessions`, `reason`: `role_change` \| `disable` \| `password_reset` |
+| `auth.session_revoked` | sesi akun diakhiri oleh tindakan admin, atau oleh login lain di browser yang sama | `sessions`, `reason`: `role_change` \| `disable` \| `password_reset` \| `replaced_by_login` (pelaku = akun yang baru masuk) |
 | `user.create` | admin membuat akun | `role` |
 | `user.approve` | pendaftaran disetujui (juga `PATCH status: active` pada akun `pending`) | `role` |
 | `user.role_change` | peran diubah | `from`, `to` |

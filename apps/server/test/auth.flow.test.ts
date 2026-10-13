@@ -3,7 +3,7 @@ import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import type { AuthMe, AuthState, User } from '@solar/shared';
+import type { ActivityPage, AuthMe, AuthState, User } from '@solar/shared';
 import { verifyDummy } from '../src/auth/password.js';
 import type { RunningServer } from '../src/server.js';
 import {
@@ -11,11 +11,13 @@ import {
   Client,
   FAST_SCRYPT,
   LOOSE_LIMITS,
+  openStream,
   startAuthServer,
   STRONG_PASSWORD,
   TEST_ACCESS_TOKEN,
   tokenClient,
   userClient,
+  waitFor,
 } from './helpers/authServer.js';
 
 // count the dummy password checks of logins naming unknown accounts (the real scrypt runs underneath)
@@ -164,6 +166,47 @@ describe('registration, approval and login (file storage, superadmin from SOLAR_
     const me = await replay.get('/api/auth/me');
     expect(me.status).toBe(401);
     expect(me.body.code).toBe('unauthenticated');
+  });
+
+  it('a login from a browser that still holds a session ends that session, and its event streams are told', async () => {
+    // two tabs of one browser share the cookie: one shows "tab.one", the other is used to log in as "tab.two"
+    const { client: browser, user: one } = await userClient(server.url, admin, 'tab.one', 'staff', 'Tab One');
+    await userClient(server.url, admin, 'tab.two', 'staff', 'Tab Two');
+    const oldToken = browser.session!;
+    const stream = openStream(server.url, { Cookie: `solar_session=${oldToken}` });
+    try {
+      await waitFor(() => stream.messages.some((m) => m.kind === 'hello'), 5000, 'hello');
+      // a failed login changes nothing
+      expect((await browser.login('tab.two', 'wrong password!!')).status).toBe(401);
+      expect((await browser.get<AuthMe>('/api/auth/me')).body.user).toMatchObject({ username: 'tab.one' });
+      expect(stream.messages.some((m) => m.kind === 'signed_out')).toBe(false);
+
+      const login = await browser.login('tab.two');
+      expect(login.status).toBe(200);
+      expect(browser.session).not.toBe(oldToken);
+      // the tab still showing "tab.one" is sent back to the login screen instead of running on with the new cookie
+      await waitFor(() => stream.messages.some((m) => m.kind === 'signed_out'), 5000, 'signed_out');
+      await stream.ended;
+    } finally {
+      stream.close();
+    }
+    const replay = new Client(server.url);
+    replay.session = oldToken;
+    expect((await replay.get('/api/auth/me')).status).toBe(401);
+    expect((await browser.get<AuthMe>('/api/auth/me')).body.user).toMatchObject({ username: 'tab.two' });
+
+    // logging in again as the same account replaces the session the same way
+    const before = browser.session!;
+    expect((await browser.login('tab.two')).status).toBe(200);
+    replay.session = before;
+    expect((await replay.get('/api/auth/me')).status).toBe(401);
+    expect((await browser.get('/api/auth/me')).status).toBe(200);
+
+    // the activity log says why the session ended
+    const log = await root.get<ActivityPage>('/api/activity?action=auth.session_revoked&limit=100', { 'X-Solar-Language': 'en' });
+    const entry = log.body.items.find((e) => e.targetId === one.id);
+    expect(entry).toMatchObject({ actorName: 'Tab Two', targetLabel: 'tab.one', details: { sessions: 1, reason: 'replaced_by_login' } });
+    expect(entry?.summary).toBe('Login session of tab.one ended: Tab Two logged in on the same browser');
   });
 
   it('a password change ends the other sessions, keeps the current one', async () => {

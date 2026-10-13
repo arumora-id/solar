@@ -5,6 +5,7 @@ import { AgentBubble } from '../components/AgentBubble';
 import { AttachmentStrip } from '../components/Attachments';
 import { Composer, type ComposerHandle } from '../components/Composer';
 import { PlusIcon, VolumeIcon } from '../components/Icons';
+import { useAuth } from '../lib/auth';
 import { isActive } from '../lib/format';
 import { localeOf, useT, type Dict } from '../lib/i18n';
 import { speakableSummary } from '../lib/markdown';
@@ -15,6 +16,7 @@ import { CharacterStage } from '../character/CharacterStage';
 import { CharacterSwitcher, useCharacter } from '../components/CharacterPicker';
 import { speak, stopSpeaking, ttsAvailable } from '../voice/tts';
 import { useVoicePrefs } from '../voice/useVoice';
+import { reducedMotion } from '../lib/motion';
 
 /**
  * Quick prompt chips, in this order. Label and text are in `t.agent.quickPrompts`: the text is written in the interface
@@ -37,6 +39,8 @@ function speechLang(pref: string): string {
 
 export function AgentPage() {
   const { tasks, events, sessionId, submit, startNewSession, lastFinished, config, connected } = useSolar();
+  const { user, can } = useAuth();
+  const managesModels = can('settings.manage');
   const t = useT();
   const voicePrefs = useVoicePrefs();
   const composerRef = useRef<ComposerHandle>(null);
@@ -65,9 +69,14 @@ export function AgentPage() {
     return () => window.removeEventListener('solar:layout', on);
   }, []);
 
+  // the conversation is the user's own: roles that see every task also receive other users' tasks on the stream
+  const myId = user?.id;
   const sessionTasks = useMemo(
-    () => Object.values(tasks).filter((task) => task.sessionId === sessionId).sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
-    [tasks, sessionId],
+    () =>
+      Object.values(tasks)
+        .filter((task) => task.sessionId === sessionId && (!myId || !task.ownerId || task.ownerId === myId))
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+    [tasks, sessionId, myId],
   );
   const current: Task | undefined = [...sessionTasks].reverse().find((task) => isActive(task.status));
 
@@ -117,7 +126,8 @@ export function AgentPage() {
   const bubble = useMemo(() => {
     const say = t.agent.speech;
     if (!connected) return { text: say.connecting, sub: '' };
-    if (config && !config.llmConfigured) return { text: say.llmMissing, sub: say.llmMissingSub };
+    // only the superadmin can add a model (Settings → Model AI); everyone else is told whom to ask
+    if (config && !config.llmConfigured) return { text: say.llmMissing, sub: managesModels ? say.llmMissingSub : say.llmMissingAsk };
     if (listening) return { text: say.listening, sub: say.listeningSub };
     if (mood === 'happy') return { text: say.done, sub: say.doneSub };
     if (mood === 'sad') return { text: say.failed, sub: say.failedSub };
@@ -126,10 +136,10 @@ export function AgentPage() {
     if (current) return { text: current.currentStep ?? say.working, sub: `${current.progress}% · ${current.title}` };
     if (speaking) return { text: say.speaking, sub: '' };
     return { text: t.agent.greeting, sub: say.idleSub };
-  }, [t, connected, config, listening, mood, current, speaking]);
+  }, [t, connected, config, managesModels, listening, mood, current, speaking]);
 
   useEffect(() => {
-    if (speechRef.current) gsap.fromTo(speechRef.current, { y: -6, opacity: 0.4 }, { y: 0, opacity: 1, duration: 0.3, ease: 'power2.out' });
+    if (speechRef.current && !reducedMotion()) gsap.fromTo(speechRef.current, { y: -6, opacity: 0.4 }, { y: 0, opacity: 1, duration: 0.3, ease: 'power2.out' });
   }, [bubble.text]);
 
   useEffect(() => {

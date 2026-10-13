@@ -46,6 +46,25 @@ export const monitor: Dict['monitor'] = {
     label: 'Search tasks',
   },
 
+  owner: {
+    column: 'Owner',
+    filterLabel: 'Task owner',
+    all: 'All owners',
+    mine: 'Mine',
+    none: 'No owner (older tasks)',
+    users: 'Users',
+    deleted: 'Deleted user',
+    token: 'Access token (script)',
+    legacy: 'Older task',
+    you: (name: string) => `${name} (you)`,
+    detail: (name: string) => `Owner: ${name}`,
+  },
+
+  approvals: {
+    title: 'Waiting for approval',
+    other: (name: string) => `${name}'s task: you are answering as an admin.`,
+  },
+
   list: {
     label: 'Task list',
     heading: (n: number) => `Tasks (${numEn(n)})`,

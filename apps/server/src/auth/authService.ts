@@ -764,6 +764,29 @@ export class AuthService {
   }
 
   /**
+   * A login from a browser that still held a valid session: the new cookie replaces the old one there, so the old
+   * session can never be used or logged out from that browser again. It ends now - its open event streams (other tabs
+   * still showing that account) get `signed_out` instead of running on beside the new account until the session
+   * expires. Never fails the login that replaced it.
+   */
+  async endReplacedSession(previous: Principal, by: Principal, meta: RequestMeta = NO_META): Promise<void> {
+    if (previous.kind !== 'user' || !previous.sessionHash || previous.sessionHash === by.sessionHash) return;
+    try {
+      await this.dropSession(previous.sessionHash);
+      this.events.emit('revoked', { userId: previous.id, tokenHashes: [previous.sessionHash] } satisfies Revocation);
+      this.audit(
+        'auth.session_revoked',
+        principalActor(by),
+        meta,
+        { type: 'user', id: previous.id, label: previous.user?.username ?? null },
+        { sessions: 1, reason: 'replaced_by_login' },
+      );
+    } catch (err) {
+      log.warn(`Could not end the session replaced by a login: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /**
    * Changes one's own password (proving the current one) and ends one's other sessions. Like the login, the attempt
    * is counted before the current password is checked (parallel guesses cannot pass the limit) and given back when it
    * was no wrong guess.
