@@ -25,6 +25,8 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - name: Verify distributable self-hosted server bundle
+        run: node scripts/pack-server.mjs
       # Chromium smoke tests cover viewport geometry & interactive controls absent from TypeScript/unit tests.
       - name: Install Chromium for responsive UI smoke tests
         run: |
@@ -38,3 +40,21 @@ jobs:
           name: solar-responsive-ui-screenshots
           path: ${{ runner.temp }}/solar-ui-screenshots/*.png
           if-no-files-found: ignore
+
+  windows-installer-check:
+    # A green Linux build does not prove Electron packaging works on Windows.
+    # Build the actual installer, without publishing a release.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run desktop:dist:win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: solar-windows-pr-installer
+          path: apps/desktop/release/*.exe
+          if-no-files-found: error
