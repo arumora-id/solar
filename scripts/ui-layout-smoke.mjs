@@ -117,9 +117,15 @@ try {
     await page.screenshot({ path: join(screenshots, `monitor-${name}.png`), fullPage: true });
   }
 
+  await checkConversation(1920, 1080, 'wide-desktop');
   await checkConversation(1360, 900, 'desktop');
+  await checkConversation(1024, 768, 'small-desktop');
   await checkConversation(768, 1024, 'tablet');
   await checkConversation(390, 780, 'mobile');
+  await checkConversation(320, 568, 'small-mobile');
+  // Short landscape windows also occur on Windows desktop and rotated mobile devices.
+  await checkConversation(844, 390, 'landscape');
+  await page.setViewportSize({ width: 390, height: 780 });
   // The character picker must remain accessible and not cover the mini robot.
   await page.locator('.character-switch > button').click();
   const picker = ensureBox(await page.locator('.character-menu').boundingBox(), 'character menu');
@@ -133,10 +139,27 @@ try {
   await page.locator('.stage-footer .chip').first().click();
   assert((await page.locator('.composer textarea').inputValue()).trim().length > 0, 'Quick prompt failed to fill composer');
 
+  // Real attachment upload/read/remove against the disposable local server.
+  await page.locator('.composer input[type="file"]').setInputFiles({
+    name: 'solar-layout-smoke.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.from('SOLAR isolated UI regression check.\\n'),
+  });
+  await page.locator('.composer .att-chip').waitFor({ timeout: 10000 });
+  await page.locator('.composer .att-chip button.att-open').waitFor({ timeout: 30000 });
+  assert.equal(await page.locator('.composer .att-chip.error').count(), 0, 'Attachment upload or extraction failed');
+  await page.locator('.composer .att-remove').click();
+  await page.locator('.composer .att-chip').waitFor({ state: 'detached', timeout: 10000 });
+
   await page.locator('.topbar a[href="/monitor"]').click();
   await page.locator('.monitor-grid').waitFor();
+  await checkMonitor(1920, 1080, 'wide-desktop');
   await checkMonitor(1360, 900, 'desktop');
+  await checkMonitor(1024, 768, 'small-desktop');
   await checkMonitor(390, 780, 'mobile');
+  await checkMonitor(320, 568, 'small-mobile');
+  await checkMonitor(844, 390, 'landscape');
+  await page.setViewportSize({ width: 390, height: 780 });
   await page.locator('.topbar button.btn.ghost.icon').click();
   await checkMonitor(390, 780, 'mobile-dark');
   await page.locator('.topbar a[href="/"]').click();
@@ -151,7 +174,7 @@ try {
   await firstFilter.click();
   assert.equal(await firstFilter.getAttribute('aria-pressed'), 'true', 'Task filter did not activate');
   assert.equal(pageErrors.length, 0, `Browser runtime errors: ${pageErrors.join('; ')}`);
-  console.log('Responsive UI smoke passed: desktop/tablet/mobile conversation including localized compact-placeholder guard, character picker, quick prompt, monitor desktop/mobile, dark mobile views, filter, no horizontal overflow.');
+  console.log('Responsive UI smoke passed: wide/standard/small desktop, tablet, mobile 320px, mobile landscape, character selection, quick prompt, attachment upload/remove, dark theme, language, monitor filter, no horizontal overflow.');
   console.log('Screenshots:', screenshots);
 } catch (error) {
   console.error('Responsive UI smoke FAILED:', error);
