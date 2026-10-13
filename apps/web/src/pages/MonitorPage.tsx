@@ -186,10 +186,10 @@ export function MonitorPage({ selectedId }: { selectedId: string | null }) {
           <CharacterStage character={character} state={characterState} />
         </div>
         <div className="row">
-        <div style={{ flex: 1 }}>
-          <h1>{t.monitor.title}</h1>
-          <div className="hint">{t.monitor.intro}</div>
-        </div>
+          <div style={{ flex: 1 }}>
+            <h1>{t.monitor.title}</h1>
+            <div className="hint">{t.monitor.intro}</div>
+          </div>
           <button type="button" className="btn small" onClick={reloadList}>
             <RefreshIcon /> {t.common.reload}
           </button>

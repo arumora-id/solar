@@ -164,11 +164,13 @@ export function AgentPage() {
         <div className="stage-main">
           <div className="stage-area">
             <CharacterStage character={character} state={characterState} onCharacterClick={() => composerRef.current?.toggleVoice()} />
-            <CharacterSwitcher />
           </div>
-          <div className="speech" ref={speechRef} role="status">
-            {bubble.text}
-            {bubble.sub && <span className="sub">{bubble.sub}</span>}
+          <div className="stage-info">
+            <div className="speech" ref={speechRef} role="status">
+              {bubble.text}
+              {bubble.sub && <span className="sub">{bubble.sub}</span>}
+            </div>
+            <CharacterSwitcher />
           </div>
         </div>
         {!compact && (
