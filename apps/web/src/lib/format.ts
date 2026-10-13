@@ -1,5 +1,5 @@
-import type { TaskStatus } from '@solar/shared';
-import { getLang, localeOf, t, type Lang } from './i18n';
+import type { Task, TaskStatus } from '@solar/shared';
+import { getLang, localeOf, t, type Dict, type Lang } from './i18n';
 
 /*
  * Formatting in the current interface language (lib/i18n.ts): call these while rendering, so a language switch, which
@@ -96,4 +96,16 @@ export function formatBytes(n: number): string {
 
 export function isActive(status: TaskStatus): boolean {
   return status === 'queued' || status === 'running' || status === 'awaiting_confirmation';
+}
+
+/**
+ * Who created a task (roles with tasks.all receive `task.owner`): the name, "(Anda)" / "(you)" for oneself, "Pengguna
+ * terhapus" / "Deleted user" for a deleted account, the access token, or "Task lama" for a task from before accounts.
+ */
+export function ownerLabel(task: Task, dict: Dict, myId: string | null): string {
+  const owner = task.owner;
+  if (!owner) return dict.monitor.owner.legacy;
+  if (owner.deleted) return dict.monitor.owner.deleted;
+  if (owner.kind === 'token') return dict.monitor.owner.token;
+  return owner.id === myId ? dict.monitor.owner.you(owner.name) : owner.name;
 }

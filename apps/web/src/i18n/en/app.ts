@@ -7,13 +7,6 @@ export const app: Dict['app'] = {
       'SOLAR AI AGENT - an AI solution architect assistant with a selectable 3D character: ArchiMate, sequence diagrams and Technical Specification Documents.',
   },
 
-  tokenGate: {
-    title: 'Access token required',
-    hint: 'This SOLAR server is protected by SOLAR_ACCESS_TOKEN. Enter the token to continue.',
-    tokenLabel: 'Access token',
-    submit: 'Sign in',
-  },
-
   update: {
     available: 'A new version of SOLAR AI AGENT is available.',
   },
@@ -48,6 +41,8 @@ export const app: Dict['app'] = {
       skills: 'Skills',
       plugins: 'MCP plugins',
       voice: 'Voice',
+      users: 'Users',
+      activity: 'Activity',
       system: 'System',
     },
     characterIntro:

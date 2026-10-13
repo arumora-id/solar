@@ -10,6 +10,7 @@ import { SECRET_MASK } from '@solar/shared';
 import { ThinkTagSplitter, toChatMessages } from '../src/llm/chatClient.js';
 import { loadConfig } from '../src/config.js';
 import { startServer, type RunningServer } from '../src/server.js';
+import { authFetch, TEST_ACCESS_TOKEN } from './helpers/auth.js';
 
 /**
  * Multi-provider routing through the real OpenAI SDK against a local fake of the Chat Completions API:
@@ -69,7 +70,7 @@ let base: string;
 let solar: RunningServer;
 
 async function api<T>(method: string, path: string, body?: unknown): Promise<{ status: number; data: T }> {
-  const res = await fetch(`${solar.url}${path}`, {
+  const res = await authFetch(`${solar.url}${path}`, {
     method,
     headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -111,7 +112,7 @@ beforeAll(async () => {
   config.openai.configured = false;
   config.databaseUrl = undefined;
   config.s3 = null;
-  config.accessToken = undefined;
+  config.accessToken = TEST_ACCESS_TOKEN;
   config.github.token = undefined;
   config.plane.apiKey = undefined;
   process.env.GATEWAY_KEY = 'sk-gateway-from-env';

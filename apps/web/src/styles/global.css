@@ -18,6 +18,10 @@
   --accent-ink: #ffffff;
   --accent-soft: #cde2fb;
   --accent-wash: rgba(42, 120, 214, 0.08);
+  /* accent as text on the surface or the wash, and as the fill under white text: both at least 4.5:1 */
+  --accent-text: #2266bb;
+  --accent-fill: #2a72cf;
+  --accent-fill-hover: #256abf;
   --good: #0ca30c;
   --good-text: #006300;
   --warning: #fab219;
@@ -28,6 +32,15 @@
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 10px 30px rgba(0, 0, 0, 0.07);
   --stage-top: #eaf3ff;
   --stage-bottom: #fcfcfb;
+  /* roles: superadmin violet, Head of IT Solar teal, staff slate (always with the role name next to it) */
+  --role-super: #7b52d9;
+  --role-super-text: #5b34b8;
+  --role-super-wash: rgba(123, 82, 217, 0.12);
+  --role-head: #0e8f80;
+  --role-head-text: #0a6b60;
+  --role-head-wash: rgba(14, 143, 128, 0.12);
+  --role-staff: #5d6b82;
+  --hero-dot: rgba(42, 120, 214, 0.2);
   --radius: 14px;
   --radius-sm: 9px;
   --font: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
@@ -51,12 +64,20 @@
     --accent-ink: #ffffff;
     --accent-soft: #104281;
     --accent-wash: rgba(57, 135, 229, 0.12);
+    --accent-text: #5b9eee;
+    --accent-fill: #2f74c9;
+    --accent-fill-hover: #2b6fc4;
     --good-text: #3cc63c;
     --warning-text: #fab219;
     --critical-text: #ff8a8a;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(0, 0, 0, 0.35);
     --stage-top: #12233a;
     --stage-bottom: #1a1a19;
+    --role-super-text: #c9b4ff;
+    --role-super-wash: rgba(160, 130, 255, 0.16);
+    --role-head-text: #63dccc;
+    --role-head-wash: rgba(80, 210, 195, 0.14);
+    --hero-dot: rgba(127, 228, 255, 0.12);
   }
 }
 
@@ -76,12 +97,20 @@
   --accent-ink: #ffffff;
   --accent-soft: #104281;
   --accent-wash: rgba(57, 135, 229, 0.12);
+  --accent-text: #5b9eee;
+  --accent-fill: #2f74c9;
+  --accent-fill-hover: #2b6fc4;
   --good-text: #3cc63c;
   --warning-text: #fab219;
   --critical-text: #ff8a8a;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(0, 0, 0, 0.35);
   --stage-top: #12233a;
   --stage-bottom: #1a1a19;
+  --role-super-text: #c9b4ff;
+  --role-super-wash: rgba(160, 130, 255, 0.16);
+  --role-head-text: #63dccc;
+  --role-head-wash: rgba(80, 210, 195, 0.14);
+  --hero-dot: rgba(127, 228, 255, 0.12);
 }
 
 * {
@@ -152,17 +181,18 @@ a {
 .btn:active {
   transform: translateY(1px);
 }
-.btn:disabled {
+.btn:disabled,
+.btn[aria-disabled='true'] {
   opacity: 0.5;
   cursor: not-allowed;
 }
 .btn.primary {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
   color: var(--accent-ink);
 }
 .btn.primary:hover {
-  background: var(--accent-hover);
+  background: var(--accent-fill-hover);
 }
 .btn.danger {
   color: var(--critical-text);
@@ -258,7 +288,7 @@ a {
 }
 .nav a[aria-current='page'] {
   background: var(--accent-wash);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .topbar .spacer {
   flex: 1;
@@ -319,7 +349,8 @@ a {
 }
 .lang-switch button[aria-pressed='true'] {
   background: var(--accent-wash);
-  color: var(--accent);
+  /* the text shade of the accent: 4.5:1 on the wash (the switch is on the login screens too) */
+  color: var(--accent-text);
 }
 .lang-switch button[aria-pressed='true']::before,
 .lang-switch button[aria-pressed='true'] + button::before {
@@ -554,7 +585,7 @@ a {
 }
 .bubble.user {
   align-self: flex-end;
-  background: var(--accent);
+  background: var(--accent-fill);
   color: var(--accent-ink);
   border-bottom-right-radius: 4px;
   max-width: 88%;
@@ -1217,12 +1248,13 @@ button.att-open:hover .att-name {
   font-size: 16px;
   flex: 1;
 }
+/* the tabs wrap onto a second row instead of hiding the last ones off the edge (nine for a superadmin) */
 .tabs {
   display: flex;
-  gap: 4px;
-  padding: 8px 12px 0;
+  flex-wrap: wrap;
+  gap: 0 4px;
+  padding: 6px 12px 0;
   border-bottom: 1px solid var(--line);
-  overflow-x: auto;
 }
 .tabs button {
   border: 0;
@@ -1236,8 +1268,17 @@ button.att-open:hover .att-name {
   flex-shrink: 0;
 }
 .tabs button[aria-selected='true'] {
-  color: var(--accent);
+  color: var(--accent-text);
   border-bottom-color: var(--accent);
+}
+@media (max-width: 640px) {
+  .tabs {
+    padding: 4px 8px 0;
+  }
+  .tabs button {
+    padding: 8px 9px;
+    font-size: 13.5px;
+  }
 }
 .drawer-body {
   flex: 1;
@@ -1358,7 +1399,7 @@ button.att-open:hover .att-name {
 }
 .seg button[aria-pressed='true'] {
   background: var(--accent-wash);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .monitor-grid {
   display: grid;
@@ -1584,9 +1625,10 @@ button.att-open:hover .att-name {
   flex: 1;
 }
 
-/* the install button only appears while the browser offers installing: it must not push the top bar past the
-   viewport between the phone layout and a full-width window (two rules: a browser without :has() keeps the first) */
-@media (max-width: 1060px) {
+/* the install button only appears while the browser offers installing (Chromium browsers, which all support :has()):
+   with one more button in the bar, its label, the tagline, the account name and the connection text give way earlier,
+   so the bar never gets wider than the window between the phone layout and a full-width window */
+@media (max-width: 1260px) {
   .topbar .install .label-wide {
     display: none;
   }
@@ -1594,24 +1636,1417 @@ button.att-open:hover .att-name {
     display: none;
   }
 }
+@media (max-width: 1060px) {
+  .topbar:has(.install) .user-button .label-wide {
+    display: none;
+  }
+}
+@media (max-width: 940px) {
+  .topbar:has(.install) .conn span {
+    display: none;
+  }
+}
+/* just above the phone layout (which wraps the bar onto two rows) the logo stands for the name */
+@media (min-width: 641px) and (max-width: 720px) {
+  .topbar .brand-name {
+    display: none;
+  }
+}
+@media (min-width: 641px) and (max-width: 760px) {
+  .topbar:has(.install) .brand-name {
+    display: none;
+  }
+}
 
-/* the top bar also holds the language switch: as the window narrows, the tagline, then the button labels (the
-   buttons keep their aria-labels), then the connection text (its dot stays) give way before anything wraps */
+/* the top bar also holds the language switch, the theme, the pending-approvals badge and the account button: as the
+   window narrows, the tagline, then the account name (the avatar stays), then the button labels (the buttons keep
+   their aria-labels) and the connection text (its dot stays) give way before anything wraps or overflows */
 .brand {
   white-space: nowrap;
 }
-@media (max-width: 900px) {
+@media (max-width: 1100px) {
   .topbar .brand small {
     display: none;
   }
 }
-@media (max-width: 800px) {
-  .topbar .label-wide {
+@media (max-width: 1000px) {
+  .topbar .user-button .label-wide {
+    display: none;
+  }
+  .topbar .user-button {
+    padding-right: 2px;
+  }
+}
+@media (max-width: 860px) {
+  .topbar .label-wide,
+  .topbar .conn span {
     display: none;
   }
 }
-@media (max-width: 700px) {
-  .topbar .conn span {
+@media (max-width: 760px) {
+  .topbar {
+    gap: 8px;
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  .nav {
+    margin-left: 4px;
+  }
+}
+
+/* ===========================================================================
+   Login, registration and first-superadmin setup (components/auth/*)
+   =========================================================================== */
+.auth {
+  position: relative;
+  min-height: 100%;
+  display: grid;
+  grid-template-columns: minmax(380px, 46%) minmax(0, 1fr);
+  background: var(--page);
+}
+.auth-toolbar {
+  position: absolute;
+  top: 16px;
+  right: 20px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.auth-hero {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 26px 40px 36px;
+  background:
+    radial-gradient(90% 60% at 50% 42%, rgba(127, 228, 255, 0.22), transparent 70%),
+    linear-gradient(165deg, var(--stage-top), var(--stage-bottom));
+  border-right: 1px solid var(--line);
+}
+/* a faint dot grid behind Robo */
+.auth-hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(var(--hero-dot) 1.1px, transparent 1.4px);
+  background-size: 22px 22px;
+  -webkit-mask-image: radial-gradient(ellipse at 50% 42%, #000 15%, transparent 68%);
+  mask-image: radial-gradient(ellipse at 50% 42%, #000 15%, transparent 68%);
+  pointer-events: none;
+}
+.auth-brand {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 750;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+}
+.auth-stage {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 300px;
+}
+.auth-robo {
+  width: min(300px, 36vh, 72%);
+  aspect-ratio: 1;
+}
+.auth-robo svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  filter: drop-shadow(0 18px 26px rgba(42, 120, 214, 0.18));
+}
+.auth-speech {
+  position: relative;
+  max-width: 320px;
+  padding: 10px 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  font-weight: 600;
+  text-align: center;
+  transform-origin: 50% 100%;
+}
+.auth-speech::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -7px;
+  width: 12px;
+  height: 12px;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  transform: translateX(-50%) rotate(45deg);
+}
+.auth-pitch {
+  position: relative;
+  max-width: 440px;
+}
+.auth-tagline {
+  margin: 0 0 12px;
+  font-size: 22px;
+  font-weight: 720;
+  letter-spacing: -0.2px;
+  line-height: 1.3;
+}
+.auth-pitch ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 9px;
+  color: var(--ink-2);
+}
+.auth-pitch li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.auth-pitch li::before {
+  content: '';
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-wash);
+}
+.auth-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 72px 24px 24px;
+}
+.auth-card {
+  width: min(440px, 100%);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.auth-view {
+  padding: 28px 28px 24px;
+}
+.auth-foot {
+  margin: 16px 0 0;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.auth-form {
+  display: grid;
+  gap: 14px;
+}
+.auth-fields {
+  display: grid;
+  gap: 14px;
+}
+.auth-head h2 {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: -0.2px;
+}
+.auth-head h2:focus,
+.auth-status h2:focus {
+  outline: none;
+}
+.auth-head p {
+  margin: 4px 0 0;
+  color: var(--ink-2);
+}
+.auth-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--role-super-wash);
+  color: var(--role-super-text);
+  font-size: 12px;
+  font-weight: 700;
+}
+.auth-field {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.auth-field > label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.auth-field .input,
+.auth-field .select {
+  min-height: 42px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.auth-field .input:focus,
+.auth-field .select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-wash);
+}
+.auth-field.invalid .input {
+  border-color: var(--critical);
+}
+.auth-field.invalid .input:focus {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--critical) 16%, transparent);
+}
+.auth-field .input.mono {
+  font-family: var(--mono);
+  letter-spacing: 0.5px;
+}
+.field-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.field-hint .prefilled,
+.field-hint .reset-done {
+  color: var(--good-text);
+}
+.field-error {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--critical-text);
+}
+.pw-wrap {
+  position: relative;
+}
+.pw-wrap .input {
+  padding-right: 46px;
+}
+.pw-toggle {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 34px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.pw-toggle:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+.caps-hint {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--warning-text);
+}
+.auth-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.auth-check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.auth-submit {
+  width: 100%;
+  min-height: 44px;
+  border-radius: 11px;
+  font-size: 15px;
+}
+.auth-forgot {
+  margin: -4px 0 0;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+.auth-switch {
+  margin: 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  text-align: center;
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+.link-btn {
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--accent-text);
+  font-weight: 650;
+  cursor: pointer;
+}
+.link-btn:hover {
+  text-decoration: underline;
+}
+/* the alert is always in the page (a live region must exist before it speaks); empty, it takes no room */
+.auth-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: -14px;
+  overflow: hidden;
+}
+.auth-alert.shown {
+  margin-top: 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--critical) 40%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--critical) 8%, transparent);
+  color: var(--critical-text);
+  font-size: 13.5px;
+  font-weight: 550;
+}
+.auth-alert svg {
+  flex: none;
+  margin-top: 2px;
+}
+.auth-alert:focus {
+  outline: none;
+}
+.auth-alert:focus-visible {
+  outline: 2px solid var(--critical);
+  outline-offset: 2px;
+}
+/* a rate limit: the button counts down in readable contrast (not faded like a disabled button, and not turning blue
+   under the pointer: dark text on the primary fill would be unreadable) */
+.btn.primary.auth-submit[data-waiting='true'],
+.btn.primary.auth-submit[data-waiting='true']:hover {
+  opacity: 1;
+  border-color: var(--line-strong);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  cursor: not-allowed;
+  transform: none;
+}
+.auth-submit[aria-busy='true'] {
+  cursor: progress;
+}
+.auth-retry-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-2);
+  text-align: center;
+}
+/* empty, it stays in the page (a live region) without adding the grid's gap */
+.auth-retry-note:empty {
+  margin-top: -12px;
+}
+.modal .auth-alert {
+  margin-top: 0;
+}
+.modal .auth-alert.shown {
+  margin-bottom: 12px;
+}
+.auth-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  border-radius: 10px;
+  background: var(--accent-wash);
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 550;
+}
+.auth-notice svg {
+  flex: none;
+  color: var(--accent);
+}
+.auth-next {
+  display: flex;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 13px;
+}
+.auth-next svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--warning-text);
+}
+.auth-next strong {
+  display: block;
+  color: var(--ink);
+}
+.auth-next p {
+  margin: 2px 0 0;
+}
+.auth-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+.auth-note svg {
+  flex: none;
+  margin-top: 3px;
+  color: var(--role-super);
+}
+.strength {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 2px;
+}
+.strength-bar {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  flex: 0 0 116px;
+}
+.strength-bar span {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--surface-3);
+  transition: background 0.25s;
+}
+.strength[data-score='1'] .strength-bar span[data-on] {
+  background: var(--critical);
+}
+.strength[data-score='2'] .strength-bar span[data-on] {
+  background: var(--warning);
+}
+.strength[data-score='3'] .strength-bar span[data-on] {
+  background: var(--accent);
+}
+.strength[data-score='4'] .strength-bar span[data-on] {
+  background: var(--good);
+}
+.strength-label {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.strength-label b {
+  color: var(--ink-2);
+}
+.policy {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 3px;
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+.policy li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.policy li svg {
+  color: var(--line-strong);
+  transition: color 0.2s;
+}
+.policy li[data-ok='true'] {
+  color: var(--good-text);
+}
+.policy li[data-ok='true'] svg {
+  color: var(--good);
+}
+.auth-status {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  text-align: center;
+}
+.auth-status h2 {
+  margin: 0;
+  font-size: 21px;
+}
+.auth-status p {
+  margin: 0;
+  color: var(--ink-2);
+}
+.auth-status-icon {
+  display: grid;
+  place-items: center;
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+}
+.auth-status[data-tone='good'] .auth-status-icon {
+  background: color-mix(in srgb, var(--good) 13%, transparent);
+  color: var(--good-text);
+}
+.auth-status[data-tone='wait'] .auth-status-icon {
+  background: color-mix(in srgb, var(--warning) 18%, transparent);
+  color: var(--warning-text);
+}
+.auth-status[data-tone='bad'] .auth-status-icon {
+  background: color-mix(in srgb, var(--critical) 11%, transparent);
+  color: var(--critical-text);
+}
+.auth-steps {
+  justify-self: stretch;
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 12px 14px 12px 34px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  text-align: left;
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+.auth-splash {
+  min-height: 100%;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+  color: var(--ink-3);
+  animation: auth-fade 0.4s 0.3s both;
+}
+@keyframes auth-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.spin {
+  animation: auth-spin 0.9s linear infinite;
+}
+@keyframes auth-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.mono {
+  font-family: var(--mono);
+}
+
+/* phones and narrow windows: one column, Robo small next to its speech bubble above the form */
+@media (max-width: 860px) {
+  .auth {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+  .auth-toolbar {
+    top: 12px;
+    right: 16px;
+  }
+  .auth-hero {
+    padding: 14px 16px 2px;
+    border-right: 0;
+    background: linear-gradient(180deg, var(--stage-top), transparent);
+  }
+  .auth-hero::before,
+  .auth-pitch {
     display: none;
+  }
+  .auth-brand {
+    min-height: 38px;
+  }
+  .auth-stage {
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 14px;
+    min-height: 0;
+    margin-top: 6px;
+  }
+  .auth-robo {
+    order: -1;
+    flex: none;
+    width: 88px;
+  }
+  .auth-speech {
+    flex: 1;
+    max-width: 360px;
+    padding: 9px 13px;
+    font-size: 13.5px;
+    text-align: left;
+    transform-origin: 0 50%;
+  }
+  .auth-speech::after {
+    left: -7px;
+    top: 50%;
+    bottom: auto;
+    border: 0;
+    border-left: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    transform: translateY(-50%) rotate(45deg);
+  }
+  .auth-main {
+    justify-content: flex-start;
+    padding: 12px 16px 20px;
+  }
+  .auth-card {
+    border-radius: 18px;
+  }
+  .auth-view {
+    padding: 22px 18px 20px;
+  }
+  /* 16px inputs: phones do not zoom into the field */
+  .auth-field .input,
+  .auth-field .select {
+    font-size: 16px;
+  }
+}
+@media (max-width: 860px) and (min-width: 561px) {
+  .auth-card {
+    margin-top: 8px;
+  }
+}
+
+/* ===========================================================================
+   Signed in: account menu, role badges, pending approvals (TopBar, UserMenu)
+   =========================================================================== */
+.user-menu {
+  position: relative;
+  flex: none;
+}
+.user-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  max-width: 220px;
+  padding: 2px 10px 2px 2px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  cursor: pointer;
+}
+.user-button:hover {
+  background: var(--surface-2);
+}
+.user-button-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+.avatar {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--role-staff);
+  color: #fff;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  line-height: 1;
+}
+.avatar[data-role='superadmin'] {
+  background: var(--role-super);
+}
+.avatar[data-role='head_of_it'] {
+  background: var(--role-head);
+}
+.menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  width: 300px;
+  max-width: calc(100vw - 24px);
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  transform-origin: top right;
+}
+.menu-head {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 6px;
+  padding: 10px 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.menu-head > div {
+  display: grid;
+  justify-items: start;
+  gap: 3px;
+  min-width: 0;
+}
+.menu-caption {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.menu-sub {
+  font-size: 12.5px;
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+.menu [role='menuitem'] {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  font-weight: 550;
+  text-align: left;
+  cursor: pointer;
+}
+.menu [role='menuitem']:hover {
+  background: var(--surface-2);
+}
+/* the item the keyboard is on: clearly marked (a grey wash alone is barely visible on the menu) */
+.menu [role='menuitem']:focus-visible {
+  background: var(--accent-wash);
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.menu [role='menuitem'][aria-disabled='true'] {
+  cursor: progress;
+  opacity: 0.7;
+}
+.menu-error:not(:empty) {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 6px 4px 2px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--critical) 8%, transparent);
+  color: var(--critical-text);
+  font-size: 12.5px;
+  font-weight: 550;
+}
+.menu-error svg {
+  flex: none;
+  margin-top: 2px;
+}
+.role-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.role-badge[data-role='superadmin'] {
+  border-color: transparent;
+  background: var(--role-super-wash);
+  color: var(--role-super-text);
+}
+.role-badge[data-role='head_of_it'] {
+  border-color: transparent;
+  background: var(--role-head-wash);
+  color: var(--role-head-text);
+}
+.pending-badge {
+  border-color: color-mix(in srgb, var(--warning) 60%, transparent);
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
+  color: var(--warning-text);
+}
+.pending-badge:hover {
+  background: color-mix(in srgb, var(--warning) 22%, transparent);
+}
+.pending-badge .count {
+  font-weight: 750;
+}
+.modal.narrow {
+  width: min(460px, 100%);
+}
+.modal-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.modal-title h3 {
+  flex: 1;
+  margin: 0;
+}
+.modal .auth-field {
+  margin-bottom: 12px;
+}
+.btn.danger-solid {
+  border-color: var(--critical);
+  background: var(--critical);
+  color: #fff;
+}
+.btn.danger-solid:hover {
+  background: color-mix(in srgb, var(--critical) 85%, #000);
+}
+
+/* ===========================================================================
+   Settings → Pengguna (UsersPanel)
+   =========================================================================== */
+.users-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px 12px;
+  margin-bottom: 12px;
+}
+.users-head .hint {
+  flex: 1 1 260px;
+  margin: 0;
+}
+.users-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.users-toolbar .input {
+  flex: 1 1 180px;
+  width: auto;
+  min-width: 160px;
+}
+/* phones: the four status filters share one row instead of wrapping */
+@media (max-width: 560px) {
+  .users-toolbar .seg {
+    display: flex;
+    flex-wrap: nowrap;
+    width: 100%;
+  }
+  .users-toolbar .seg button {
+    flex: 1 1 auto;
+    padding: 5px 6px;
+    white-space: nowrap;
+  }
+  .users-toolbar .seg-count {
+    margin-left: 4px;
+    padding: 0 5px;
+  }
+}
+.seg-count {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 11px;
+  font-weight: 700;
+}
+.seg button[aria-pressed='true'] .seg-count {
+  background: var(--surface);
+  color: var(--accent-text);
+}
+.seg-count[data-alert='true'],
+.seg button[aria-pressed='true'] .seg-count[data-alert='true'] {
+  background: var(--warning);
+  color: #3d2a00;
+}
+.users-notice.shown {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--good) 10%, transparent);
+  color: var(--good-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.user-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.user-card {
+  overflow: hidden;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+.user-card[data-status='pending'] {
+  border-color: color-mix(in srgb, var(--warning) 55%, var(--line));
+  background: linear-gradient(color-mix(in srgb, var(--warning) 6%, transparent), color-mix(in srgb, var(--warning) 6%, transparent)), var(--surface);
+}
+.user-card[data-status='disabled'] .user-info,
+.user-card[data-status='disabled'] .avatar {
+  opacity: 0.6;
+}
+.user-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.user-info {
+  flex: 1;
+  min-width: 0;
+}
+.user-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.you-tag {
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--accent-wash);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+}
+.user-sub {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.user-meta {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.user-badges {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.badge[data-user-status='pending'] svg {
+  color: var(--warning);
+}
+.badge[data-user-status='active'] svg {
+  color: var(--good);
+}
+.badge[data-user-status='disabled'] svg {
+  color: var(--ink-3);
+}
+.user-card .error-box {
+  margin-top: 10px;
+}
+.user-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+}
+.manage-toggle {
+  margin-left: auto;
+}
+.approve-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.approve-role .select {
+  width: auto;
+  min-height: 30px;
+  padding: 3px 8px;
+  font-size: 13px;
+}
+.user-readonly {
+  margin: 8px 0 0;
+}
+.manage-panel {
+  display: grid;
+  gap: 14px;
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+.manage-row {
+  display: grid;
+  gap: 6px;
+}
+.manage-row .field {
+  margin: 0;
+}
+.manage-row > .btn {
+  justify-self: start;
+}
+.manage-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.manage-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.manage-inline .input,
+.manage-inline .select {
+  flex: 1 1 200px;
+  width: auto;
+  min-height: 36px;
+}
+.manage-row .hint {
+  margin: 0;
+}
+.danger-zone {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.danger-title {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--critical-text);
+}
+.empty-state {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 28px 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 14px;
+  color: var(--ink-3);
+  text-align: center;
+}
+.empty-state svg {
+  color: var(--good);
+}
+.empty-state p {
+  margin: 0;
+}
+.roles-help {
+  margin-top: 16px;
+  font-size: 13px;
+}
+.roles-help summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.roles-help dl {
+  display: grid;
+  gap: 10px;
+  margin: 10px 0 0;
+}
+.roles-help dd {
+  margin: 3px 0 0;
+  color: var(--ink-2);
+}
+.create-user {
+  margin-bottom: 12px;
+}
+.create-user h4 {
+  margin: 0;
+}
+.create-user .hint {
+  margin: 2px 0 10px;
+}
+.create-user .auth-field {
+  margin-bottom: 10px;
+}
+
+/* ===========================================================================
+   Settings → Aktivitas (ActivityPanel)
+   =========================================================================== */
+.activity-filters {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-2);
+}
+/* the selects in one row (3 for admins, 2 otherwise), the date range as a pair below them */
+.activity-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px 10px;
+}
+.activity-filter-grid > .field {
+  grid-column: span 2;
+}
+.activity-filter-grid[data-cols='2'] > .field,
+.activity-filter-grid > .field.date {
+  grid-column: span 3;
+}
+@media (max-width: 560px) {
+  .activity-filter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .activity-filter-grid > .field,
+  .activity-filter-grid[data-cols='2'] > .field,
+  .activity-filter-grid > .field.date {
+    grid-column: span 1;
+  }
+  .activity-filter-grid[data-cols='3'] > .field.outcome {
+    grid-column: span 2;
+  }
+}
+.activity-filter-grid .field {
+  margin: 0;
+}
+.activity-day-head {
+  position: sticky;
+  top: -16px;
+  z-index: 1;
+  margin: 10px 0 0;
+  padding: 8px 0 6px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 12px;
+  letter-spacing: 0.3px;
+  color: var(--ink-3);
+}
+.activity-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.activity-item {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.activity-dot {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--good) 12%, transparent);
+  color: var(--good-text);
+}
+.activity-item[data-outcome='failure'] .activity-dot {
+  background: color-mix(in srgb, var(--critical) 12%, transparent);
+  color: var(--critical-text);
+}
+.activity-summary {
+  font-weight: 550;
+  overflow-wrap: anywhere;
+}
+.activity-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-top: 3px;
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+.activity-meta time {
+  font-variant-numeric: tabular-nums;
+}
+.activity-actor {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.activity-action {
+  padding: 0 7px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+}
+/* new filters: the old entries stay dimmed under the loading line until the new ones arrive */
+.activity-log[data-stale='true'] .activity-day {
+  opacity: 0.45;
+  transition: opacity 0.15s;
+}
+.activity-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.activity-details {
+  margin-top: 6px;
+  font-size: 12.5px;
+}
+.activity-details summary {
+  cursor: pointer;
+  color: var(--ink-3);
+}
+.activity-details dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 6px 0 0;
+}
+.activity-details dt {
+  color: var(--ink-3);
+}
+.activity-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.activity-more {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 14px 0 4px;
+  text-align: center;
+}
+.activity-more p {
+  margin: 0;
+}
+
+/* ===========================================================================
+   Monitor: task owners and approvals answered from the task detail
+   =========================================================================== */
+.owner-filter {
+  width: auto;
+  /* a <select> is as wide as its longest option: it may shrink, so a long name cannot push the page wider */
+  min-width: 0;
+  max-width: min(260px, 100%);
+  min-height: 34px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+}
+@media (max-width: 640px) {
+  /* owner filter and search share the row under the status filters */
+  .filters .owner-filter,
+  .filters .input {
+    flex: 1 1 140px;
+    min-width: 0;
+    max-width: 100%;
+  }
+  /* long task ids wrap and the progress column narrows, so the list fits the panel */
+  .task-table .task-step {
+    overflow-wrap: anywhere;
+  }
+  .task-table th,
+  .task-table td {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .task-table th[style] {
+    min-width: 0 !important;
+  }
+  .task-table .meter {
+    min-width: 44px;
+  }
+}
+.owner-cell {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  font-size: 13px;
+}
+.owner-cell[data-deleted='true'] .owner-name,
+.owner-chip[data-deleted='true'] {
+  font-style: italic;
+  color: var(--ink-3);
+}
+.owner-cell[data-legacy='true'] .owner-name {
+  color: var(--ink-3);
+}
+.owner-chip {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.show-sm {
+  display: none;
+}
+/* with the owner column the task list gets crowded: duration and cost stay in the task detail */
+@media (max-width: 1480px) {
+  .task-table .hide-md {
+    display: none;
+  }
+}
+.approvals h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.approval-card {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--warning) 50%, var(--line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--warning) 6%, transparent);
+}
+.approval-card p {
+  margin: 4px 0 6px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.approval-card .input {
+  margin-top: 8px;
+}
+@media (max-width: 640px) {
+  /* the account menu opens across the (wrapped) top bar instead of off the left edge */
+  .user-menu {
+    position: static;
+  }
+  .menu {
+    left: 12px;
+    right: 12px;
+    width: auto;
+    max-width: none;
+    top: calc(100% + 4px);
+  }
+  .task-table .show-sm {
+    display: block;
+    margin-top: 4px;
+  }
+  .user-main {
+    flex-wrap: wrap;
+  }
+  .user-badges {
+    flex-direction: row;
+    width: 100%;
+    padding-left: 52px;
+    align-items: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-splash {
+    animation: none;
+  }
+  .spin {
+    animation-duration: 2.5s;
+  }
+  .strength-bar span,
+  .policy li svg,
+  .auth-field .input {
+    transition: none;
   }
 }

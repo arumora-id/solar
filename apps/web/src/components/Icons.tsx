@@ -155,3 +155,52 @@ export const WordIcon = ({ size = 16, ...p }: IconProps) => (
     <path d="m8.5 12 1.2 5 2.3-3.6 2.3 3.6 1.2-5" strokeWidth={1.6} />
   </svg>
 );
+export const EyeOffIcon = ({ size = 16, ...p }: IconProps) => (
+  <svg {...base(size, p)}>
+    <path d="M9.9 4.2A10.8 10.8 0 0 1 12 4c6.5 0 10 8 10 8a17.6 17.6 0 0 1-3.2 4.3M6.6 6.6A17.4 17.4 0 0 0 2 12s3.5 8 10 8a9.7 9.7 0 0 0 5.4-1.6" />
+    <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2M2 2l20 20" />
+  </svg>
+);
+export const UserIcon = ({ size = 16, ...p }: IconProps) => (
+  <svg {...base(size, p)}>
+    <circle cx="12" cy="8" r="4" />
+    <path d="M4 21a8 8 0 0 1 16 0" />
+  </svg>
+);
+export const UserPlusIcon = ({ size = 16, ...p }: IconProps) => (
+  <svg {...base(size, p)}>
+    <circle cx="10" cy="8" r="4" />
+    <path d="M2 21a8 8 0 0 1 13.3-6M19 14v6M16 17h6" />
+  </svg>
+);
+export const LogOutIcon = ({ size = 16, ...p }: IconProps) => (
+  <svg {...base(size, p)}>
+    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
+  </svg>
+);
+export const KeyIcon = ({ size = 16, ...p }: IconProps) => (
+  <svg {...base(size, p)}>
+    <circle cx="7.5" cy="15.5" r="4.5" />
+    <path d="m10.7 12.3 9.8-9.8M17 6l3 3M14.5 8.5l2 2" />
+  </svg>
+);
+export const ChevronDownIcon = ({ size = 16, ...p }: IconProps) => (
+  <svg {...base(size, p)}>
+    <path d="m6 9 6 6 6-6" />
+  </svg>
+);
+export const ShieldIcon = ({ size = 14, ...p }: IconProps) => (
+  <svg {...base(size, p)}>
+    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+  </svg>
+);
+export const ActivityIcon = ({ size = 16, ...p }: IconProps) => (
+  <svg {...base(size, p)}>
+    <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+  </svg>
+);
+export const SparkIcon = ({ size = 16, ...p }: IconProps) => (
+  <svg {...base(size, p)}>
+    <path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M5.6 18.4l2.8-2.8M15.6 8.4l2.8-2.8" />
+  </svg>
+);

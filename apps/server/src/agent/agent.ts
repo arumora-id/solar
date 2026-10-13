@@ -1,4 +1,5 @@
 import type { AppConfig } from '../config.js';
+import { neutralizeFraming } from '../documents/safe.js';
 import { errorMessage, LANGUAGE_NAME, localize, t, taskLang, type Lang } from '../i18n.js';
 import type { KnowledgeStore } from '../knowledge/knowledgeStore.js';
 import type { ModelRouter } from '../llm/router.js';
@@ -41,6 +42,20 @@ export interface AgentDeps {
 
 const MAX_EVENT_INPUT_CHARS = 20_000;
 
+/** How the agent's task context names each role. */
+const ROLE_LABEL = { superadmin: 'Superadmin', head_of_it: 'Head of IT Solar', staff: 'Solar Staff' } as const;
+
+/**
+ * "Requested by: <name> (<role>)" for the task context (in the first user message, so the cached system prompt stays the
+ * same for every user). The name is the account's display name: one line, framing tags neutralised.
+ */
+function requesterLine(ctx: TaskRunContext): string {
+  const requester = ctx.requester;
+  if (!requester) return '';
+  const name = neutralizeFraming(requester.name.replace(/\s+/g, ' ').trim()).slice(0, 80);
+  return `\nRequested by: ${name} (${ROLE_LABEL[requester.role] ?? requester.role})`;
+}
+
 function previewInput(input: unknown): unknown {
   const text = JSON.stringify(input ?? null);
   if (text.length <= MAX_EVENT_INPUT_CHARS) return input;
@@ -72,7 +87,7 @@ export function createAgentRunner(deps: AgentDeps): TaskRunner {
     // the task's language: its own texts are written in it, and the agent answers in it when the request's language is unclear
     const lang = taskLang(ctx);
     const intro = [
-      `<task_context>\nDate: ${today}\nTask id: ${ctx.task.id}\nInterface language: ${LANGUAGE_NAME[lang]}\n</task_context>`,
+      `<task_context>\nDate: ${today}\nTask id: ${ctx.task.id}\nInterface language: ${LANGUAGE_NAME[lang]}${requesterLine(ctx)}\n</task_context>`,
       ctx.sessionContext
         ? `<session_history>\nEarlier requests in this conversation (oldest first). Their artifacts can be read with read_artifact and their documents with read_document.\n${ctx.sessionContext}\n</session_history>`
         : '',
@@ -224,6 +239,9 @@ async function runTool(call: ToolCall, toolMap: Map<string, AgentTool>, ctx: Tas
   }
 
   if (ctx.signal.aborted) throw ctx.signal.reason ?? cancelled();
+  // access first: an approval dialog must not show what the requester may not read
+  const refused = tool.authorize ? await tool.authorize(parsed.value, ctx) : null;
+  if (refused) return finish(refused.content, false, refused.summary);
   const reason = await tool.confirmation(parsed.value, lang);
   if (reason) {
     const decision = await ctx.confirm({

@@ -15,6 +15,7 @@ import { FileRepository } from '../src/storage/fileRepository.js';
 import { LocalObjectStore } from '../src/storage/objectStore.js';
 import { ArtifactService } from '../src/tasks/artifactService.js';
 import type { TaskRunContext } from '../src/tasks/taskManager.js';
+import { authFetch, TEST_ACCESS_TOKEN } from './helpers/auth.js';
 
 const AD1GATE_MD = '# AD1GATE\n\nAPI gateway untuk kanal digital.\n\n## Interface\n\n- REST/JSON melalui mTLS\n';
 
@@ -353,7 +354,7 @@ describe('knowledge writes through a task and the API', () => {
     });
     config.databaseUrl = undefined;
     config.s3 = null;
-    config.accessToken = undefined;
+    config.accessToken = TEST_ACCESS_TOKEN;
     const model = new ScriptedModel([
       () => [fnCall('k1', 'save_knowledge', { type: 'system', id: 'AD1GATE', title: 'AD1GATE API Gateway', content: AD1GATE_MD })],
       (input) => {
@@ -369,7 +370,7 @@ describe('knowledge writes through a task and the API', () => {
   });
 
   const api = async <T>(path: string, init?: RequestInit) => {
-    const res = await fetch(`${server.url}${path}`, { ...init, headers: { 'Content-Type': 'application/json', ...(init?.headers as Record<string, string> | undefined) } });
+    const res = await authFetch(`${server.url}${path}`, { ...init, headers: { 'Content-Type': 'application/json', ...(init?.headers as Record<string, string> | undefined) } });
     return { status: res.status, data: (await res.json()) as T };
   };
 

@@ -28,6 +28,8 @@ export function zodTool<S extends z.ZodType>(def: {
   displayName: LocalizedText;
   description: string;
   schema: S;
+  /** Refuses the call before approval and execution (e.g. an artifact of another user's task); null allows it. */
+  authorize?: (input: z.output<S>, ctx: TaskRunContext) => Promise<ToolOutput | null>;
   /** The reason the user must approve the call, in `lang`; null when no approval is needed. */
   confirmation?: (input: z.output<S>, lang: Lang) => string | null | Promise<string | null>;
   confirmationPreview?: (input: z.output<S>, lang: Lang) => Promise<unknown>;
@@ -50,6 +52,7 @@ export function zodTool<S extends z.ZodType>(def: {
         ),
       };
     },
+    authorize: def.authorize && ((input, ctx) => def.authorize!(input as z.output<S>, ctx)),
     confirmation: (input, lang = DEFAULT_LANG) => def.confirmation?.(input as z.output<S>, lang) ?? null,
     confirmationPreview: def.confirmationPreview && ((input, lang = DEFAULT_LANG) => def.confirmationPreview!(input as z.output<S>, lang)),
     execute: (input, ctx) => def.execute(input as z.output<S>, ctx),

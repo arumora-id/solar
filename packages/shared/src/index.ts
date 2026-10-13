@@ -77,6 +77,32 @@ export interface Task {
    * the request is unclear. Absent on older tasks, which are Indonesian.
    */
   language?: Language;
+  /**
+   * Id of the user who created the task ({@link User.id}), or {@link ACCESS_TOKEN_PRINCIPAL_ID} for a task created with
+   * SOLAR_ACCESS_TOKEN. Absent on tasks created before user accounts existed: only roles with `tasks.all` see those.
+   */
+  ownerId?: string;
+  /**
+   * Who created the task, added by the API for viewers who see every user's tasks (`tasks.all`) - in task lists, task
+   * details and `task` messages of the event stream. `null` for tasks from before user accounts existed.
+   */
+  owner?: TaskOwner | null;
+}
+
+/** The creator of a task as shown to superadmins and heads of IT (monitor). */
+export interface TaskOwner {
+  id: string;
+  /**
+   * Display name. For a deleted account `deleted` is true, `username` and `role` are null and `name` is a placeholder
+   * in the language of the request ("deleted user"); for the access token it names the token.
+   */
+  name: string;
+  username: string | null;
+  role: Role | null;
+  /** `token` = created with SOLAR_ACCESS_TOKEN (scripts), not by a person's account. */
+  kind: 'user' | 'token';
+  /** The account was deleted after it created the task (the UI shows e.g. "deleted user"). */
+  deleted: boolean;
 }
 
 export type ToolSource = 'builtin' | 'mcp';
@@ -185,6 +211,8 @@ export interface Attachment {
   storageKey: string;
   textKey: string;
   createdAt: string;
+  /** Id of the user who uploaded it (see {@link Task.ownerId}); absent on uploads from before user accounts existed. */
+  ownerId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -401,6 +429,393 @@ export interface KnowledgeSearchHit {
 }
 
 // ---------------------------------------------------------------------------
+// Users, roles and permissions
+// ---------------------------------------------------------------------------
+
+/**
+ * `superadmin`: everything, incl. system settings and every user account. `head_of_it` (Head of IT Solar): sees and acts
+ * on every task, approves registrations (as staff) and disables/enables staff accounts. `staff` (Solar Staff): the
+ * agent for their own tasks, the knowledge base and skills.
+ */
+export type Role = 'superadmin' | 'head_of_it' | 'staff';
+
+export const ROLES: readonly Role[] = ['superadmin', 'head_of_it', 'staff'];
+
+/** `pending`: registered, waiting for approval (cannot log in). `disabled`: cannot log in. */
+export type UserStatus = 'pending' | 'active' | 'disabled';
+
+export const USER_STATUSES: readonly UserStatus[] = ['pending', 'active', 'disabled'];
+
+/** A user account as the API returns it (never with its password hash). */
+export interface User {
+  id: string;
+  /** Lower case, 3-32 of a-z 0-9 . _ - */
+  username: string;
+  /** Lower case. */
+  email: string;
+  /** Display name. */
+  name: string;
+  role: Role;
+  status: UserStatus;
+  createdAt: string;
+  updatedAt: string;
+  lastLoginAt: string | null;
+  /** When and by whom (user id, or {@link ACCESS_TOKEN_PRINCIPAL_ID}) a registration was approved. */
+  approvedAt: string | null;
+  approvedBy: string | null;
+}
+
+/**
+ * Owner id of what is created with SOLAR_ACCESS_TOKEN (scripts, CI): the token acts as a superadmin that is not a user
+ * account.
+ */
+export const ACCESS_TOKEN_PRINCIPAL_ID = 'system:access-token';
+
+export type Permission =
+  /** Use the agent: create tasks, upload attachments, read own artifacts, answer approvals of own tasks. */
+  | 'agent.use'
+  /** See and act on every user's tasks (events, artifacts, attachments, approvals, cancel); else only one's own. */
+  | 'tasks.all'
+  /** List user accounts and the number of pending registrations. */
+  | 'users.view'
+  /** Approve pending registrations (head_of_it: only as staff - see {@link assignableRoles}). */
+  | 'users.approve'
+  /** Disable / enable accounts (head_of_it: staff accounts only - see {@link canActOnUser}). */
+  | 'users.disable'
+  /** Create accounts, change roles and names, reset passwords, delete accounts. */
+  | 'users.manage'
+  | 'knowledge.read'
+  /** Create, edit, delete and import knowledge files. */
+  | 'knowledge.write'
+  | 'skills.read'
+  /** Create, edit, import, enable/disable and delete skills. */
+  | 'skills.manage'
+  /** LLM providers and routes, model tests, MCP plugins, configuration and tokens. */
+  | 'settings.manage'
+  /** Read every user's activity log (audit trail), filter it by user and export it as CSV. */
+  | 'activity.view_all'
+  /** Read one's own activity log (what one did: logins, tasks, approvals, knowledge and skill changes). */
+  | 'activity.view_own';
+
+export const PERMISSIONS: readonly Permission[] = [
+  'agent.use',
+  'tasks.all',
+  'users.view',
+  'users.approve',
+  'users.disable',
+  'users.manage',
+  'knowledge.read',
+  'knowledge.write',
+  'skills.read',
+  'skills.manage',
+  'settings.manage',
+  'activity.view_all',
+  'activity.view_own',
+];
+
+/** The one table of what each role may do (server checks and UI both use it). */
+export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly Permission[]>> = {
+  superadmin: PERMISSIONS,
+  head_of_it: [
+    'agent.use',
+    'tasks.all',
+    'users.view',
+    'users.approve',
+    'users.disable',
+    'knowledge.read',
+    'knowledge.write',
+    'skills.read',
+    'skills.manage',
+    'activity.view_all',
+    'activity.view_own',
+  ],
+  staff: ['agent.use', 'knowledge.read', 'knowledge.write', 'skills.read', 'skills.manage', 'activity.view_own'],
+};
+
+/**
+ * Names and descriptions of the roles in both interface languages, and their order in lists. With ROLE_PERMISSIONS this
+ * is the authoritative definition of the roles: the server upserts it into the `solar_roles` table at every start
+ * (Postgres) and answers `GET /api/roles` from it.
+ */
+export const ROLE_INFO: Readonly<Record<Role, { name: Readonly<Record<Language, string>>; description: Readonly<Record<Language, string>>; sortOrder: number }>> = {
+  superadmin: {
+    name: { id: 'Superadmin', en: 'Superadmin' },
+    description: {
+      id: 'Semua akses: semua task, semua akun pengguna, pengaturan sistem (model AI, plugin MCP) dan log aktivitas semua pengguna.',
+      en: "Full access: every task, every user account, system settings (AI models, MCP plugins) and every user's activity log.",
+    },
+    sortOrder: 1,
+  },
+  head_of_it: {
+    name: { id: 'Head of IT Solar', en: 'Head of IT Solar' },
+    description: {
+      id: 'Melihat dan menangani task semua pengguna, menyetujui pendaftaran (sebagai staf), menonaktifkan/mengaktifkan akun staf, dan melihat log aktivitas semua pengguna.',
+      en: "Sees and acts on every user's tasks, approves registrations (as staff), disables/enables staff accounts and reads every user's activity log.",
+    },
+    sortOrder: 2,
+  },
+  staff: {
+    name: { id: 'Staf Solar', en: 'Solar Staff' },
+    description: {
+      id: 'Memakai agent untuk task sendiri, menulis knowledge base dan mengelola skill, serta melihat log aktivitas sendiri.',
+      en: 'Uses the agent for their own tasks, writes the knowledge base, manages skills and reads their own activity log.',
+    },
+    sortOrder: 3,
+  },
+};
+
+/** A role as `GET /api/roles` returns it (from the code, for both storage backends). */
+export interface RoleInfo {
+  id: Role;
+  /** Name and description in the language of the request. */
+  name: string;
+  description: string;
+  /** Both languages (as stored in `solar_roles.name_id` / `name_en` / `description_id` / `description_en`). */
+  names: Record<Language, string>;
+  descriptions: Record<Language, string>;
+  permissions: Permission[];
+  sortOrder: number;
+}
+
+export function can(role: Role | null | undefined, permission: Permission): boolean {
+  return Boolean(role && ROLE_PERMISSIONS[role]?.includes(permission));
+}
+
+export function permissionsOf(role: Role | null | undefined): Permission[] {
+  return role ? [...(ROLE_PERMISSIONS[role] ?? [])] : [];
+}
+
+/** Roles an actor may give an account (when approving a registration or changing a role). */
+export function assignableRoles(actor: Role | null | undefined): Role[] {
+  if (actor === 'superadmin') return [...ROLES];
+  if (actor === 'head_of_it') return ['staff'];
+  return [];
+}
+
+export type UserAction = 'approve' | 'disable' | 'enable' | 'role' | 'rename' | 'password' | 'delete';
+
+/**
+ * Whether `actor` may do `action` to the account `target` by role alone (the server also refuses: acting on oneself
+ * for role/disable/password/delete, and anything that would leave no active superadmin).
+ * - superadmin: everything.
+ * - head_of_it: approve pending accounts (as staff), disable/enable staff accounts; never superadmin or head_of_it accounts.
+ * - staff: nothing.
+ */
+export function canActOnUser(actor: { id: string; role: Role }, target: { id: string; role: Role }, action: UserAction): boolean {
+  const self = actor.id === target.id;
+  if (self && action !== 'rename') return false;
+  if (actor.role === 'superadmin') return true;
+  if (actor.role === 'head_of_it') {
+    if (target.role !== 'staff') return false;
+    return action === 'approve' || action === 'disable' || action === 'enable';
+  }
+  return false;
+}
+
+/** Answer of `GET /api/auth/me` and of a successful login or setup. */
+export interface AuthMe {
+  /** The account; `null` when the request is authenticated with SOLAR_ACCESS_TOKEN. */
+  user: User | null;
+  role: Role;
+  permissions: Permission[];
+  /** `session` = the solar_session cookie; `token` = SOLAR_ACCESS_TOKEN (acts as a superadmin). */
+  via: 'session' | 'token';
+}
+
+/** Answer of `GET /api/auth/state` (public: what the login screen needs). */
+export interface AuthState {
+  appName: string;
+  version: string;
+  /** No account exists yet: the first superadmin is created with POST /api/auth/setup. */
+  setupRequired: boolean;
+  /**
+   * The setup needs `setupCode`: the one-time code printed in the server log at startup and stored in
+   * DATA_DIR/setup-code.txt (not needed with SOLAR_ACCESS_TOKEN). False when no setup is required.
+   */
+  setupCodeRequired: boolean;
+  /** Anyone may register (the account then waits for approval). */
+  registrationOpen: boolean;
+  /** The current user, when the request carries a valid session (or the access token). */
+  me: AuthMe | null;
+  /** Password rules, for the forms. */
+  passwordPolicy: { minLength: number; maxLength: number };
+}
+
+/** Machine-readable `code` of the auth API's errors (next to the human `error` text). */
+export type AuthErrorCode =
+  | 'unauthenticated'
+  | 'invalid_token'
+  | 'invalid_credentials'
+  | 'account_pending'
+  | 'account_disabled'
+  | 'rate_limited'
+  | 'invalid_input'
+  | 'registration_closed'
+  | 'username_taken'
+  | 'email_taken'
+  | 'weak_password'
+  | 'setup_not_available'
+  | 'setup_forbidden'
+  | 'setup_code_invalid'
+  | 'busy'
+  | 'forbidden'
+  | 'not_pending'
+  | 'last_superadmin'
+  | 'self_action'
+  | 'wrong_password'
+  | 'user_not_found';
+
+export interface RegisterRequest {
+  username: string;
+  email: string;
+  name: string;
+  password: string;
+}
+
+/** POST /api/auth/setup: the first superadmin. */
+export interface SetupRequest extends RegisterRequest {
+  /** The one-time setup code (server log / DATA_DIR/setup-code.txt); not needed with SOLAR_ACCESS_TOKEN. */
+  setupCode?: string;
+}
+
+export interface LoginRequest {
+  /** Username or email. */
+  identifier: string;
+  password: string;
+}
+
+// ---------------------------------------------------------------------------
+// Activity log (audit trail)
+// ---------------------------------------------------------------------------
+
+/**
+ * Every action the activity log records. Codes are stable (stored and filtered by); the UI translates them (the server
+ * also sends a localized `summary` per entry, and `GET /api/activity/actions` gives a label per code).
+ */
+export const ACTIVITY_ACTIONS = [
+  // logins and own account
+  'auth.login',
+  'auth.login_failed',
+  'auth.logout',
+  'auth.register',
+  'auth.setup',
+  'auth.password_change',
+  'auth.session_revoked',
+  // account administration
+  'user.create',
+  'user.approve',
+  'user.role_change',
+  'user.disable',
+  'user.enable',
+  'user.password_reset',
+  'user.delete',
+  'user.rename',
+  // tasks and approvals
+  'task.create',
+  'task.cancel',
+  'confirmation.approve',
+  'confirmation.reject',
+  // knowledge base (also the agent's writes after the user's approval: details.via = "agent")
+  'knowledge.write',
+  'knowledge.import_artifact',
+  'knowledge.delete',
+  'knowledge.revert',
+  'knowledge.table_import',
+  'knowledge.document_import',
+  // skills
+  'skill.create',
+  'skill.update',
+  'skill.delete',
+  'skill.enable',
+  'skill.disable',
+  // system settings
+  'settings.llm.provider_create',
+  'settings.llm.provider_update',
+  'settings.llm.provider_delete',
+  'settings.llm.route_change',
+  'settings.llm.provider_test',
+  'settings.plugin.create',
+  'settings.plugin.update',
+  'settings.plugin.delete',
+  'settings.plugin.reconnect',
+  // artifacts
+  'artifact.docx_export',
+  'artifact.publish_github',
+  // the activity log itself
+  'activity.export',
+] as const;
+
+export type ActivityAction = (typeof ACTIVITY_ACTIONS)[number];
+
+/**
+ * Who acted: `user` = an account (its id, and its name and role at that moment), `token` = SOLAR_ACCESS_TOKEN,
+ * `anonymous` = nobody logged in (e.g. a failed login), `system` = SOLAR itself.
+ */
+export type ActivityActorKind = 'user' | 'token' | 'anonymous' | 'system';
+
+export type ActivityOutcome = 'success' | 'failure';
+
+export type ActivityTargetType =
+  | 'user'
+  | 'session'
+  | 'task'
+  | 'confirmation'
+  | 'artifact'
+  | 'knowledge'
+  | 'skill'
+  | 'llm_provider'
+  | 'llm_route'
+  | 'plugin'
+  | 'activity';
+
+/** Why a login failed (`details.reason` of `auth.login_failed`). */
+export type LoginFailureReason = 'wrong_password' | 'pending' | 'disabled' | 'rate_limited';
+
+/**
+ * One entry of the activity log. The actor's name and role are a snapshot of the moment (they stay as they were when the
+ * account is renamed, its role changed or deleted). Never holds passwords, tokens, hashes, setup codes or file contents.
+ */
+export interface ActivityEntry {
+  /** Time-prefixed, so sorting by id sorts by time (`act_<time><sequence><random>`). */
+  id: string;
+  at: string;
+  actorId: string | null;
+  actorName: string | null;
+  actorRole: Role | null;
+  actorKind: ActivityActorKind;
+  action: ActivityAction;
+  targetType: ActivityTargetType | null;
+  targetId: string | null;
+  /** Human name of the target at that moment (title, username, path...), shortened. */
+  targetLabel: string | null;
+  outcome: ActivityOutcome;
+  ip: string | null;
+  /** Shortened. */
+  userAgent: string | null;
+  /** Action-specific facts, e.g. `{ from, to }` of a role change, `{ reason }` of a failure, `{ via: "agent", taskId }`. */
+  details: Record<string, unknown> | null;
+}
+
+/** An entry as `GET /api/activity` returns it: with a one-line description in the language of the request. */
+export interface ActivityItem extends ActivityEntry {
+  summary: string;
+}
+
+/** `GET /api/activity`: newest first; pass `nextCursor` as `cursor` for the next (older) page, null = no more. */
+export interface ActivityPage {
+  items: ActivityItem[];
+  nextCursor: string | null;
+}
+
+/** `GET /api/activity/actions`: every action code with its group (the part before the last dot) and a label. */
+export interface ActivityActionInfo {
+  action: ActivityAction;
+  group: string;
+  /** In the language of the request. */
+  label: string;
+}
+
+// ---------------------------------------------------------------------------
 // Server configuration exposed to the UI
 // ---------------------------------------------------------------------------
 
@@ -418,6 +833,7 @@ export interface PublicConfig {
   modelRoute: string[];
   /** Number of files in the knowledge base. */
   knowledgeFiles: number;
+  /** SOLAR_ACCESS_TOKEN is set (it then also works as a superadmin API token). Users always log in. */
   authRequired: boolean;
   attachments: {
     maxFileMb: number;
@@ -476,4 +892,11 @@ export type StreamMessage =
   | { kind: 'task'; task: Task }
   | { kind: 'event'; event: TaskEvent }
   | { kind: 'delta'; taskId: string; channel: 'text' | 'thinking'; text: string }
-  | { kind: 'plugins'; plugins: PluginStatus[] };
+  | { kind: 'plugins'; plugins: PluginStatus[] }
+  /**
+   * Sent to users who may see accounts (`users.view`) when a registration arrives or an account changes, so the UI
+   * can refresh its user list and show the number of registrations waiting for approval.
+   */
+  | { kind: 'users_changed'; pendingCount: number }
+  /** The stream's session ended (logout, password change, account disabled or deleted, role changed): log in again. */
+  | { kind: 'signed_out' };

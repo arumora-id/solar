@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { getToken } from '../../lib/api';
+import { useAuth } from '../../lib/auth';
 import { LANGUAGE_NATIVE_NAME, LANGUAGES, setLang, useLang, useT } from '../../lib/i18n';
 import { installApp, isElectron, syncThemeColor, usePwa } from '../../lib/pwa';
 import { readPref, writePref } from '../../lib/session';
@@ -17,6 +17,8 @@ export function applyTheme(theme: ThemePref): void {
     // ignore
   }
   syncThemeColor();
+  // the theme buttons elsewhere (top bar, login screen) follow
+  window.dispatchEvent(new CustomEvent('solar:theme'));
 }
 
 export function currentTheme(): ThemePref {
@@ -25,10 +27,10 @@ export function currentTheme(): ThemePref {
 }
 
 export function SystemPanel() {
-  const { config, submitToken } = useSolar();
+  const { config } = useSolar();
+  const { can } = useAuth();
   const t = useT();
   const [theme, setTheme] = useState<ThemePref>(currentTheme);
-  const [token, setTokenValue] = useState(getToken());
   const [compact, setCompact] = useState(readPref('compactStage', false));
 
   const words = t.settings.system;
@@ -84,26 +86,28 @@ export function SystemPanel() {
 
       {!isElectron && <AppInstall />}
 
-      <h4>{words.serverConfig}</h4>
-      <table className="task-table" style={{ marginBottom: 14 }}>
-        <tbody>
-          {rows.map(([k, v]) => (
-            <tr key={k} style={{ cursor: 'default' }}>
-              <td style={{ width: 180, color: 'var(--ink-2)' }}>{k}</td>
-              <td>{v}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <p className="hint">{words.credentialsHint}</p>
-
-      <label className="field">
-        <span>{words.tokenLabel}</span>
-        <input className="input" type="password" value={token} onChange={(e) => setTokenValue(e.target.value)} autoComplete="off" />
-      </label>
-      <button type="button" className="btn small" onClick={() => submitToken(token)}>
-        {words.saveToken}
-      </button>
+      {/* the server configuration (model route, storage, integrations) is the superadmin's business */}
+      {can('settings.manage') && (
+        <>
+          <h4>{words.serverConfig}</h4>
+          <table className="task-table" style={{ marginBottom: 14 }}>
+            <tbody>
+              {rows.map(([k, v]) => (
+                <tr key={k} style={{ cursor: 'default' }}>
+                  <td style={{ width: 180, color: 'var(--ink-2)' }}>{k}</td>
+                  <td>{v}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="hint">{words.credentialsHint}</p>
+        </>
+      )}
+      {!can('settings.manage') && config && (
+        <p className="hint">
+          {row.version}: {config.appName} {config.version}
+        </p>
+      )}
     </div>
   );
 }

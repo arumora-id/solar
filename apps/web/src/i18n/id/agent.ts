@@ -48,6 +48,8 @@ export const agent = {
     connecting: 'Menghubungkan ke server SOLAR AI AGENT…',
     llmMissing: 'Model AI belum siap',
     llmMissingSub: 'Isi OPENAI_API_KEY di .env, atau tambahkan provider di Pengaturan → Model AI.',
+    /** For roles that cannot change the AI models (Settings → Model AI is the superadmin's). */
+    llmMissingAsk: 'Minta superadmin menyiapkan model AI.',
     listening: 'Saya mendengarkan…',
     listeningSub: 'Bicaralah, saya berhenti otomatis saat Anda diam.',
     done: 'Selesai! Semua deliverable siap.',

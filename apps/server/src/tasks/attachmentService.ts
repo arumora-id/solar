@@ -44,8 +44,9 @@ export class AttachmentService {
   /**
    * Validates, extracts and stores a document. Throws DocumentError with a user-facing message in `lang`, the language
    * of the upload request, which the stored warnings keep (they are shown again later as they were written).
+   * `ownerId`: the uploading user; only their tasks may use the document.
    */
-  async create(sessionId: string, rawName: string, body: Buffer, lang: Lang = DEFAULT_LANG): Promise<Attachment> {
+  async create(sessionId: string, rawName: string, body: Buffer, lang: Lang = DEFAULT_LANG, ownerId?: string): Promise<Attachment> {
     const name = cleanFileName(rawName);
     if (!name) throw new DocumentError(t(lang, 'doc.nameEmpty'));
     if (body.length > this.options.maxFileBytes) {
@@ -73,6 +74,7 @@ export class AttachmentService {
       storageKey,
       textKey,
       createdAt: nowIso(),
+      ...(ownerId ? { ownerId } : {}),
     };
     try {
       await this.store.put(storageKey, body, mimeType);
@@ -91,8 +93,10 @@ export class AttachmentService {
     return this.repo.getAttachment(id);
   }
 
-  listForSession(sessionId: string): Promise<Attachment[]> {
-    return this.repo.listAttachments({ sessionId });
+  /** A conversation's documents; with `ownerId`, only that user's (`null`: only uploads from before user accounts). */
+  async listForSession(sessionId: string, ownerId?: string | null): Promise<Attachment[]> {
+    const list = await this.repo.listAttachments({ sessionId });
+    return ownerId === undefined ? list : list.filter((a) => (a.ownerId ?? null) === ownerId);
   }
 
   /** Attachments in the order of `ids` (unknown ids are skipped). */
@@ -145,7 +149,8 @@ export class AttachmentService {
    */
   async visibleFor(task: Task): Promise<Attachment[]> {
     const earlierIds = new Set<string>();
-    for (const t of await this.repo.listTasks({ sessionId: task.sessionId, limit: 1000 })) {
+    // only the requester's own conversation: another user's tasks that reused the session id do not count
+    for (const t of await this.repo.listTasks({ sessionId: task.sessionId, ownerId: task.ownerId ?? null, limit: 1000 })) {
       if (t.id !== task.id && t.createdAt <= task.createdAt) for (const id of t.attachmentIds ?? []) earlierIds.add(id);
     }
     const own = task.attachmentIds ?? [];
@@ -153,11 +158,14 @@ export class AttachmentService {
     return this.listByIds([...own, ...earlierIds]);
   }
 
-  /** Uploaded documents of a conversation that no task uses yet (e.g. the composer was reloaded before sending). */
-  async listUnsent(sessionId: string): Promise<Attachment[]> {
+  /**
+   * Uploaded documents of a conversation that no task uses yet (e.g. the composer was reloaded before sending); with
+   * `ownerId`, only that user's.
+   */
+  async listUnsent(sessionId: string, ownerId?: string | null): Promise<Attachment[]> {
     const used = new Set<string>();
     for (const t of await this.repo.listTasks({ sessionId, limit: 1000 })) for (const id of t.attachmentIds ?? []) used.add(id);
-    return (await this.repo.listAttachments({ sessionId })).filter((a) => !used.has(a.id));
+    return (await this.listForSession(sessionId, ownerId)).filter((a) => !used.has(a.id));
   }
 
   /** Deletes documents that were uploaded more than `maxAgeMs` ago and never sent with a request. */

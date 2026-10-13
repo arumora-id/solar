@@ -7,6 +7,7 @@ import { t as dict, useT } from '../lib/i18n';
 import { renderDocumentMarkdown } from '../lib/markdown';
 import { useSolar } from '../lib/store';
 import { AlertIcon, DownloadIcon, FileIcon, SpinnerIcon, XIcon } from './Icons';
+import { reducedMotion } from '../lib/motion';
 
 /** Short type label from the file name (shown before the name). */
 export function typeLabel(name: string): string {
@@ -157,7 +158,7 @@ export function AttachmentPreview({ attachment, onClose }: { attachment: Attachm
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onCloseRef.current();
     window.addEventListener('keydown', onKey);
-    if (modalRef.current) gsap.fromTo(modalRef.current, { y: 16, opacity: 0 }, { y: 0, opacity: 1, duration: 0.25, ease: 'power2.out', overwrite: true });
+    if (modalRef.current && !reducedMotion()) gsap.fromTo(modalRef.current, { y: 16, opacity: 0 }, { y: 0, opacity: 1, duration: 0.25, ease: 'power2.out', overwrite: true });
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 

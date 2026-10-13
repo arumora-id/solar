@@ -21,6 +21,7 @@
     "test": "npm run test -w @solar/server",
     "typecheck": "npm run typecheck -w @solar/shared && npm run typecheck -w @solar/server && npm run typecheck -w @solar/web && npm run typecheck -w @solar/desktop",
     "check": "npm run typecheck && npm run test && npm run build",
+    "db:schema": "tsx apps/server/src/storage/printSchema.ts",
     "desktop:dev": "npm run build && npm run start -w @solar/desktop",
     "desktop:dist:win": "npm run build && npm run dist:win -w @solar/desktop"
   },

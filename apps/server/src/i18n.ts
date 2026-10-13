@@ -16,7 +16,9 @@
  * (English plurals). `t(lang, key, params)` is typed: the key must exist and the parameters must match.
  */
 import { LANGUAGE_HEADER, LANGUAGES, type Language } from '@solar/shared';
+import { ACTIVITY_MESSAGES } from './i18n/activity.js';
 import { API_MESSAGES } from './i18n/api.js';
+import { AUTH_MESSAGES } from './i18n/auth.js';
 import { DOCUMENT_MESSAGES } from './i18n/documents.js';
 import type { Entry } from './i18n/helpers.js';
 import { KNOWLEDGE_MESSAGES } from './i18n/knowledge.js';
@@ -45,6 +47,8 @@ export type LocalizedText = string | Localized;
 const MESSAGES = {
   ...TASK_MESSAGES,
   ...API_MESSAGES,
+  ...AUTH_MESSAGES,
+  ...ACTIVITY_MESSAGES,
   ...DOCUMENT_MESSAGES,
   ...KNOWLEDGE_MESSAGES,
   ...LLM_MESSAGES,

@@ -10,6 +10,7 @@ import type { AgentTool } from '../src/agent/types.js';
 import { loadConfig } from '../src/config.js';
 import { startServer, type RunningServer } from '../src/server.js';
 import { sampleArchimate, sampleSequence, sampleTechSpec } from './fixtures.js';
+import { authFetch, TEST_ACCESS_TOKEN } from './helpers/auth.js';
 
 type Item = Record<string, unknown>;
 type Step = (input: Item[]) => { output: Item[]; status?: 'completed' | 'incomplete' };
@@ -94,7 +95,7 @@ let server: RunningServer;
 let model: ScriptedModel;
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${server.url}${path}`, { ...init, headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) } });
+  const res = await authFetch(`${server.url}${path}`, { ...init, headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) } });
   if (!res.ok) throw new Error(`${path}: ${res.status} ${await res.text()}`);
   return (await res.json()) as T;
 }
@@ -122,7 +123,7 @@ beforeAll(async () => {
   }
   config.databaseUrl = testDb || undefined;
   config.s3 = null;
-  config.accessToken = undefined;
+  config.accessToken = TEST_ACCESS_TOKEN;
   config.github.token = undefined;
   config.plane.apiKey = undefined;
 
@@ -233,7 +234,7 @@ describe('agent end-to-end (scripted model)', () => {
 
     // artifact content is served with a sandbox CSP
     const md = detail!.artifacts.find((a) => a.kind === 'tsd-markdown')!;
-    const res = await fetch(`${server.url}/api/artifacts/${md.id}/content`);
+    const res = await authFetch(`${server.url}/api/artifacts/${md.id}/content`);
     expect(res.headers.get('content-security-policy')).toContain('sandbox');
     expect(await res.text()).toContain('TSD-ORD-001');
 
@@ -242,7 +243,7 @@ describe('agent end-to-end (scripted model)', () => {
     expect(docx.name).toBe(md.name.replace(/\.md$/, '.docx'));
     expect(docx.bundle).toBe(md.bundle);
     expect(docx.title).toBe('Order Platform - Technical Specification (Word)');
-    const word = await fetch(`${server.url}/api/artifacts/${docx.id}/content?download=1`);
+    const word = await authFetch(`${server.url}/api/artifacts/${docx.id}/content?download=1`);
     expect(word.headers.get('content-type')).toBe('application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     expect(word.headers.get('content-disposition')).toMatch(/^attachment; filename=".*\.docx"/);
     const bytes = Buffer.from(await word.arrayBuffer());
@@ -254,20 +255,20 @@ describe('agent end-to-end (scripted model)', () => {
     expect(detail!.events.some((e) => e.type === 'artifact' && e.artifact.id === docx.id)).toBe(true);
 
     // exporting the Word file again returns the one the tool made (any artifact of the bundle names it)
-    const again = await fetch(`${server.url}/api/artifacts/${md.id}/docx`, { method: 'POST' });
+    const again = await authFetch(`${server.url}/api/artifacts/${md.id}/docx`, { method: 'POST' });
     expect(again.status).toBe(200);
     expect(((await again.json()) as { artifact: Artifact; created: boolean })).toMatchObject({ created: false, artifact: { id: docx.id } });
-    expect((await fetch(`${server.url}/api/artifacts/art_nope/docx`, { method: 'POST' })).status).toBe(404);
+    expect((await authFetch(`${server.url}/api/artifacts/art_nope/docx`, { method: 'POST' })).status).toBe(404);
     const svg = detail!.artifacts.find((a) => a.kind === 'archimate-svg')!;
     // API errors are in the language of the request (X-Solar-Language; Indonesian without one)
-    const notTsd = await fetch(`${server.url}/api/artifacts/${svg.id}/docx`, { method: 'POST', headers: { 'X-Solar-Language': 'en' } });
+    const notTsd = await authFetch(`${server.url}/api/artifacts/${svg.id}/docx`, { method: 'POST', headers: { 'X-Solar-Language': 'en' } });
     expect(notTsd.status).toBe(400);
     expect(((await notTsd.json()) as { error: string }).error).toMatch(/not part of a Technical Specification Document/);
-    const notTsdId = await fetch(`${server.url}/api/artifacts/${svg.id}/docx`, { method: 'POST' });
+    const notTsdId = await authFetch(`${server.url}/api/artifacts/${svg.id}/docx`, { method: 'POST' });
     expect(((await notTsdId.json()) as { error: string }).error).toMatch(/bukan bagian dari Technical Specification Document/);
     expect((await api<TaskDetail>(`/api/tasks/${task.id}`)).artifacts.filter((a) => a.kind === 'tsd-docx')).toHaveLength(1);
 
-    const zip = await fetch(`${server.url}/api/tasks/${task.id}/artifacts.zip`);
+    const zip = await authFetch(`${server.url}/api/tasks/${task.id}/artifacts.zip`);
     expect(zip.headers.get('content-type')).toBe('application/zip');
     expect((await zip.arrayBuffer()).byteLength).toBeGreaterThan(1000);
   });
@@ -303,7 +304,7 @@ describe('agent end-to-end (scripted model)', () => {
     const stats = await api<{ total: number; byStatus: Record<string, number> }>('/api/tasks/stats');
     expect(stats.total).toBe(1);
     expect(stats.byStatus.completed).toBe(1);
-    const res = await fetch(`${server.url}/api/tasks/task_nope/cancel`, { method: 'POST' });
+    const res = await authFetch(`${server.url}/api/tasks/task_nope/cancel`, { method: 'POST' });
     expect(res.status).toBe(409);
   });
 });

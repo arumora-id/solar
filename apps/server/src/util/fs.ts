@@ -1,11 +1,16 @@
 import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
-/** Writes a file atomically (temp file + rename) so a crash never leaves half-written JSON. */
-export async function writeFileAtomic(path: string, data: string | Buffer): Promise<void> {
+let tmpCounter = 0;
+
+/**
+ * Writes a file atomically (temp file + rename) so a crash never leaves half-written JSON. `mode` (e.g. 0o600 for files
+ * with secrets) applies to the new file on systems with POSIX permissions.
+ */
+export async function writeFileAtomic(path: string, data: string | Buffer, options: { mode?: number } = {}): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
-  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(tmp, data);
+  const tmp = `${path}.${process.pid}.${Date.now()}.${(tmpCounter += 1)}.tmp`;
+  await writeFile(tmp, data, options.mode === undefined ? undefined : { mode: options.mode });
   await rename(tmp, path);
 }
 

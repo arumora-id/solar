@@ -1,32 +1,41 @@
 const KEY = 'solar.sessionId';
 
+/**
+ * The conversation is per account: two people taking turns on one browser must not continue each other's
+ * conversation (the key carries the user id; the server keeps conversations per user too).
+ */
+function keyOf(userId: string | null | undefined): string {
+  return userId ? `${KEY}.${userId}` : KEY;
+}
+
 function randomId(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
   return `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-let memory: string | null = null;
+const memory = new Map<string, string>();
 
-/** The chat session groups tasks so the agent gets the context of earlier requests. */
-export function getSessionId(): string {
+/** The chat session groups tasks so the agent gets the context of earlier requests (one per user on this device). */
+export function getSessionId(userId?: string | null): string {
+  const key = keyOf(userId);
   try {
-    const existing = localStorage.getItem(KEY);
+    const existing = localStorage.getItem(key);
     if (existing) return existing;
     const id = randomId();
-    localStorage.setItem(KEY, id);
+    localStorage.setItem(key, id);
     return id;
   } catch {
-    memory ??= randomId();
-    return memory;
+    if (!memory.has(key)) memory.set(key, randomId());
+    return memory.get(key)!;
   }
 }
 
-export function newSessionId(): string {
+export function newSessionId(userId?: string | null): string {
   const id = randomId();
   try {
-    localStorage.setItem(KEY, id);
+    localStorage.setItem(keyOf(userId), id);
   } catch {
-    memory = id;
+    memory.set(keyOf(userId), id);
   }
   return id;
 }

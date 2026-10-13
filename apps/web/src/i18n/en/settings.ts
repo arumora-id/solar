@@ -46,14 +46,12 @@ export const settings: Dict['settings'] = {
       githubConnected: (repo: string, branch: string) => `Connected · default repo: ${repo} (${branch})`,
       githubMissing: 'Not configured (GITHUB_TOKEN)',
       plane: 'Plane',
-      accessToken: 'Access token',
-      tokenRequired: 'Required',
-      tokenNotRequired: 'Not required (localhost only)',
+      accessToken: 'API access token',
+      tokenRequired: 'Set (SOLAR_ACCESS_TOKEN, for scripts and CI)',
+      tokenNotRequired: 'Not set',
     },
     credentialsHint:
       'LLM providers are set in the AI models tab; other credentials (Neon, S3, GitHub, Plane, Visual Paradigm) in the .env file - see the README.',
-    tokenLabel: 'SOLAR access token (SOLAR_ACCESS_TOKEN)',
-    saveToken: 'Save token',
   },
 
   models: {

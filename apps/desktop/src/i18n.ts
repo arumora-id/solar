@@ -56,6 +56,7 @@ const id = {
     help: 'Bantuan',
     openInBrowser: 'Buka SOLAR AI AGENT di browser',
     openMonitorInBrowser: 'Buka Monitor Task di browser',
+    setupCode: 'Kode penyiapan superadmin pertama…',
   },
   startFailed: 'SOLAR AI AGENT gagal dijalankan',
   firstRun: {
@@ -64,9 +65,21 @@ const id = {
     detail: (envFile: string) =>
       `File konfigurasi dibuat di:\n${envFile}\n\n` +
       'Isi minimal OPENAI_API_KEY. Opsional: DATABASE_URL (Neon), S3_* (object storage), GITHUB_TOKEN, PLANE_* dan VP_MCP_*. ' +
-      'Simpan file lalu jalankan ulang SOLAR AI AGENT.',
+      'Simpan file lalu jalankan ulang SOLAR AI AGENT.\n\n' +
+      'Akun superadmin pertama Anda buat langsung di jendela SOLAR; kode penyiapannya terisi otomatis.',
     openEnv: 'Buka file .env',
     later: 'Nanti',
+  },
+  setupCode: {
+    title: 'Kode penyiapan',
+    detail: (url: string) =>
+      'Kode sekali pakai untuk membuat akun superadmin pertama. Jendela SOLAR mengisinya otomatis; kode ini hanya ' +
+      `perlu diketik bila Anda membuat akun itu di browser pada komputer ini (${url}).\n\n` +
+      'Kode tidak berlaku lagi setelah superadmin pertama dibuat. Jangan bagikan kode ini.',
+    copy: 'Salin kode',
+    close: 'Tutup',
+    doneMessage: 'Superadmin pertama sudah dibuat',
+    doneDetail: 'Kode penyiapan tidak diperlukan lagi. Masuk dengan username atau email dan password Anda.',
   },
 };
 
@@ -91,6 +104,7 @@ const en: DesktopDict = {
     help: 'Help',
     openInBrowser: 'Open SOLAR AI AGENT in the browser',
     openMonitorInBrowser: 'Open the task monitor in the browser',
+    setupCode: 'First superadmin setup code…',
   },
   startFailed: 'SOLAR AI AGENT could not start',
   firstRun: {
@@ -99,9 +113,21 @@ const en: DesktopDict = {
     detail: (envFile: string) =>
       `The configuration file was created at:\n${envFile}\n\n` +
       'Set at least OPENAI_API_KEY. Optional: DATABASE_URL (Neon), S3_* (object storage), GITHUB_TOKEN, PLANE_* and VP_MCP_*. ' +
-      'Save the file, then restart SOLAR AI AGENT.',
+      'Save the file, then restart SOLAR AI AGENT.\n\n' +
+      'You create the first superadmin account right in the SOLAR window; its setup code is filled in for you.',
     openEnv: 'Open .env file',
     later: 'Later',
+  },
+  setupCode: {
+    title: 'Setup code',
+    detail: (url: string) =>
+      'A one-time code for creating the first superadmin account. The SOLAR window fills it in for you; you only need to ' +
+      `type it when you create that account in a browser on this computer (${url}).\n\n` +
+      'The code stops working once the first superadmin exists. Do not share it.',
+    copy: 'Copy code',
+    close: 'Close',
+    doneMessage: 'The first superadmin already exists',
+    doneDetail: 'The setup code is no longer needed. Sign in with your username or email and password.',
   },
 };
 

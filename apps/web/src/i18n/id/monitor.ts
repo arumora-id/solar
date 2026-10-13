@@ -56,6 +56,29 @@ export const monitor = {
     label: 'Cari task',
   },
 
+  /** Who created a task: shown to roles that see every user's tasks (superadmin, Head of IT Solar). */
+  owner: {
+    column: 'Pemilik',
+    filterLabel: 'Pemilik task',
+    all: 'Semua pemilik',
+    mine: 'Milik saya',
+    none: 'Tanpa pemilik (task lama)',
+    users: 'Pengguna',
+    /** owner.deleted: the account was deleted after it created the task. */
+    deleted: 'Pengguna terhapus',
+    token: 'Token akses (skrip)',
+    /** A task from before user accounts existed. */
+    legacy: 'Task lama',
+    you: (name: string) => `${name} (Anda)`,
+    detail: (name: string) => `Pemilik: ${name}`,
+  },
+
+  /** Approvals of the selected task, answered from the monitor (also other users' tasks, for superadmin / Head of IT). */
+  approvals: {
+    title: 'Persetujuan menunggu',
+    other: (name: string) => `Task milik ${name}: Anda menjawab sebagai admin.`,
+  },
+
   list: {
     label: 'Daftar task',
     heading: (n: number) => `Task (${numId(n)})`,

@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
 import type { Artifact, Attachment, Confirmation, PluginStatus, PublicConfig, StreamMessage, Task, TaskEvent } from '@solar/shared';
-import { api, ApiError, setToken, withLang, withToken } from './api';
+import { api, ApiError, withLang } from './api';
 import { useLang } from './i18n';
 import { getSessionId, newSessionId } from './session';
 
@@ -12,7 +12,6 @@ interface Draft {
 interface State {
   config: PublicConfig | null;
   connected: boolean;
-  authRequired: boolean;
   sessionId: string;
   tasks: Record<string, Task>;
   events: Record<string, TaskEvent[]>;
@@ -23,11 +22,15 @@ interface State {
   plugins: PluginStatus[];
   confirmations: Confirmation[];
   lastFinished: { taskId: string; status: Task['status']; at: number } | null;
+  /** Registrations waiting for approval (users.view only; live from `users_changed`). */
+  pendingCount: number;
+  /** Bumped by every `users_changed` message: the user list reloads. */
+  usersVersion: number;
 }
 
 type Action =
   | { type: 'config'; config: PublicConfig }
-  | { type: 'auth'; required: boolean }
+  | { type: 'users'; pendingCount: number; changed: boolean }
   | { type: 'connected'; value: boolean }
   | { type: 'session'; id: string }
   | { type: 'tasks'; tasks: Task[] }
@@ -66,9 +69,9 @@ function mergeArtifacts(current: Artifact[] | undefined, incoming: Artifact[]): 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
     case 'config':
-      return { ...state, config: action.config, authRequired: false };
-    case 'auth':
-      return { ...state, authRequired: action.required };
+      return { ...state, config: action.config };
+    case 'users':
+      return { ...state, pendingCount: action.pendingCount, usersVersion: action.changed ? state.usersVersion + 1 : state.usersVersion };
     case 'connected':
       return { ...state, connected: action.value };
     case 'session':
@@ -150,20 +153,37 @@ interface SolarContextValue extends State {
   cancel(taskId: string): Promise<void>;
   loadTask(taskId: string): Promise<void>;
   refreshTasks(): Promise<void>;
+  /**
+   * Loads tasks the general list may not hold (it has the newest 200 only; for roles that see every task, of all
+   * users) - e.g. one owner's tasks for the monitor's owner filter - and keeps them with the others.
+   */
+  fetchTasks(params: { owner?: string; status?: Task['status'] }): Promise<void>;
   resolveConfirmation(id: string, approved: boolean, note?: string): Promise<void>;
   startNewSession(): void;
   reloadConfig(): Promise<void>;
-  submitToken(token: string): void;
+  /** Reads the number of registrations waiting (after an approval made here). */
+  refreshPendingCount(): Promise<void>;
 }
 
 const SolarContext = createContext<SolarContextValue | null>(null);
 
-export function SolarProvider({ children }: { children: ReactNode }) {
+interface SolarProviderProps {
+  children: ReactNode;
+  /** The logged-in account (the conversation is kept per user). Mount the provider with `key={userId}`. */
+  userId: string | null;
+  /** The account may list users (users.view): it receives `users_changed` and shows the pending-approval count. */
+  watchUsers: boolean;
+  /** The event stream said the session ended (`signed_out`). */
+  onSignedOut(): void;
+  /** Accounts changed (`users_changed`), or the stream reconnected after a gap: the own account may have been renamed. */
+  onAccountsChanged(): void;
+}
+
+export function SolarProvider({ children, userId, watchUsers, onSignedOut, onAccountsChanged }: SolarProviderProps) {
   const [state, dispatch] = useReducer(reducer, undefined, () => ({
     config: null,
     connected: false,
-    authRequired: false,
-    sessionId: getSessionId(),
+    sessionId: getSessionId(userId),
     tasks: {},
     events: {},
     artifacts: {},
@@ -172,12 +192,18 @@ export function SolarProvider({ children }: { children: ReactNode }) {
     plugins: [],
     confirmations: [],
     lastFinished: null,
+    pendingCount: 0,
+    usersVersion: 0,
   }));
+  const signedOutRef = useRef(onSignedOut);
+  signedOutRef.current = onSignedOut;
+  const accountsChangedRef = useRef(onAccountsChanged);
+  accountsChangedRef.current = onAccountsChanged;
   const deltaBuffer = useRef<Array<{ taskId: string; channel: 'text' | 'thinking'; text: string }>>([]);
   const flushScheduled = useRef(false);
   const stateRef = useRef(state);
   stateRef.current = state;
-  // bumped to (re)open the event stream after it was closed for good or the token changed
+  // bumped to (re)open the event stream after it was closed for good
   const [streamNonce, setStreamNonce] = useState(0);
   // the stream carries the interface language (an EventSource cannot send headers): plugin statuses arrive in it, so a
   // switch reopens the stream
@@ -185,10 +211,20 @@ export function SolarProvider({ children }: { children: ReactNode }) {
   /** Survives stream re-creation: the next successful open must resync what was missed. */
   const missedEvents = useRef(false);
 
+  // a 401 ends the session through lib/api.ts onUnauthorized (lib/auth.tsx): nothing to do here
   const handleError = useCallback((err: unknown) => {
-    if (err instanceof ApiError && err.status === 401) dispatch({ type: 'auth', required: true });
-    else console.error(err);
+    if (!(err instanceof ApiError && err.status === 401)) console.error(err);
   }, []);
+
+  const refreshPendingCount = useCallback(async () => {
+    if (!watchUsers) return;
+    try {
+      const { count } = await api.pendingCount();
+      dispatch({ type: 'users', pendingCount: count, changed: false });
+    } catch (err) {
+      handleError(err);
+    }
+  }, [watchUsers, handleError]);
 
   const reloadConfig = useCallback(async () => {
     try {
@@ -200,13 +236,30 @@ export function SolarProvider({ children }: { children: ReactNode }) {
 
   const refreshTasks = useCallback(async () => {
     try {
-      const [tasks, confirmations] = await Promise.all([api.listTasks({ limit: 200 }), api.confirmations()]);
-      dispatch({ type: 'tasks', tasks });
+      // the newest tasks (for superadmin and Head of IT Solar: of all users), plus the current conversation, which is
+      // always the user's own and may be older than the newest 200
+      const [tasks, conversation, confirmations] = await Promise.all([
+        api.listTasks({ limit: 200 }),
+        api.listTasks({ sessionId: stateRef.current.sessionId, limit: 200 }),
+        api.confirmations(),
+      ]);
+      dispatch({ type: 'tasks', tasks: [...tasks, ...conversation] });
       dispatch({ type: 'confirmations', list: confirmations });
     } catch (err) {
       handleError(err);
     }
   }, [handleError]);
+
+  const fetchTasks = useCallback(
+    async (params: { owner?: string; status?: Task['status'] }) => {
+      try {
+        dispatch({ type: 'tasks', tasks: await api.listTasks({ ...params, limit: 200 }) });
+      } catch (err) {
+        handleError(err);
+      }
+    },
+    [handleError],
+  );
 
   const loadTask = useCallback(
     async (taskId: string) => {
@@ -220,13 +273,15 @@ export function SolarProvider({ children }: { children: ReactNode }) {
     [handleError],
   );
 
-  // live stream
+  // live stream (the session cookie identifies the user; it is HttpOnly and sent by the browser)
   useEffect(() => {
-    if (state.authRequired) return;
     void reloadConfig();
     void refreshTasks();
-    const source = new EventSource(withToken(withLang('/api/stream', lang)));
+    void refreshPendingCount();
+    const source = new EventSource(withLang('/api/stream', lang));
+    let ended = false;
     let retryTimer: number | undefined;
+    let ownersTimer: number | undefined;
     // deltas are batched per animation frame; flush them before any event/task message so ordering holds
     // (a 'text' event clears the draft the deltas belong to)
     const flushDeltas = () => {
@@ -238,6 +293,8 @@ export function SolarProvider({ children }: { children: ReactNode }) {
     source.onopen = () => {
       dispatch({ type: 'connected', value: true });
       if (missedEvents.current) {
+        // an account change may have been missed too (the own name)
+        accountsChangedRef.current();
         // events published while disconnected were missed: reload the tasks and every task on screen
         void refreshTasks().then(() => {
           const s = stateRef.current;
@@ -249,6 +306,7 @@ export function SolarProvider({ children }: { children: ReactNode }) {
       missedEvents.current = false;
     };
     source.onerror = () => {
+      if (ended) return;
       dispatch({ type: 'connected', value: false });
       missedEvents.current = true;
       // a 401 makes EventSource retry forever: check once with a normal request
@@ -295,17 +353,34 @@ export function SolarProvider({ children }: { children: ReactNode }) {
             requestAnimationFrame(flushDeltas);
           }
           break;
+        case 'users_changed':
+          dispatch({ type: 'users', pendingCount: msg.pendingCount, changed: true });
+          // task owners may have been renamed, had their role changed or been deleted - the own account too: reload the
+          // list and the own account (once per burst)
+          window.clearTimeout(ownersTimer);
+          ownersTimer = window.setTimeout(() => {
+            void refreshTasks();
+            accountsChangedRef.current();
+          }, 600);
+          break;
+        case 'signed_out':
+          // the server closes the stream after this: do not reconnect, return to the login screen
+          ended = true;
+          source.close();
+          signedOutRef.current();
+          break;
         case 'hello':
           break;
       }
     };
     return () => {
       window.clearTimeout(retryTimer);
+      window.clearTimeout(ownersTimer);
       // closing an open stream (language switch, new token) leaves a gap: the next open resyncs what it missed
       if (source.readyState === EventSource.OPEN) missedEvents.current = true;
       source.close();
     };
-  }, [state.authRequired, streamNonce, lang, reloadConfig, refreshTasks, loadTask, handleError]);
+  }, [streamNonce, lang, reloadConfig, refreshTasks, refreshPendingCount, loadTask, handleError]);
 
   const submit = useCallback(
     async (prompt: string, attachmentIds: string[] = []) => {
@@ -338,14 +413,7 @@ export function SolarProvider({ children }: { children: ReactNode }) {
     [state.confirmations],
   );
 
-  const startNewSession = useCallback(() => dispatch({ type: 'session', id: newSessionId() }), []);
-
-  const submitToken = useCallback((token: string) => {
-    setToken(token.trim());
-    dispatch({ type: 'auth', required: false });
-    // the stream URL carries the token: reopen it even when auth was not required before
-    setStreamNonce((n) => n + 1);
-  }, []);
+  const startNewSession = useCallback(() => dispatch({ type: 'session', id: newSessionId(userId) }), [userId]);
 
   const value = useMemo<SolarContextValue>(
     () => ({
@@ -356,12 +424,13 @@ export function SolarProvider({ children }: { children: ReactNode }) {
       cancel,
       loadTask,
       refreshTasks,
+      fetchTasks,
       resolveConfirmation,
       startNewSession,
       reloadConfig,
-      submitToken,
+      refreshPendingCount,
     }),
-    [state, submit, rememberAttachments, rememberArtifact, cancel, loadTask, refreshTasks, resolveConfirmation, startNewSession, reloadConfig, submitToken],
+    [state, submit, rememberAttachments, rememberArtifact, cancel, loadTask, refreshTasks, fetchTasks, resolveConfirmation, startNewSession, reloadConfig, refreshPendingCount],
   );
   return <SolarContext.Provider value={value}>{children}</SolarContext.Provider>;
 }

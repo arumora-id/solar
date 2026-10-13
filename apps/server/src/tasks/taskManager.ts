@@ -9,13 +9,15 @@ import type {
   TaskStatus,
   TaskUsage,
 } from '@solar/shared';
-import { EMPTY_USAGE, TERMINAL_TASK_STATUSES } from '@solar/shared';
+import { ACCESS_TOKEN_PRINCIPAL_ID, can, EMPTY_USAGE, TERMINAL_TASK_STATUSES, type Role } from '@solar/shared';
+import { taskOwnerActor, type ActivityInput, type ActivitySink } from '../activity/activityLog.js';
+import { truncate, wellFormed } from '../documents/safe.js';
 import { DEFAULT_LANG, t, taskLang, type Lang } from '../i18n.js';
 import { createLogger } from '../logger.js';
 import type { Repository } from '../storage/repository.js';
 import { newId, nowIso } from '../util/ids.js';
 import type { ArtifactService, NewArtifact } from './artifactService.js';
-import type { EventBus } from './eventBus.js';
+import type { EventBus, MessageScope } from './eventBus.js';
 
 const log = createLogger('tasks');
 
@@ -37,11 +39,29 @@ export interface ConfirmationDecision {
   expired?: boolean;
 }
 
+/** The user a task runs for (see AuthService.requesterOf). */
+export interface TaskRequester {
+  id: string;
+  name: string;
+  role: Role;
+}
+
+/** What a tool records in the activity log; the actor (the task's owner) is added by the task manager. */
+export type TaskActivityInput = Omit<ActivityInput, 'actor' | 'ip' | 'userAgent'>;
+
 /** Everything the agent needs while executing one task. */
 export interface TaskRunContext {
   readonly task: Task;
   readonly signal: AbortSignal;
   readonly sessionContext: string;
+  /** Who created the task (null: unknown, e.g. the account was deleted meanwhile). */
+  readonly requester: TaskRequester | null;
+  /**
+   * Whether the task's requester may read an artifact: one of this task's, or of a task the requester may see (their
+   * own; every task for roles with `tasks.all`). Tools that take artifact ids from the model check it first, so the
+   * agent of one user cannot read another user's work by guessing or being told an id.
+   */
+  canReadArtifact(artifactId: string): Promise<boolean>;
   /** Documents attached to this task, in the order the user attached them. */
   readonly attachments: Attachment[];
   emit(payload: TaskEventPayload): Promise<void>;
@@ -53,6 +73,12 @@ export interface TaskRunContext {
   createArtifact(input: Omit<NewArtifact, 'taskId'>): Promise<Artifact>;
   listArtifacts(): Promise<Artifact[]>;
   confirm(request: ConfirmationRequest): Promise<ConfirmationDecision>;
+  /**
+   * Records what a tool did in the activity log (a knowledge file saved after the user's approval, artifacts published):
+   * the actor is the task's owner, and `details.via = "agent"` and `details.taskId` are added. Optional so that contexts
+   * built by tests need not have it.
+   */
+  recordActivity?(input: TaskActivityInput): void;
 }
 
 export type TaskRunner = (ctx: TaskRunContext) => Promise<{ result: string }>;
@@ -81,7 +107,15 @@ export class TaskManager {
     private readonly artifacts: ArtifactService,
     private readonly bus: EventBus,
     /** `model` may be a function: the model route can change at runtime (Settings → AI models). */
-    private readonly options: { concurrency: number; model: string | (() => string); confirmationTimeoutMs: number },
+    private readonly options: {
+      concurrency: number;
+      model: string | (() => string);
+      confirmationTimeoutMs: number;
+      /** Name and role of a task's owner (user accounts); without it tasks run without a requester. */
+      resolveRequester?: (ownerId: string | undefined) => Promise<TaskRequester | null>;
+      /** The activity log, for what the agent's tools do on the owner's behalf. */
+      activity?: ActivitySink;
+    },
   ) {}
 
   setRunner(runner: TaskRunner): void {
@@ -109,10 +143,14 @@ export class TaskManager {
     }
   }
 
-  /** `language`: the interface language of the client; the task's own texts and the agent's fallback language. */
-  async create(prompt: string, sessionId: string, attachmentIds: string[] = [], language: Lang = DEFAULT_LANG): Promise<Task> {
-    const firstLine = prompt.trim().split(/\r?\n/)[0] ?? '';
-    const title = firstLine.length > 90 ? `${firstLine.slice(0, 87)}...` : firstLine || t(language, 'task.untitled');
+  /**
+   * `language`: the interface language of the client; the task's own texts and the agent's fallback language.
+   * `ownerId`: the user (or ACCESS_TOKEN_PRINCIPAL_ID) the task belongs to.
+   */
+  async create(prompt: string, sessionId: string, attachmentIds: string[] = [], language: Lang = DEFAULT_LANG, ownerId?: string): Promise<Task> {
+    // well-formed and cut between characters: the title becomes the label of activity-log entries and lists
+    const firstLine = wellFormed(prompt.trim().split(/\r?\n/)[0] ?? '');
+    const title = firstLine.length > 90 ? `${truncate(firstLine, 87)}...` : firstLine || t(language, 'task.untitled');
     const task: Task = {
       id: newId('task'),
       sessionId,
@@ -130,10 +168,11 @@ export class TaskManager {
       usage: { ...EMPTY_USAGE },
       attachmentIds: [...new Set(attachmentIds)],
       language,
+      ...(ownerId ? { ownerId } : {}),
     };
     await this.repo.upsertTask(task);
     this.seq.set(task.id, 0);
-    this.bus.publish({ kind: 'task', task });
+    this.bus.publish({ kind: 'task', task }, scopeOf(task));
     await this.emit(task.id, { type: 'status', status: 'queued', message: t(language, 'task.status.created') });
     this.queue.push(task.id);
     this.pump();
@@ -178,6 +217,13 @@ export class TaskManager {
     return [...this.pending.values()].map((p) => p.confirmation);
   }
 
+  /** A waiting approval with the task it belongs to (for the access check of the API), or null. */
+  async pendingConfirmation(id: string): Promise<{ confirmation: Confirmation; task: Task | null } | null> {
+    const p = this.pending.get(id);
+    if (!p) return null;
+    return { confirmation: p.confirmation, task: await this.get(p.confirmation.taskId) };
+  }
+
   resolveConfirmation(id: string, approved: boolean, note: string | null): Confirmation | null {
     const p = this.pending.get(id);
     if (!p) return null;
@@ -218,7 +264,8 @@ export class TaskManager {
       // everything that touches storage stays inside the try: a database outage fails this task, not the process
       await this.save(active.task);
       await this.emit(id, { type: 'status', status: 'running', message: t(lang, 'task.status.started') });
-      const ctx = this.buildContext(active, await this.buildSessionContext(stored), await this.attachmentsOf(stored));
+      const requester = (await this.options.resolveRequester?.(stored.ownerId)) ?? null;
+      const ctx = this.buildContext(active, await this.buildSessionContext(stored), await this.attachmentsOf(stored), requester);
       const { result } = await runner(ctx);
       if (controller.signal.aborted) throw controller.signal.reason ?? new Error(t(lang, 'task.step.cancelled'));
       await this.finish(active.task, 'completed', { result });
@@ -281,7 +328,13 @@ export class TaskManager {
     const active = this.active.get(task.id);
     if (active) active.task = task;
     await this.repo.upsertTask(task);
-    this.bus.publish({ kind: 'task', task });
+    this.bus.publish({ kind: 'task', task }, scopeOf(task));
+  }
+
+  /** Who may receive a task's stream messages: its owner (from the running task, else storage). */
+  private async scopeOfTask(taskId: string): Promise<MessageScope> {
+    const task = this.active.get(taskId)?.task ?? (await this.repo.getTask(taskId));
+    return { kind: 'task', ownerId: task?.ownerId ?? null };
   }
 
   private async emit(taskId: string, payload: TaskEventPayload): Promise<TaskEvent> {
@@ -291,7 +344,7 @@ export class TaskManager {
     this.seq.set(taskId, seq);
     const event = { ...payload, id: newId('evt'), taskId, seq, at: nowIso() } as TaskEvent;
     await this.repo.appendEvent(event);
-    this.bus.publish({ kind: 'event', event });
+    this.bus.publish({ kind: 'event', event }, await this.scopeOfTask(taskId));
     return event;
   }
 
@@ -306,7 +359,8 @@ export class TaskManager {
   }
 
   private async buildSessionContext(task: Task): Promise<string> {
-    const previous = (await this.repo.listTasks({ limit: 6, sessionId: task.sessionId }))
+    // a conversation belongs to one user: tasks of another owner that reused the session id are not part of it
+    const previous = (await this.repo.listTasks({ limit: 6, sessionId: task.sessionId, ownerId: task.ownerId ?? null }))
       .filter((t) => t.id !== task.id && TERMINAL_TASK_STATUSES.includes(t.status))
       .slice(0, 5)
       .reverse();
@@ -336,19 +390,30 @@ export class TaskManager {
     return parts.join('\n\n');
   }
 
-  private buildContext(active: ActiveTask, sessionContext: string, attachments: Attachment[]): TaskRunContext {
+  private buildContext(active: ActiveTask, sessionContext: string, attachments: Attachment[], requester: TaskRequester | null): TaskRunContext {
     const id = active.task.id;
+    const ownerId = active.task.ownerId;
+    // the access token acts as a superadmin; an account deleted meanwhile keeps only its own tasks
+    const seesAll = can(ownerId === ACCESS_TOKEN_PRINCIPAL_ID ? 'superadmin' : requester?.role, 'tasks.all');
     return {
       get task() {
         return active.task;
       },
       signal: active.controller.signal,
       sessionContext,
+      requester,
+      canReadArtifact: async (artifactId) => {
+        const artifact = await this.artifacts.get(artifactId);
+        if (!artifact) return false;
+        if (artifact.taskId === id || seesAll) return true;
+        const owner = (await this.get(artifact.taskId))?.ownerId;
+        return owner !== undefined && owner === ownerId;
+      },
       attachments,
       emit: async (payload) => {
         await this.emit(id, payload);
       },
-      delta: (text, channel = 'text') => this.bus.publish({ kind: 'delta', taskId: id, channel, text }),
+      delta: (text, channel = 'text') => this.bus.publish({ kind: 'delta', taskId: id, channel, text }, scopeOf(active.task)),
       step: async (step) => {
         // while an approval is pending the UI keeps showing what is being waited for
         if (active.task.status === 'awaiting_confirmation') return;
@@ -380,6 +445,12 @@ export class TaskManager {
       },
       listArtifacts: () => this.artifacts.list(id),
       confirm: (request) => this.requestConfirmation(active, request),
+      recordActivity: (input) =>
+        this.options.activity?.record({
+          ...input,
+          actor: taskOwnerActor(ownerId, requester),
+          details: { ...input.details, via: 'agent', taskId: id },
+        }),
     };
   }
 
@@ -444,4 +515,9 @@ export class TaskManager {
     }
     return decision;
   }
+}
+
+/** Stream audience of a task's messages: its owner and the roles that see every task. */
+function scopeOf(task: Task): MessageScope {
+  return { kind: 'task', ownerId: task.ownerId ?? null };
 }

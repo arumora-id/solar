@@ -19,6 +19,7 @@ import type { ArtifactService, NewArtifact } from '../src/tasks/artifactService.
 import { EventBus } from '../src/tasks/eventBus.js';
 import type { TaskRunContext } from '../src/tasks/taskManager.js';
 import { sampleTechSpec } from './fixtures.js';
+import { authFetch, TEST_ACCESS_TOKEN } from './helpers/auth.js';
 
 // ---- the message catalog ------------------------------------------------------------------------------------------
 
@@ -209,7 +210,7 @@ let server: RunningServer;
 const model = new ScriptedModel();
 
 async function api<T>(path: string, init: RequestInit = {}): Promise<{ status: number; body: T }> {
-  const res = await fetch(`${server.url}${path}`, { ...init, headers: { 'Content-Type': 'application/json', ...(init.headers ?? {}) } });
+  const res = await authFetch(`${server.url}${path}`, { ...init, headers: { 'Content-Type': 'application/json', ...(init.headers ?? {}) } });
   const text = await res.text();
   return { status: res.status, body: (text ? JSON.parse(text) : null) as T };
 }
@@ -237,7 +238,7 @@ async function runTask(language: Language | undefined) {
   expect(detail!.task.status, detail!.task.error ?? '').toBe('completed');
   expect(waiting).not.toBeNull();
   const tsdModel = detail!.artifacts.find((a) => a.kind === 'tsd-model')!;
-  const tsdLanguage = (JSON.parse(await (await fetch(`${server.url}/api/artifacts/${tsdModel.id}/content`)).text()) as { language: string }).language;
+  const tsdLanguage = (JSON.parse(await (await authFetch(`${server.url}/api/artifacts/${tsdModel.id}/content`)).text()) as { language: string }).language;
   return { created: created.body, detail: detail!, waiting: waiting!, tsdLanguage, intro: model.intros.find((x) => x.includes(created.body.id)) ?? '' };
 }
 
@@ -262,7 +263,7 @@ beforeAll(async () => {
   });
   config.databaseUrl = undefined;
   config.s3 = null;
-  config.accessToken = undefined;
+  config.accessToken = TEST_ACCESS_TOKEN;
   config.github.token = undefined;
   config.plane.apiKey = undefined;
   server = await startServer({ config, port: 0, responses: model });
@@ -365,7 +366,7 @@ describe('API answers in the language of the request', () => {
 
   it('upload errors and document warnings, which the attachment keeps in the upload language', async () => {
     const upload = (name: string, body: string, language: Language) =>
-      fetch(`${server.url}/api/attachments?sessionId=s-up&name=${encodeURIComponent(name)}`, {
+      authFetch(`${server.url}/api/attachments?sessionId=s-up&name=${encodeURIComponent(name)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/octet-stream', 'X-Solar-Language': language },
         body,
@@ -387,7 +388,7 @@ describe('API answers in the language of the request', () => {
   });
 
   it('knowledge import notices and provider tests', async () => {
-    const res = await fetch(`${server.url}/api/knowledge/import-document?name=notes.md&options=${encodeURIComponent(JSON.stringify({ folder: 'documents/notes', split: 1 }))}`, {
+    const res = await authFetch(`${server.url}/api/knowledge/import-document?name=notes.md&options=${encodeURIComponent(JSON.stringify({ folder: 'documents/notes', split: 1 }))}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/octet-stream', 'X-Solar-Language': 'en' },
       body: 'Plain notes without any heading.',

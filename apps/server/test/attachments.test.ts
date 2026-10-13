@@ -15,6 +15,7 @@ import { FileRepository } from '../src/storage/fileRepository.js';
 import { LocalObjectStore } from '../src/storage/objectStore.js';
 import { AttachmentService } from '../src/tasks/attachmentService.js';
 import { EMPTY_USAGE } from '@solar/shared';
+import { authFetch, TEST_ACCESS_TOKEN } from './helpers/auth.js';
 
 type Item = Record<string, unknown>;
 
@@ -55,7 +56,7 @@ let script: Script;
 let docId = '';
 
 async function upload(name: string, body: string | Buffer, sessionId = 's1') {
-  return fetch(`${server.url}/api/attachments?sessionId=${sessionId}&name=${encodeURIComponent(name)}`, {
+  return authFetch(`${server.url}/api/attachments?sessionId=${sessionId}&name=${encodeURIComponent(name)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/octet-stream' },
     body: typeof body === 'string' ? Buffer.from(body, 'utf8') : body,
@@ -63,7 +64,7 @@ async function upload(name: string, body: string | Buffer, sessionId = 's1') {
 }
 
 async function json<T>(path: string, init?: RequestInit): Promise<{ status: number; body: T }> {
-  const res = await fetch(`${server.url}${path}`, { ...init, headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) } });
+  const res = await authFetch(`${server.url}${path}`, { ...init, headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) } });
   const text = await res.text();
   return { status: res.status, body: (text ? JSON.parse(text) : null) as T };
 }
@@ -90,7 +91,7 @@ beforeAll(async () => {
   });
   config.databaseUrl = undefined;
   config.s3 = null;
-  config.accessToken = undefined;
+  config.accessToken = TEST_ACCESS_TOKEN;
   config.github.token = undefined;
   config.plane.apiKey = undefined;
   config.attachments.maxFileBytes = 64 * 1024;
@@ -144,7 +145,7 @@ describe('attachments API', () => {
     const csv = await upload('integrations.csv', 'system;protocol;notes\nCRM;REST;"uses ; and\nnewline"\nERP;SOAP;"say ""hi"""\n');
     expect(csv.status).toBe(201);
     const csvAttachment = (await csv.json()) as Attachment;
-    const text = await (await fetch(`${server.url}/api/attachments/${csvAttachment.id}/text`)).text();
+    const text = await (await authFetch(`${server.url}/api/attachments/${csvAttachment.id}/text`)).text();
     expect(text).toContain('| system | protocol | notes |');
     expect(text).toContain('uses ; and<br>newline');
     expect(text).toContain('say "hi"');
@@ -153,7 +154,7 @@ describe('attachments API', () => {
     expect(list.body.map((x) => x.name)).toEqual(['requirements.md', 'integrations.csv']);
     expect((await json<Attachment[]>('/api/attachments?sessionId=other')).body).toEqual([]);
 
-    const original = await fetch(`${server.url}/api/attachments/${a.id}/content`);
+    const original = await authFetch(`${server.url}/api/attachments/${a.id}/content`);
     expect(original.headers.get('content-disposition')).toContain('attachment');
     expect(original.headers.get('content-security-policy')).toContain('sandbox');
     expect(await original.text()).toBe(REQUIREMENTS);
@@ -163,8 +164,8 @@ describe('attachments API', () => {
     const res = await upload('extracted.md', 'line one\r\nline two\r\n');
     const a = (await res.json()) as Attachment;
     expect(a.storageKey).not.toBe(a.textKey);
-    expect(await (await fetch(`${server.url}/api/attachments/${a.id}/content`)).text()).toBe('line one\r\nline two\r\n');
-    expect(await (await fetch(`${server.url}/api/attachments/${a.id}/text`)).text()).toBe('line one\nline two');
+    expect(await (await authFetch(`${server.url}/api/attachments/${a.id}/content`)).text()).toBe('line one\r\nline two\r\n');
+    expect(await (await authFetch(`${server.url}/api/attachments/${a.id}/text`)).text()).toBe('line one\nline two');
     const unsent = await json<Attachment[]>('/api/attachments?sessionId=s1&unsent=1');
     expect(unsent.body.map((x) => x.name)).toContain('extracted.md');
   });
@@ -175,7 +176,7 @@ describe('attachments API', () => {
     const doc = await upload('old.doc', 'xx');
     expect(doc.status).toBe(415);
     expect(((await doc.json()) as { error: string }).error).toContain('.docx');
-    const empty = await fetch(`${server.url}/api/attachments?sessionId=s1&name=a.md`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' } });
+    const empty = await authFetch(`${server.url}/api/attachments?sessionId=s1&name=a.md`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' } });
     expect(empty.status).toBe(400);
     const big = await upload('big.txt', Buffer.alloc(70 * 1024, 'a'));
     expect(big.status).toBe(413);
@@ -189,9 +190,9 @@ describe('attachments API', () => {
     const unknown = await json<{ error: string }>('/api/tasks', { method: 'POST', body: JSON.stringify({ prompt: 'x', sessionId: 's1', attachmentIds: ['att_nope'] }) });
     expect(unknown.status).toBe(400);
     // unused attachments can be deleted
-    const del = await fetch(`${server.url}/api/attachments/${other.id}`, { method: 'DELETE' });
+    const del = await authFetch(`${server.url}/api/attachments/${other.id}`, { method: 'DELETE' });
     expect(del.status).toBe(204);
-    expect((await fetch(`${server.url}/api/attachments/${other.id}`)).status).toBe(404);
+    expect((await authFetch(`${server.url}/api/attachments/${other.id}`)).status).toBe(404);
   });
 
   it('lets the agent read, list and search the documents of its task', async () => {
@@ -210,7 +211,7 @@ describe('attachments API', () => {
     expect(detail!.task.status, detail!.task.error ?? '').toBe('completed');
     expect(detail!.attachments.map((a) => a.id)).toEqual([docId]);
     // an attachment used by a task is kept as part of its history and is no longer "unsent"
-    expect((await fetch(`${server.url}/api/attachments/${docId}`, { method: 'DELETE' })).status).toBe(409);
+    expect((await authFetch(`${server.url}/api/attachments/${docId}`, { method: 'DELETE' })).status).toBe(409);
     const unsent = await json<Attachment[]>('/api/attachments?sessionId=s1&unsent=1');
     expect(unsent.body.map((x) => x.id)).not.toContain(docId);
   });

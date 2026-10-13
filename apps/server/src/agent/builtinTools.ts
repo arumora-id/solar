@@ -15,6 +15,7 @@ import type { TaskRunContext } from '../tasks/taskManager.js';
 import { resolveTaskDiagrams, tsdDocxArtifact, withTechSpecBundleLock } from '../tasks/techSpecDocx.js';
 import { renderTechSpecDocxIsolated } from '../tasks/techSpecDocxIsolated.js';
 import { newId, slugify } from '../util/ids.js';
+import { artifactAccess } from './access.js';
 import { createDocumentTools } from './documentTools.js';
 import { json, zodTool } from './zodTool.js';
 import type { AgentTool, ToolOutput } from './types.js';
@@ -395,6 +396,7 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
       description:
         'Read the text content of an artifact by id (for review or reuse). Works for artifacts of this task and of previous tasks listed in the session context.',
       schema: z.object({ artifact_id: z.string().regex(/^art_[A-Za-z0-9]+$/) }),
+      authorize: (input, ctx) => artifactAccess([input.artifact_id], ctx),
       async execute(input, ctx) {
         const lang = taskLang(ctx);
         const artifact = await artifacts.get(input.artifact_id);
@@ -437,6 +439,7 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
           artifact_ids: z.array(z.string().regex(/^art_[A-Za-z0-9]+$/)).min(1).max(100),
           commit_message: z.string().min(1).max(500),
         }),
+        authorize: (input, ctx) => artifactAccess(input.artifact_ids, ctx),
         confirmation: (input, lang) =>
           config.github.publishConfirm === 'always'
             ? t(lang, 'confirm.github', { n: input.artifact_ids.length, target: `${input.repository ?? config.github.defaultRepo}/${input.path}` })
@@ -461,7 +464,22 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
               summary: t(lang, 'tool.github.duplicateName'),
             };
           }
-          const result = await github.publish(repo, input.branch ?? config.github.defaultBranch, input.path, files, input.commit_message, ctx.signal);
+          const branch = input.branch ?? config.github.defaultBranch;
+          const audit = (outcome: 'success' | 'failure', details: Record<string, unknown>) =>
+            ctx.recordActivity?.({
+              action: 'artifact.publish_github',
+              outcome,
+              target: { type: 'artifact', id: input.artifact_ids[0] ?? null, label: `${repo}/${input.path}`.replace(/\/+$/, '') },
+              details: { repository: repo, branch, path: input.path, files: files.length, artifactIds: input.artifact_ids, ...details },
+            });
+          let result;
+          try {
+            result = await github.publish(repo, branch, input.path, files, input.commit_message, ctx.signal);
+          } catch (err) {
+            audit('failure', { reason: 'error', error: err instanceof Error ? err.message : String(err) });
+            throw err;
+          }
+          audit('success', { commitSha: result.commitSha, commitUrl: result.commitUrl, createdBranch: result.createdBranch });
           return {
             content: json({ status: 'committed', repository: repo, ...result }),
             summary: t(lang, 'tool.github.committed', { n: files.length, target: `${repo}@${result.branch}` }),
