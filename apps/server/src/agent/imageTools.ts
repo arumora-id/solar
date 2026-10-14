@@ -22,6 +22,7 @@ export function createImageTools(
       title: z.string().trim().min(1).max(120),
       source_attachment_id: z.string().min(1).optional(),
       source_artifact_id: z.string().min(1).optional(),
+      size: z.enum(['auto', '1024x1024', '1536x1024', '1024x1536', '1536x864', '864x1536']).default('auto').describe('Output size. Select a landscape or portrait size when the user specifies an aspect ratio.'),
     }).refine((v) => !(v.source_attachment_id && v.source_artifact_id), {
       message: 'Use only one source image at a time',
     }),
@@ -61,13 +62,13 @@ export function createImageTools(
             model: 'gpt-image-2',
             image: await toFile(source.bytes, source.name, { type: source.mime }),
             prompt: input.prompt,
-            size: '1024x1024',
+            size: input.size,
             output_format: 'png',
           })
         : await client.images.generate({
             model: 'gpt-image-2',
             prompt: input.prompt,
-            size: '1024x1024',
+            size: input.size,
             output_format: 'png',
           });
       if (ctx.signal.aborted) throw new Error('Task cancelled before image was saved');

@@ -46,9 +46,9 @@ export class ContentProposalStore {
   }
 
   list(role: Role, principalId: string): ContentProposal[] {
-    const list = role === 'staff'
-      ? this.entries.filter((p) => p.authorId === principalId)
-      : this.entries;
+    const list = this.entries.filter((p) =>
+      p.authorId === principalId || (role !== 'staff' && p.status !== 'draft'),
+    );
     return list.map((p) => structuredClone(p)).sort((a,b) => b.createdAt.localeCompare(a.createdAt));
   }
 

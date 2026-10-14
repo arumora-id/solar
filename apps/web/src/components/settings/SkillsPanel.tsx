@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { SkillDetail } from '@solar/shared';
 import { api } from '../../lib/api';
+import { useAuth } from '../../lib/auth';
 import { useT } from '../../lib/i18n';
 import { PlusIcon } from '../Icons';
 import { rich } from './richText';
@@ -15,6 +16,7 @@ interface Draft {
 const EMPTY: Draft = { id: null, name: '', description: '', content: '' };
 
 export function SkillsPanel() {
+  const { role } = useAuth();
   const t = useT();
   const words = t.settings.skills;
   const [skills, setSkills] = useState<SkillDetail[]>([]);
@@ -122,7 +124,7 @@ export function SkillsPanel() {
             <h4>{s.name}</h4>
             <span className="badge">{t.settings.source[s.source]}</span>
             <label className="toggle">
-              <input type="checkbox" checked={s.enabled} disabled={busy} onChange={(e) => void run(() => api.updateSkill(s.id, { enabled: e.target.checked }))} />
+              <input type="checkbox" checked={s.enabled} disabled={busy || (s.id === 'image-creation' && role !== 'superadmin')} onChange={(e) => void run(() => api.updateSkill(s.id, { enabled: e.target.checked }))} />
               {t.common.active}
             </label>
           </div>
@@ -132,9 +134,11 @@ export function SkillsPanel() {
             {s.files.length ? ` · ${words.files(s.files.join(', '))}` : ''}
           </p>
           <div className="row" style={{ marginTop: 8 }}>
-            <button type="button" className="btn small" onClick={() => setDraft({ id: s.id, name: s.name, description: s.description, content: s.content })}>
-              {t.common.edit}
-            </button>
+            {(s.id !== 'image-creation' || role === 'superadmin') && (
+              <button type="button" className="btn small" onClick={() => setDraft({ id: s.id, name: s.name, description: s.description, content: s.content })}>
+                {t.common.edit}
+              </button>
+            )}
             {s.source === 'user' && (
               <button
                 type="button"

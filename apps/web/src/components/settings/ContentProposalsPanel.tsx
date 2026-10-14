@@ -111,6 +111,12 @@ export function ContentProposalsPanel() {
             <details><summary>{english ? 'View submitted content' : 'Lihat isi konten'}</summary>
               <pre className="json" style={{ overflow: 'auto', maxHeight: 300, whiteSpace: 'pre-wrap' }}>{p.content}</pre>
             </details>
+            {canSubmit && p.status === 'rejected' && (
+              <button className="btn small" type="button" onClick={() => {
+                setEditingId(null); setKind(p.kind); setTitle(p.title); setPath(p.path ?? '');
+                setDescription(p.description ?? ''); setContent(p.content);
+              }}>{english ? 'Revise as new Draft' : 'Revisi sebagai Draft baru'}</button>
+            )}
             {canSubmit && p.status === 'draft' && (
               <div className="row" style={{ marginTop: 10 }}>
                 <button className="btn small" disabled={busy} type="button" onClick={() => editDraft(p)}>
