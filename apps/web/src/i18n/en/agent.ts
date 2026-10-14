@@ -83,7 +83,6 @@ export const agent: Dict['agent'] = {
   composer: {
     promptLabel: 'Request for SOLAR',
     placeholder: 'Type a request… (Enter to send, Shift+Enter for a new line)',
-    placeholderCompact: 'Type a request…',
     placeholderWithFiles: 'What should I create from these documents?',
     micStart: 'Speak (voice input)',
     micStop: 'Stop listening',

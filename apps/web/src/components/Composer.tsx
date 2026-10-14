@@ -78,15 +78,6 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ di
   const t = useT();
   const [value, setValue] = useState('');
   const [sending, setSending] = useState(false);
-  const [narrowViewport, setNarrowViewport] = useState(() => window.matchMedia?.('(max-width: 640px)').matches ?? false);
-  useEffect(() => {
-    const query = window.matchMedia?.('(max-width: 640px)');
-    if (!query) return;
-    const sync = () => setNarrowViewport(query.matches);
-    sync();
-    query.addEventListener('change', sync);
-    return () => query.removeEventListener('change', sync);
-  }, []);
   const [error, setError] = useState<ComposerError | null>(null);
   const [files, setFiles] = useState<PendingFile[]>([]);
   const [preview, setPreview] = useState<Attachment | null>(null);
@@ -365,7 +356,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ di
           rows={1}
           value={value}
           disabled={disabled}
-          placeholder={files.length ? words.placeholderWithFiles : narrowViewport ? words.placeholderCompact : words.placeholder}
+          placeholder={files.length ? words.placeholderWithFiles : words.placeholder}
           onChange={(e) => setValue(e.target.value)}
           onPaste={(e) => {
             const pasted = Array.from(e.clipboardData.files);

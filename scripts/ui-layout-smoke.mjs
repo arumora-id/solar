@@ -98,12 +98,7 @@ try {
       assert(chat.y >= stage.y + stage.height - 2, `${name}: original narrow Agent must stack character and Conversation`);
     }
     const placeholder = await page.locator('.composer textarea').getAttribute('placeholder');
-    if (width <= 640) {
-      assert(placeholder && !placeholder.includes('Shift+Enter') && placeholder.length < 32,
-        `${name}: mobile placeholder must fit (got ${placeholder})`);
-    } else {
-      assert(placeholder?.includes('Shift+Enter'), `${name}: desktop keyboard hint lost`);
-    }
+    assert(placeholder?.includes('Shift+Enter'), `${name}: original keyboard hint must remain visible at every size`);
     assert(composer.width > 0, `${name}: composer disappeared`);
     assert.equal(await page.locator('.chat-fullscreen-toggle').getAttribute('aria-pressed'), 'false');
     await page.screenshot({ path: join(screenshots, `agent-original-${name}.png`), fullPage: true });
@@ -206,7 +201,7 @@ try {
   await checkConversation(390, 780, 'mobile-dark');
   await checkFullscreen(390, 780, 'mobile-dark', true);
   await page.locator('.topbar .lang-switch button').first().click();
-  assert.equal(await page.locator('.composer textarea').getAttribute('placeholder'), 'Ketik perintah…');
+  assert.equal(await page.locator('.composer textarea').getAttribute('placeholder'), 'Ketik perintah… (Enter kirim, Shift+Enter baris baru)');
   await page.locator('.topbar .lang-switch button').last().click();
   await page.locator('.topbar a[href="/monitor"]').click();
   await page.locator('.monitor-grid').waitFor();
