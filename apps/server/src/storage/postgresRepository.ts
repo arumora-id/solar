@@ -24,6 +24,7 @@ import {
   type ActivityQuery,
   type CreateUserResult,
   type ListTasksOptions,
+  type TaskListFilter,
   type Repository,
   type StoredSession,
   type StoredUser,
@@ -277,27 +278,47 @@ export class PostgresRepository implements Repository {
     return rows[0] ? toTask(rows[0]) : null;
   }
 
-  async listTasks(o: ListTasksOptions): Promise<Task[]> {
-    const where: string[] = [];
+  private taskConditions(o: TaskListFilter): { where: string; params: unknown[] } {
+    const clauses: string[] = [];
     const params: unknown[] = [];
     if (o.sessionId) {
       params.push(o.sessionId);
-      where.push(`session_id = $${params.length}`);
+      clauses.push(`session_id = $${params.length}`);
     }
-    if (o.status) {
+    if (o.status === 'active') {
+      clauses.push("status IN ('queued', 'running', 'awaiting_confirmation')");
+    } else if (o.status) {
       params.push(o.status);
-      where.push(`status = $${params.length}`);
+      clauses.push(`status = $${params.length}`);
     }
-    if (o.ownerId === null) where.push('owner_id IS NULL');
+    if (o.ownerId === null) clauses.push('owner_id IS NULL');
     else if (o.ownerId !== undefined) {
       params.push(o.ownerId);
-      where.push(`owner_id = $${params.length}`);
+      clauses.push(`owner_id = $${params.length}`);
     }
+    const search = o.search?.trim().toLowerCase();
+    if (search) {
+      // strpos performs literal substring matching: %, _ and backslashes have no wildcard meaning.
+      params.push(search);
+      const parameter = `$${params.length}`;
+      clauses.push(`(strpos(lower(title), ${parameter}) > 0 OR strpos(lower(prompt), ${parameter}) > 0 OR strpos(lower(id), ${parameter}) > 0)`);
+    }
+    return { where: clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '', params };
+  }
+
+  async listTasks(o: ListTasksOptions): Promise<Task[]> {
+    const { where, params } = this.taskConditions(o);
     params.push(o.limit, o.offset ?? 0);
-    const sql = `SELECT * FROM solar_tasks ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-                 ORDER BY created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`;
+    const sql = `SELECT * FROM solar_tasks${where}
+                 ORDER BY created_at DESC, id DESC LIMIT $${params.length - 1} OFFSET $${params.length}`;
     const { rows } = await this.pool.query(sql, params);
     return rows.map(toTask);
+  }
+
+  async countTasks(filter: TaskListFilter): Promise<number> {
+    const { where, params } = this.taskConditions(filter);
+    const { rows } = await this.pool.query(`SELECT COUNT(*)::int AS count FROM solar_tasks${where}`, params);
+    return Number(rows[0]?.count ?? 0);
   }
 
   async stats(filter: { ownerId?: string } = {}): Promise<TaskStats> {

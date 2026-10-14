@@ -377,6 +377,38 @@ export function createApiRouter(deps: ApiDeps): Router {
     res.json(await withOwners(req, list));
   });
 
+  /**
+   * Server-side Monitor pagination. The legacy GET /tasks array endpoint remains
+   * untouched for Conversation, SSE reconnect, and older desktop clients.
+   */
+  r.get('/tasks/page', async (req, res) => {
+    const q = parse(
+      z.object({
+        limit: z.coerce.number().int().refine((n) => [5, 10, 20, 50, 100].includes(n)).default(5),
+        offset: z.coerce.number().int().min(0).default(0),
+        status: z.union([z.enum(TASK_STATUSES), z.literal('active')]).optional(),
+        owner: z.string().max(100).optional(),
+        search: z.string().trim().max(200).optional(),
+      }),
+      req.query,
+      req.lang,
+    );
+    // Preserve the exact same owner authorization as GET /tasks.
+    const principal = principalOf(req);
+    let ownerId: string | null | undefined = principal.id;
+    if (seesAll(req)) {
+      if (q.owner === 'none') ownerId = null;
+      else if (q.owner && q.owner !== 'me') ownerId = q.owner;
+      else if (!q.owner) ownerId = undefined;
+    }
+    const filter = { status: q.status, ownerId, search: q.search };
+    const [items, total] = await Promise.all([
+      deps.repo.listTasks({ ...filter, limit: q.limit, offset: q.offset }),
+      deps.repo.countTasks(filter),
+    ]);
+    res.json({ items: await withOwners(req, items), total, limit: q.limit, offset: q.offset, hasNext: q.offset + items.length < total });
+  });
+
   r.get('/tasks/stats', async (req, res) => {
     res.json(await deps.repo.stats(seesAll(req) ? {} : { ownerId: principalOf(req).id }));
   });
