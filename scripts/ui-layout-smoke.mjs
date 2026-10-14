@@ -234,6 +234,8 @@ try {
   await checkMonitor(320, 568, 'small-mobile');
   await checkMonitor(844, 390, 'landscape');
   await page.setViewportSize({ width: 390, height: 780 });
+  // A resize triggers a React media-query state update; wait for its commit before asserting.
+  await page.locator('.monitor-page-size').waitFor({ state: 'detached', timeout: 10000 });
   await page.waitForFunction(() => document.querySelectorAll('.monitor-task-list tbody tr').length === 5);
   assert.equal(await page.locator('.monitor-page-size').count(), 0, 'Mobile must not allow page size above 5');
   await page.locator('.monitor-task-list tbody tr').first().click();
