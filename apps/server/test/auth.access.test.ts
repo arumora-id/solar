@@ -323,7 +323,7 @@ describe('staged content workflow and role isolation', () => {
     expect(permitted.status).toBe(201);
     const created = await permitted.json() as { id: string; kind: string };
     expect(created.kind).toBe('image');
-    expect((await superadmin.delete(`/api/attachments/${created.id}`)).status).toBe(200);
+    expect((await superadmin.delete(`/api/attachments/${created.id}`)).status).toBe(204);
   });
 
   it('keeps built-in image creation disabled by default and Superadmin-only configurable', async () => {
