@@ -70,7 +70,7 @@ konfirmasi wajib), dan setiap pekerjaan bisa dipantau di **web monitoring task**
 | Integrasi bawaan | Publish artefak ke GitHub dalam **satu commit**; buat backlog Plane secara **bulk** (epic → story, label, prioritas, anti-duplikat). |
 | Akun & peran | Masuk dengan **username atau email** + password (layar masuk beranimasi GSAP), **pendaftaran mandiri** yang disetujui Superadmin / Head of IT Solar, tiga peran - **Superadmin**, **Head of IT Solar**, **Staf Solar** - dengan izin berbeda (staf hanya melihat task-nya sendiri), sesi cookie HttpOnly, batas percobaan login, dan **log aktivitas** (audit) dengan filter & ekspor CSV. Lihat [Akun, login & peran](#akun-login--peran). |
 | Monitoring | Halaman `/monitor`: KPI, progres realtime, langkah kerja, penalaran ringkas, persetujuan, token & estimasi biaya, artefak. |
-| Tampilan layar penuh | Conversation menggunakan area browser yang tersedia, dengan karakter 3D animasi berukuran kecil di atas chat dan input tetap di bawah. Monitor memakai seluruh lebar area browser, dengan karakter mini yang menunjukkan aktivitas task. |
+| Fullscreen Conversation | Tombol **Layar penuh** pada header Conversation memperbesar panel percakapan sampai memenuhi jendela. Karakter 3D menjadi widget floating selama fullscreen; keluar dengan tombol yang sama atau **Esc**. Layout Agent dan Monitoring Task tetap seperti semula. |
 | Penyimpanan | **Neon Postgres** + **object storage S3** (Neon/S3/R2/MinIO), atau otomatis file lokal bila belum dikonfigurasi. |
 | Platform | Browser (Chrome/Edge/Firefox/Safari) dan **desktop Windows** (Electron, installer NSIS). |
 
@@ -466,7 +466,7 @@ dan buat backlog di Plane.
 Buat sequence diagram login SSO dengan Keycloak termasuk alur token kedaluwarsa.
 ```
 
-**Tata letak:** karakter 3D tampil kecil di atas area percakapan, sedangkan chat mengisi sisa tinggi dan lebar jendela aplikasi di bawah bilah navigasi. Pilihan karakter, klik untuk mikrofon, template perintah, lampiran, dan tombol percakapan baru tetap tersedia. Di layar sempit, riwayat percakapan menggulir di dalam panel tanpa harus membesarkan animasi. Ini adalah pemanfaatan penuh area aplikasi, bukan mode fullscreen browser yang menyembunyikan tab atau bilah alamat.
+**Tata letak:** secara default, karakter animasi dan Conversation tetap menggunakan tata letak Agent dua kolom seperti sebelum pembaruan fullscreen. Tombol **Layar penuh** pada header Conversation hanya memperbesar panel percakapan hingga memenuhi jendela aplikasi, dan robot menjadi widget **floating** yang tetap dapat diklik untuk input suara serta diganti karakternya. Untuk kembali ke layout normal, tekan **Esc** atau tombol **Keluar layar penuh**. Mode ini tidak meminta browser menyembunyikan tab/alamat (bukan Fullscreen API), dan tidak mengubah tampilan Monitoring Task.
 
 Percakapan dalam satu sesi saling terhubung: permintaan berikutnya (mis. "tambahkan NFR keamanan ke TSD tadi")
 mendapat konteks task sebelumnya. Tombol **Percakapan baru** memulai konteks kosong.
@@ -690,7 +690,7 @@ header/env (boleh `${VAR}`), kebijakan konfirmasi, dan opsional daftar tool yang
 
 ## Web monitoring task
 
-Buka `/monitor` (mis. <http://localhost:8790/monitor>). Dashboard menggunakan lebar penuh area aplikasi. Karakter 3D mini di bagian atas mengikuti karakter yang dipilih; animasinya berubah saat ada task yang berjalan atau menunggu persetujuan:
+Buka `/monitor` (mis. <http://localhost:8790/monitor>):
 
 - **KPI**: total task, sedang berjalan, menunggu persetujuan, selesai, gagal/batal, estimasi biaya API.
 - **Tabel task** dengan status (ikon + label), progres realtime, waktu mulai, durasi, biaya; filter & pencarian.
