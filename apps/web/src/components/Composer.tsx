@@ -3,6 +3,7 @@ import { ATTACHMENT_EXTENSIONS, type Attachment } from '@solar/shared';
 import { api, uploadAttachment } from '../lib/api';
 import { useT, type Dict } from '../lib/i18n';
 import { useSolar } from '../lib/store';
+import { useAuth } from '../lib/auth';
 import { useVoice } from '../voice/useVoice';
 import { AttachmentChip, AttachmentPreview, attachmentSummary } from './Attachments';
 import { MicIcon, PaperclipIcon, SendIcon } from './Icons';
@@ -75,6 +76,7 @@ let keySeq = 0;
 
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ disabled, onSubmit, onListeningChange }, ref) {
   const { config, sessionId, rememberAttachments } = useSolar();
+  const { can } = useAuth();
   const t = useT();
   const [value, setValue] = useState('');
   const [sending, setSending] = useState(false);
@@ -95,7 +97,9 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ di
   const [sentKeys, setSentKeys] = useState<Set<string>>(() => new Set());
 
   const limits = config?.attachments;
-  const extensions = limits?.extensions ?? ATTACHMENT_EXTENSIONS;
+  const allowedTypes = limits?.extensions ?? ATTACHMENT_EXTENSIONS;
+  const canUseImage = can('image.use');
+  const extensions = allowedTypes.filter((ext) => canUseImage || !['.png', '.jpg', '.jpeg', '.webp'].includes(ext));
   const maxFileMb = limits?.maxFileMb ?? 25;
   const maxPerTask = limits?.maxPerTask ?? 10;
   const busy = files.some((f) => f.status === 'uploading' || f.status === 'reading');
