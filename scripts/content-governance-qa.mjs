@@ -207,6 +207,12 @@ try {
     return res.ok && (await res.json()).enabled === true;
   });
   await imageCard.locator('input[type="checkbox"]').waitFor({ state: 'visible' });
+  await admin.waitForFunction(() => {
+    const card = [...document.querySelectorAll('#settings-panel .card')]
+      .find((el) => el.textContent?.includes('Image Generation and Editing'));
+    const checkbox = card?.querySelector('input[type="checkbox"]');
+    return checkbox instanceof HTMLInputElement && checkbox.checked === true;
+  }, { timeout: 10000 });
   assert.equal(await imageCard.locator('input[type="checkbox"]').isChecked(), true, 'Superadmin image activation failed');
   await admin.screenshot({ path: join(screenshots, 'superadmin-image-enabled.png'), fullPage: true });
   await imageCard.locator('input[type="checkbox"]').click();
@@ -214,6 +220,12 @@ try {
     const res = await fetch('/api/skills/image-creation');
     return res.ok && (await res.json()).enabled === false;
   });
+  await admin.waitForFunction(() => {
+    const card = [...document.querySelectorAll('#settings-panel .card')]
+      .find((el) => el.textContent?.includes('Image Generation and Editing'));
+    const checkbox = card?.querySelector('input[type="checkbox"]');
+    return checkbox instanceof HTMLInputElement && checkbox.checked === false;
+  }, { timeout: 10000 });
   assert.equal(await imageCard.locator('input[type="checkbox"]').isChecked(), false, 'Superadmin image deactivation failed');
 
   // Real browser uploader + real backend validation: no external Images API call.
