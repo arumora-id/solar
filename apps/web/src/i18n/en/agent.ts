@@ -54,6 +54,9 @@ export const agent: Dict['agent'] = {
 
   chat: {
     title: 'Conversation',
+    enterFullscreen: 'Fullscreen',
+    exitFullscreen: 'Exit fullscreen',
+    floatingCharacter: 'Floating SOLAR character',
     dropTitle: 'Drop to attach documents',
     dropFormats: 'PDF, Word, Excel, PowerPoint, Markdown or text',
     stopSpeaking: 'Stop speaking',
