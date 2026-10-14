@@ -185,10 +185,10 @@ export interface Artifact {
 // Attachments (project documents the agent reads before designing)
 // ---------------------------------------------------------------------------
 
-export type AttachmentKind = 'pdf' | 'docx' | 'xlsx' | 'csv' | 'pptx' | 'markdown' | 'text';
+export type AttachmentKind = 'pdf' | 'docx' | 'xlsx' | 'csv' | 'pptx' | 'markdown' | 'text' | 'image';
 
 /** File extensions accepted for attachments (lower case, with dot). */
-export const ATTACHMENT_EXTENSIONS: readonly string[] = ['.pdf', '.docx', '.xlsx', '.xlsm', '.csv', '.pptx', '.md', '.markdown', '.txt'];
+export const ATTACHMENT_EXTENSIONS: readonly string[] = ['.pdf', '.docx', '.xlsx', '.xlsm', '.csv', '.pptx', '.md', '.markdown', '.txt', '.png', '.jpg', '.jpeg', '.webp'];
 
 export interface Attachment {
   id: string;
@@ -264,6 +264,22 @@ export interface SkillInput {
   content: string;
   enabled?: boolean;
 }
+
+export type ContentProposal = {
+  id: string;
+  kind: 'skill' | 'knowledge';
+  title: string;
+  path?: string;
+  description?: string;
+  content: string;
+  authorId: string;
+  createdAt: string;
+  status: 'pending' | 'approved' | 'rejected';
+  approvals: Partial<Record<'superadmin' | 'head_of_it', { reviewerId: string; at: string }>>;
+  reviewedAt?: string;
+  publishedId?: string;
+  rejectionReason?: string;
+};
 
 // ---------------------------------------------------------------------------
 // MCP plugins
@@ -490,6 +506,12 @@ export type Permission =
   | 'skills.read'
   /** Create, edit, import, enable/disable and delete skills. */
   | 'skills.manage'
+  /** Submit a Skill/Knowledge proposal, without publishing or reading administrator content. */
+  | 'content.propose'
+  /** Review and approve or reject proposed Skill/Knowledge. */
+  | 'content.review'
+  /** Generate and edit images, superadmin only. */
+  | 'image.use'
   /** LLM providers and routes, model tests, MCP plugins, configuration and tokens. */
   | 'settings.manage'
   /** Read every user's activity log (audit trail), filter it by user and export it as CSV. */
@@ -508,6 +530,9 @@ export const PERMISSIONS: readonly Permission[] = [
   'knowledge.write',
   'skills.read',
   'skills.manage',
+  'content.propose',
+  'content.review',
+  'image.use',
   'settings.manage',
   'activity.view_all',
   'activity.view_own',
@@ -526,10 +551,11 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly Permission[]>> = {
     'knowledge.write',
     'skills.read',
     'skills.manage',
+    'content.review',
     'activity.view_all',
     'activity.view_own',
   ],
-  staff: ['agent.use', 'knowledge.read', 'knowledge.write', 'skills.read', 'skills.manage', 'activity.view_own'],
+  staff: ['agent.use', 'content.propose', 'activity.view_own'],
 };
 
 /**
@@ -557,8 +583,8 @@ export const ROLE_INFO: Readonly<Record<Role, { name: Readonly<Record<Language, 
   staff: {
     name: { id: 'Staf Solar', en: 'Solar Staff' },
     description: {
-      id: 'Memakai agent untuk task sendiri, menulis knowledge base dan mengelola skill, serta melihat log aktivitas sendiri.',
-      en: 'Uses the agent for their own tasks, writes the knowledge base, manages skills and reads their own activity log.',
+      id: 'Memakai agent untuk task sendiri dan mengajukan Skill/Knowledge untuk review Superadmin dan Head of IT.',
+      en: 'Uses the agent for own tasks and submits Skills/Knowledge for dual-role review.',
     },
     sortOrder: 3,
   },
