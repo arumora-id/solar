@@ -1,5 +1,5 @@
 /**
- * Live-browser regression smoke for the full-width Conversation/Monitoring layout.
+ * Live-browser regression smoke for restored Agent/Monitor layout and Conversation-only fullscreen.
  * GitHub CI runs this after typecheck, server tests and build.
  * Uses a temporary local server and disposable superadmin. Never touches production data.
  */
@@ -83,38 +83,64 @@ try {
   }
   async function checkConversation(width, height, name) {
     await page.setViewportSize({ width, height });
-    const stage = ensureBox(await page.locator('.stage-card').boundingBox(), `${name} stage`);
-    const robot = ensureBox(await page.locator('.stage-area .character-stage').boundingBox(), `${name} robot`);
+    const stage = ensureBox(await page.locator('.stage-card').boundingBox(), `${name} original stage`);
+    const robot = ensureBox(await page.locator('.stage-area .character-stage').boundingBox(), `${name} original robot`);
     const chat = ensureBox(await page.locator('.chat').boundingBox(), `${name} chat`);
     const composer = ensureBox(await page.locator('.chat .composer').boundingBox(), `${name} composer`);
-    const textarea = ensureBox(await page.locator('.composer textarea').boundingBox(), `${name} textarea`);
+    assert.equal(await page.locator('.floating-robot').count(), 0, `${name}: robot floats only in fullscreen`);
+    assert.equal(await page.locator('.chat').getAttribute('class'), 'chat', `${name}: normal chat should not be fullscreen`);
+    assert(robot.width >= 180 && robot.height >= 220, `${name}: character was unexpectedly made mini`);
+    if (width > 1020) {
+      assert(chat.x >= stage.x + stage.width - 2, `${name}: original desktop Agent must have character beside Conversation`);
+      assert(Math.abs(stage.y - chat.y) <= 4, `${name}: original Agent columns must align at the top`);
+      assert(chat.width <= 565, `${name}: original Conversation max-width unexpectedly changed`);
+    } else {
+      assert(chat.y >= stage.y + stage.height - 2, `${name}: original narrow Agent must stack character and Conversation`);
+    }
     const placeholder = await page.locator('.composer textarea').getAttribute('placeholder');
     if (width <= 640) {
       assert(placeholder && !placeholder.includes('Shift+Enter') && placeholder.length < 32,
-        `${name}: mobile placeholder must fit on one line (got ${placeholder})`);
+        `${name}: mobile placeholder must fit (got ${placeholder})`);
     } else {
       assert(placeholder?.includes('Shift+Enter'), `${name}: desktop keyboard hint lost`);
     }
-    assert(textarea.height >= 40, `${name}: textarea is too short`);
-    assert(stage.y + stage.height <= chat.y + 2, `${name}: stage should be above the conversation`);
-    assert(robot.width <= 135 && robot.height <= 125, `${name}: robot not compact ${JSON.stringify(robot)}`);
-    assert(chat.width >= width - 35, `${name}: chat does not fill viewport (width ${chat.width})`);
-    assert(chat.height >= 150, `${name}: insufficient conversation height ${chat.height}`);
-    assert(composer.y >= chat.y + 1 && composer.y + composer.height <= chat.y + chat.height + 2,
-      `${name}: composer should remain inside chat`);
-    await noHorizontalOverflow(name);
-    await page.screenshot({ path: join(screenshots, `conversation-${name}.png`), fullPage: true });
+    assert(composer.width > 0, `${name}: composer disappeared`);
+    assert.equal(await page.locator('.chat-fullscreen-toggle').getAttribute('aria-pressed'), 'false');
+    await page.screenshot({ path: join(screenshots, `agent-original-${name}.png`), fullPage: true });
+  }
+  async function checkFullscreen(width, height, name, exitWithEscape = false) {
+    await page.setViewportSize({ width, height });
+    await page.locator('.chat-fullscreen-toggle').click();
+    assert.equal(await page.locator('.chat-fullscreen-toggle').getAttribute('aria-pressed'), 'true', `${name}: fullscreen toggle did not activate`);
+    assert.equal(await page.locator('.stage-card').count(), 0, `${name}: large character should be hidden in fullscreen`);
+    const float = ensureBox(await page.locator('.floating-robot .character-stage').boundingBox(), `${name} floating robot`);
+    const chat = ensureBox(await page.locator('.chat.chat-fullscreen').boundingBox(), `${name} expanded Conversation`);
+    const composer = ensureBox(await page.locator('.chat .composer').boundingBox(), `${name} fullscreen composer`);
+    assert(Math.abs(chat.x) < 2 && Math.abs(chat.y) < 2, `${name}: fullscreen chat must start at viewport origin`);
+    assert(Math.abs(chat.width - width) <= 2 && Math.abs(chat.height - height) <= 2,
+      `${name}: fullscreen chat must fill viewport (${JSON.stringify(chat)})`);
+    assert(float.width > 40 && float.width < 165, `${name}: robot must be a small floating widget`);
+    assert(float.x >= 0 && float.x + float.width <= width + 2, `${name}: floating character outside viewport`);
+    assert(float.y >= 0 && float.y + float.height <= height + 2, `${name}: floating character vertically outside viewport`);
+    assert(composer.y >= 0 && composer.y + composer.height <= height + 2, `${name}: composer outside fullscreen viewport`);
+    await noHorizontalOverflow(`${name} fullscreen`);
+    await page.screenshot({ path: join(screenshots, `conversation-fullscreen-${name}.png`), fullPage: true });
+    if (exitWithEscape) await page.keyboard.press('Escape');
+    else await page.locator('.chat-fullscreen-toggle').click();
+    assert.equal(await page.locator('.chat-fullscreen-toggle').getAttribute('aria-pressed'), 'false', `${name}: fullscreen did not close`);
+    assert.equal(await page.locator('.floating-robot').count(), 0, `${name}: floating widget not removed`);
+    assert.equal(await page.locator('.stage-card').count(), 1, `${name}: original character stage not restored`);
   }
   async function checkMonitor(width, height, name) {
     await page.setViewportSize({ width, height });
     const monitor = ensureBox(await page.locator('.monitor').boundingBox(), `${name} monitor`);
-    const robot = ensureBox(await page.locator('.monitor-robot .character-stage').boundingBox(), `${name} monitor robot`);
     const list = ensureBox(await page.locator('.monitor-grid').boundingBox(), `${name} monitor grid`);
-    assert(monitor.width >= width - 2, `${name}: monitor has fixed max width ${monitor.width}`);
-    assert(robot.width <= 100, `${name}: monitor robot too large ${robot.width}`);
-    assert(list.x >= 0 && list.x + list.width <= width + 2, `${name}: monitor grid exceeds viewport`);
-    await noHorizontalOverflow(name);
-    await page.screenshot({ path: join(screenshots, `monitor-${name}.png`), fullPage: true });
+    assert.equal(await page.locator('.monitor-robot').count(), 0, `${name}: Monitoring must NOT gain a new robot`);
+    assert.equal(await page.locator('.monitor-header').count(), 0, `${name}: Monitoring header must remain original`);
+    assert(monitor.width <= 1402, `${name}: original Monitoring max-width of 1400px was removed`);
+    if (width >= 1600) assert(monitor.x >= 140, `${name}: original monitor should be centered`);
+    assert(list.x >= -2 && list.x + list.width <= width + 2, `${name}: monitor grid exceeds viewport`);
+    await page.screenshot({ path: join(screenshots, `monitor-original-${name}.png`), fullPage: true });
   }
 
   await checkConversation(1920, 1080, 'wide-desktop');
@@ -123,19 +149,32 @@ try {
   await checkConversation(768, 1024, 'tablet');
   await checkConversation(390, 780, 'mobile');
   await checkConversation(320, 568, 'small-mobile');
-  // Short landscape windows also occur on Windows desktop and rotated mobile devices.
   await checkConversation(844, 390, 'landscape');
+
+  await checkFullscreen(1920, 1080, 'wide-desktop');
+  await checkFullscreen(1360, 900, 'desktop');
+  await checkFullscreen(768, 1024, 'tablet', true);
+  await checkFullscreen(390, 780, 'mobile');
+  await checkFullscreen(320, 568, 'small-mobile', true);
+  await checkFullscreen(844, 390, 'landscape', true);
+
   await page.setViewportSize({ width: 390, height: 780 });
-  // The character picker must remain accessible and not cover the mini robot.
   await page.locator('.character-switch > button').click();
-  const picker = ensureBox(await page.locator('.character-menu').boundingBox(), 'character menu');
-  const stageRobot = ensureBox(await page.locator('.stage-area').boundingBox(), 'character stage');
-  assert(picker.y >= stageRobot.y, 'Picker unexpectedly opens above compact stage');
+  const picker = ensureBox(await page.locator('.character-menu').boundingBox(), 'normal character menu');
   assert(picker.x >= -1 && picker.x + picker.width <= 391, 'Character menu overflows mobile viewport');
   await page.locator('.character-menu [role="menuitemradio"]').nth(1).click();
   assert.equal(await page.locator('.stage-area .character-stage').getAttribute('data-character'), 'mochi');
-  await page.locator('.character-switch > button').click();
-  await page.locator('.character-menu [role="menuitemradio"]').first().click();
+
+  // The same character should appear inside the expanded Conversation widget.
+  await page.locator('.chat-fullscreen-toggle').click();
+  assert.equal(await page.locator('.floating-robot .character-stage').getAttribute('data-character'), 'mochi');
+  await page.locator('.floating-robot .character-switch > button').click();
+  const floatMenu = ensureBox(await page.locator('.floating-robot .character-menu').boundingBox(), 'floating character menu');
+  assert(floatMenu.x >= -1 && floatMenu.x + floatMenu.width <= 391, 'Floating picker overflows viewport');
+  await page.locator('.floating-robot .character-menu [role="menuitemradio"]').first().click();
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('.stage-area .character-stage').getAttribute('data-character'), 'robot');
+
   await page.locator('.stage-footer .chip').first().click();
   assert((await page.locator('.composer textarea').inputValue()).trim().length > 0, 'Quick prompt failed to fill composer');
 
@@ -165,6 +204,7 @@ try {
   await page.locator('.topbar a[href="/"]').click();
   await page.locator('.chat').waitFor();
   await checkConversation(390, 780, 'mobile-dark');
+  await checkFullscreen(390, 780, 'mobile-dark', true);
   await page.locator('.topbar .lang-switch button').first().click();
   assert.equal(await page.locator('.composer textarea').getAttribute('placeholder'), 'Ketik perintah…');
   await page.locator('.topbar .lang-switch button').last().click();
@@ -174,7 +214,7 @@ try {
   await firstFilter.click();
   assert.equal(await firstFilter.getAttribute('aria-pressed'), 'true', 'Task filter did not activate');
   assert.equal(pageErrors.length, 0, `Browser runtime errors: ${pageErrors.join('; ')}`);
-  console.log('Responsive UI smoke passed: wide/standard/small desktop, tablet, mobile 320px, mobile landscape, character selection, quick prompt, attachment upload/remove, dark theme, language, monitor filter, no horizontal overflow.');
+  console.log('Responsive UI smoke passed: original Agent two-column/mobile stack, original max-width Monitoring without robot, Conversation-only fullscreen+floating character (desktop/mobile/landscape, Esc/toggle), character switcher, quick prompts, attachment upload/remove, dark theme, language, monitor filter.');
   console.log('Screenshots:', screenshots);
 } catch (error) {
   console.error('Responsive UI smoke FAILED:', error);
