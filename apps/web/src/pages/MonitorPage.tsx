@@ -215,8 +215,9 @@ export function MonitorPage({ selectedId }: { selectedId: string | null }) {
 
   // A bookmarked /monitor/<taskId> may be older than the latest 200 cached tasks.
   useEffect(() => {
-    if (selectedId && !tasks[selectedId] && !pageResult?.items.some((task) => task.id === selectedId)) void loadTask(selectedId);
-  }, [selectedId, tasks, pageResult, loadTask]);
+    // Fetch once per bookmarked id even when SSE updates unrelated tasks.
+    if (selectedId && !tasksRef.current[selectedId]) void loadTask(selectedId);
+  }, [selectedId, loadTask]);
 
   const focusPanel = (element: HTMLElement | null) => {
     if (!element) return;
