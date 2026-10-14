@@ -232,6 +232,8 @@ describe('staged content workflow and role isolation', () => {
     expect(published.body).toMatchObject({ status: 'published', publishedId: 'release-checklist-review' });
     expect((await head.get<Array<{ id: string; enabled: boolean }>>('/api/skills')).body.find((x) => x.id === 'release-checklist-review')?.enabled).toBe(false);
     expect((await head.post(`/api/content-proposals/${id}/publish`, {})).status).toBe(409);
+    const skillFile = await head.get<{ content: string }>('/api/skills/release-checklist-review');
+    expect(skillFile.body.content).toContain(`<!-- solar-content-proposal:${id} -->`);
     expect((await alice.get('/api/skills/release-checklist-review')).status).toBe(403);
     expect((await bob.get<Array<{ id: string }>>('/api/content-proposals')).body.some((x) => x.id === id)).toBe(false);
   });
@@ -246,7 +248,9 @@ describe('staged content workflow and role isolation', () => {
     await head.post(`/api/content-proposals/${id}/review`, { approved: true });
     expect((await head.get('/api/knowledge/file?path=reference/dual-approved-guidance.md')).status).toBe(404);
     expect((await superadmin.post(`/api/content-proposals/${id}/publish`, {})).body).toMatchObject({ status: 'published', publishedId: knowledgePayload.path });
-    expect((await head.get('/api/knowledge/file?path=reference/dual-approved-guidance.md')).status).toBe(200);
+    const approvedFile = await head.get<{ content: string }>('/api/knowledge/file?path=reference/dual-approved-guidance.md');
+    expect(approvedFile.status).toBe(200);
+    expect(approvedFile.body.content).toContain(`<!-- solar-content-proposal:${id} -->`);
     expect((await bob.get('/api/knowledge/file?path=reference/dual-approved-guidance.md')).status).toBe(403);
     const rejected = await bob.post<{ id: string }>('/api/content-proposals', { kind: 'skill', title: 'Bad draft', content: '# Incomplete' });
     await bob.post(`/api/content-proposals/${rejected.body.id}/submit`, {});

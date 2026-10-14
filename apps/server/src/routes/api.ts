@@ -652,15 +652,32 @@ export function createApiRouter(deps: ApiDeps): Router {
     if (p.role !== 'superadmin' && p.role !== 'head_of_it') throw new HttpError(403, 'Reviewer role required');
     try {
       res.json(await contentProposals.publish(req.params.id, p.role, p.id, async (entry: ContentProposal) => {
+        // Deterministic ownership marker permits safe retry after the destination was
+        // created but the staging store could not persist Published (power loss/disk error).
+        // A pre-existing admin file without this marker is never adopted or overwritten.
+        const body = `${entry.content.trimEnd()}\n\n<!-- solar-content-proposal:${entry.id} -->\n`;
         if (entry.kind === 'skill') {
           const id = slugify(entry.title, 'skill');
-          if (await skills.get(id)) throw new Error('A Skill with that identifier already exists');
-          const created = await skills.create({ name: entry.title, description: entry.description ?? '', content: entry.content, enabled: false });
+          const existing = await skills.get(id);
+          if (existing) {
+            if (existing.source === 'user' && existing.name === entry.title
+              && existing.description === (entry.description ?? '')
+              && existing.content.trim() === body.trim()) return id;
+            throw new Error('A Skill with that identifier already exists');
+          }
+          const created = await skills.create({
+            name: entry.title, description: entry.description ?? '', content: body, enabled: false,
+          });
           return created.id;
         }
         if (!entry.path) throw new Error('Knowledge path is required');
-        if (await knowledge.locate(entry.path)) throw new Error('Knowledge path already exists');
-        return (await knowledge.write(entry.path, entry.content)).path;
+        const existing = await knowledge.locate(entry.path);
+        if (existing) {
+          const stored = await knowledge.read(existing.path);
+          if (existing.source === 'user' && stored?.content === body) return existing.path;
+          throw new Error('Knowledge path already exists');
+        }
+        return (await knowledge.write(entry.path, body)).path;
       }));
     } catch (err) { throw new HttpError(409, err instanceof Error ? err.message : String(err)); }
   });
