@@ -17,8 +17,9 @@ operasional privat.
 3. QA manual/staging alur nyata sukses: login, task streaming, approval,
    lampiran, riwayat chat panjang, karakter/mikrofon, Monitoring, dan Electron Windows.
 4. GitHub Release dan tag semver baru merujuk ke commit yang sama dengan kode
-   yang telah disetujui. Untuk kandidat ini gunakan `v1.0.1` **hanya jika**
-   tag tersebut sudah terbit dan masih merupakan versi berikutnya.
+   yang telah disetujui. Gunakan versi dari `package.json` dan pastikan tag
+   serta Release yang sesuai sudah terbit sebelum VPS diperbarui; jangan
+   menggunakan ulang tag release sebelumnya.
 5. Operator telah menyiapkan window maintenance, backup konsisten dan rollback,
    serta memverifikasi source repo dan konfigurasi deployment yang sebenarnya.
 

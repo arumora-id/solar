@@ -357,59 +357,34 @@ a {
   display: none;
 }
 
-/* ---- agent page: the animated character sits above a full-width conversation ---- */
+/* ---- agent page ------------------------------------------------------------ */
 .agent-page {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 12px;
-  width: 100%;
-  height: 100%;
-  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) minmax(380px, 560px);
+  gap: 16px;
+  padding: 16px;
   min-height: 0;
-  overflow: hidden;
 }
 .stage-card {
   position: relative;
-  z-index: 2;
-  flex: none;
-  border-radius: 16px;
+  border-radius: 22px;
   background: linear-gradient(180deg, var(--stage-top), var(--stage-bottom));
   border: 1px solid var(--line);
-  /* The character picker opens over the chat; clipping would make it inaccessible. */
-  overflow: visible;
+  overflow: hidden;
+  min-height: 420px;
   display: flex;
   flex-direction: column;
-}
-.stage-main {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-  min-width: 0;
-  padding: 8px 16px;
 }
 .stage-area {
-  position: relative;
-  flex: 0 0 124px;
-  width: 124px;
-  height: 112px;
-  min-width: 0;
-  min-height: 0;
-}
-.stage-info {
+  flex: 1;
+  min-height: 300px;
   position: relative;
   display: flex;
-  flex: 0 1 560px;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  min-width: 0;
 }
 .character-stage {
-  width: 100%;
-  height: 100%;
-  min-height: 0;
+  flex: 1;
+  min-height: 300px;
   position: relative;
 }
 .character-stage canvas {
@@ -424,22 +399,32 @@ a {
   background: none;
   cursor: pointer;
 }
-.character-fallback img {
-  max-width: 100%;
-  max-height: 100%;
-}
 .speech {
-  position: static;
-  transform: none;
-  width: 100%;
-  min-width: 0;
-  padding: 8px 10px;
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(86%, 520px);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  border-radius: 16px;
+  padding: 10px 14px;
   font-weight: 550;
-  text-align: left;
-  overflow-wrap: anywhere;
+  text-align: center;
+  z-index: 2;
 }
 .speech::after {
-  display: none;
+  content: '';
+  position: absolute;
+  bottom: -7px;
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  transform: translateX(-50%) rotate(45deg);
 }
 .speech .sub {
   display: block;
@@ -451,7 +436,7 @@ a {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 0 14px 10px;
+  padding: 12px 14px 14px;
   justify-content: center;
 }
 .chip {
@@ -466,17 +451,6 @@ a {
 .chip:hover {
   border-color: var(--accent);
   color: var(--accent);
-}
-/* Keep the picker clickable without obscuring the small 3D character. */
-.stage-card .character-switch {
-  position: relative;
-  left: auto;
-  bottom: auto;
-  margin: 0 0 2px 10px;
-}
-.stage-card .character-menu {
-  top: calc(100% + 6px);
-  bottom: auto;
 }
 
 /* ---- character picker ---------------------------------------------------- */
@@ -571,8 +545,6 @@ a {
 .chat {
   display: flex;
   flex-direction: column;
-  flex: 1 1 0;
-  min-width: 0;
   min-height: 0;
   background: var(--surface);
   border: 1px solid var(--line);
@@ -593,7 +565,6 @@ a {
 }
 .chat-log {
   flex: 1;
-  min-height: 0;
   overflow-y: auto;
   padding: 14px;
   display: flex;
@@ -1362,29 +1333,9 @@ button.att-open:hover .att-name {
   display: grid;
   gap: 16px;
   align-content: start;
+  max-width: 1400px;
   width: 100%;
-  min-width: 0;
-}
-.monitor-header {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 14px;
-  min-width: 0;
-}
-.monitor-header > .row {
-  flex: 1;
-  min-width: 180px;
-  flex-wrap: wrap;
-}
-.monitor-robot {
-  flex: 0 0 96px;
-  width: 96px;
-  height: 96px;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: linear-gradient(180deg, var(--stage-top), var(--stage-bottom));
-  overflow: hidden;
+  margin: 0 auto;
 }
 .monitor h1 {
   margin: 0;
@@ -1454,11 +1405,9 @@ button.att-open:hover .att-name {
   display: grid;
   grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
   gap: 16px;
-  min-width: 0;
   align-items: start;
 }
 .panel {
-  min-width: 0;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -1581,29 +1530,28 @@ button.att-open:hover .att-name {
 }
 
 @media (max-width: 1020px) {
+  .agent-page {
+    grid-template-columns: 1fr;
+  }
+  .stage-card {
+    min-height: 360px;
+  }
+  .chat {
+    min-height: 560px;
+  }
   .monitor-grid {
     grid-template-columns: 1fr;
   }
 }
 
 @media (max-width: 640px) {
-  .stage-main {
-    gap: 8px;
-    padding: 6px 8px;
-  }
-  .stage-area {
-    flex-basis: 90px;
-    width: 90px;
-    height: 96px;
+  .stage-card {
+    min-height: 440px;
   }
   .speech {
     font-size: 13px;
-    padding: 4px 6px;
-  }
-  .monitor-robot {
-    flex-basis: 76px;
-    width: 76px;
-    height: 76px;
+    padding: 8px 12px;
+    top: 12px;
   }
   .stage-footer {
     flex-wrap: nowrap;
@@ -1643,55 +1591,6 @@ button.att-open:hover .att-name {
   }
   .task-table .hide-sm {
     display: none;
-  }
-}
-
-/* Compact landscape and short desktop windows: keep usable chat height without hiding the robot or quick prompts. */
-@media (max-height: 540px) {
-  .agent-page {
-    gap: 6px;
-    padding-top: 6px;
-    padding-bottom: 6px;
-  }
-  .stage-main {
-    gap: 8px;
-    padding: 2px 8px;
-  }
-  .stage-area {
-    flex-basis: 64px;
-    width: 64px;
-    height: 56px;
-  }
-  .stage-info {
-    flex-direction: row;
-    align-items: center;
-    gap: 6px;
-  }
-  .speech {
-    font-size: 12px;
-    line-height: 1.25;
-    padding: 4px 6px;
-  }
-  .stage-card .character-switch {
-    margin: 0;
-  }
-  .stage-footer {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    justify-content: flex-start;
-    gap: 6px;
-    padding: 0 8px 4px;
-  }
-  .stage-footer .chip {
-    flex: none;
-    padding: 3px 8px;
-    font-size: 12px;
-  }
-  .chat-head {
-    padding: 6px 10px;
-  }
-  .chat-log {
-    padding: 8px;
   }
 }
 
@@ -3149,5 +3048,114 @@ button.att-open:hover .att-name {
   .policy li svg,
   .auth-field .input {
     transition: none;
+  }
+}
+
+/* Conversation-only expanded mode: leave the legacy Agent and Monitoring layouts untouched. */
+.chat.chat-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  width: 100%;
+  height: 100dvh;
+  max-height: 100dvh;
+  min-width: 0;
+  min-height: 0;
+  border: none;
+  border-radius: 0;
+}
+.chat.chat-fullscreen .chat-log {
+  min-height: 0;
+  overscroll-behavior: contain;
+}
+.chat-fullscreen-toggle {
+  flex: none;
+}
+.floating-robot {
+  position: absolute;
+  z-index: 3;
+  right: 16px;
+  bottom: clamp(116px, 20vh, 160px);
+  width: 152px;
+  height: 176px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: linear-gradient(180deg, var(--stage-top), var(--stage-bottom));
+  box-shadow: var(--shadow);
+}
+.floating-robot .character-stage {
+  flex: 1 1 0;
+  min-height: 0;
+  width: 100%;
+}
+.floating-robot .character-fallback img {
+  max-width: 100%;
+  max-height: 100%;
+}
+.floating-robot-footer {
+  flex: none;
+  position: relative;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+.floating-robot .character-switch {
+  position: relative;
+  left: auto;
+  bottom: auto;
+}
+.floating-robot .character-switch > .chip {
+  padding: 2px 8px 2px 4px;
+  font-size: 11px;
+}
+.floating-robot .character-menu {
+  left: auto;
+  right: 0;
+  bottom: calc(100% + 6px);
+}
+.floating-robot-status {
+  flex: none;
+  width: 100%;
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+@media (max-width: 640px) {
+  /* The existing mobile layout remains stacked; only this button is icon-only. */
+  .chat-fullscreen-label {
+    display: none;
+  }
+  .chat-head {
+    flex-wrap: wrap;
+  }
+  .floating-robot {
+    right: 10px;
+    bottom: 120px;
+    width: 112px;
+    height: 136px;
+    border-radius: 14px;
+    padding: 4px;
+  }
+  .floating-robot .character-switch > .chip {
+    padding: 2px 4px;
+    font-size: 10px;
+  }
+  .floating-robot .character-switch > .chip img {
+    width: 16px;
+    height: 16px;
+  }
+  .floating-robot-status {
+    font-size: 10px;
+    -webkit-line-clamp: 1;
   }
 }

@@ -66,6 +66,9 @@ export const agent = {
   /** The conversation panel of the Agent page. */
   chat: {
     title: 'Percakapan',
+    enterFullscreen: 'Layar penuh',
+    exitFullscreen: 'Keluar layar penuh',
+    floatingCharacter: 'Karakter SOLAR mengambang',
     dropTitle: 'Lepaskan untuk melampirkan dokumen',
     dropFormats: 'PDF, Word, Excel, PowerPoint, Markdown atau teks',
     stopSpeaking: 'Hentikan suara',
@@ -95,7 +98,6 @@ export const agent = {
   composer: {
     promptLabel: 'Perintah untuk SOLAR',
     placeholder: 'Ketik perintah… (Enter kirim, Shift+Enter baris baru)',
-    placeholderCompact: 'Ketik perintah…',
     placeholderWithFiles: 'Apa yang harus dibuat dari dokumen ini?',
     micStart: 'Bicara (input suara)',
     micStop: 'Berhenti mendengarkan',

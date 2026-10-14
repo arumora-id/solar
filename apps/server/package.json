@@ -1,6 +1,6 @@
 {
   "name": "@solar/server",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "type": "module",
   "main": "dist/index.js",
@@ -16,7 +16,7 @@
     "@aws-sdk/client-s3": "^3.1146.0",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@resvg/resvg-wasm": "^2.6.2",
-    "@solar/shared": "1.0.1",
+    "@solar/shared": "1.0.2",
     "docx": "^9.9.0",
     "dotenv": "^16.6.1",
     "express": "^5.2.1",

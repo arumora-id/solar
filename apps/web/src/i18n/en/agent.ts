@@ -54,6 +54,9 @@ export const agent: Dict['agent'] = {
 
   chat: {
     title: 'Conversation',
+    enterFullscreen: 'Fullscreen',
+    exitFullscreen: 'Exit fullscreen',
+    floatingCharacter: 'Floating SOLAR character',
     dropTitle: 'Drop to attach documents',
     dropFormats: 'PDF, Word, Excel, PowerPoint, Markdown or text',
     stopSpeaking: 'Stop speaking',
@@ -80,7 +83,6 @@ export const agent: Dict['agent'] = {
   composer: {
     promptLabel: 'Request for SOLAR',
     placeholder: 'Type a request… (Enter to send, Shift+Enter for a new line)',
-    placeholderCompact: 'Type a request…',
     placeholderWithFiles: 'What should I create from these documents?',
     micStart: 'Speak (voice input)',
     micStop: 'Stop listening',

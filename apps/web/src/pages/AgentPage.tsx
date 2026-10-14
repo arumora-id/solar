@@ -50,6 +50,23 @@ export function AgentPage() {
   const [speaking, setSpeaking] = useState(false);
   const [mood, setMood] = useState<'happy' | 'sad' | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
+
+  // Full-viewport Conversation is a local panel mode, not browser fullscreen.
+  // Escape restores the original two-column Agent layout without losing chat state.
+  useEffect(() => {
+    if (!fullscreen) return;
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setFullscreen(false);
+    };
+    window.addEventListener('keydown', onEscape);
+    return () => {
+      window.removeEventListener('keydown', onEscape);
+      document.body.style.overflow = originalOverflow;
+    };
+  }, [fullscreen]);
 
   // a drag that ends anywhere (drop elsewhere, Esc, leaving the window) must hide the overlay
   useEffect(() => {
@@ -160,18 +177,15 @@ export function AgentPage() {
 
   return (
     <main className="agent-page">
+      {!fullscreen && (
       <section className="stage-card" aria-label="SOLAR AI AGENT">
-        <div className="stage-main">
-          <div className="stage-area">
-            <CharacterStage character={character} state={characterState} onCharacterClick={() => composerRef.current?.toggleVoice()} />
-          </div>
-          <div className="stage-info">
-            <div className="speech" ref={speechRef} role="status">
-              {bubble.text}
-              {bubble.sub && <span className="sub">{bubble.sub}</span>}
-            </div>
-            <CharacterSwitcher />
-          </div>
+        <div className="speech" ref={speechRef} role="status">
+          {bubble.text}
+          {bubble.sub && <span className="sub">{bubble.sub}</span>}
+        </div>
+        <div className="stage-area">
+          <CharacterStage character={character} state={characterState} onCharacterClick={() => composerRef.current?.toggleVoice()} />
+          <CharacterSwitcher />
         </div>
         {!compact && (
           <div className="stage-footer">
@@ -186,9 +200,10 @@ export function AgentPage() {
           </div>
         )}
       </section>
+      )}
 
       <section
-        className="chat"
+        className={fullscreen ? 'chat chat-fullscreen' : 'chat'}
         aria-label={t.agent.chat.title}
         onDragEnter={(e) => {
           if (!hasFiles(e)) return;
@@ -223,6 +238,23 @@ export function AgentPage() {
         )}
         <div className="chat-head">
           <h2>{t.agent.chat.title}</h2>
+          <button
+            type="button"
+            className="btn small chat-fullscreen-toggle"
+            onClick={() => setFullscreen((value) => !value)}
+            aria-label={fullscreen ? t.agent.chat.exitFullscreen : t.agent.chat.enterFullscreen}
+            aria-pressed={fullscreen}
+            title={fullscreen ? t.agent.chat.exitFullscreen : t.agent.chat.enterFullscreen}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              {fullscreen ? (
+                <path d="M8 3v5H3M16 3v5h5M8 21v-5H3M16 21v-5h5" />
+              ) : (
+                <path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" />
+              )}
+            </svg>
+            <span className="chat-fullscreen-label">{fullscreen ? t.agent.chat.exitFullscreen : t.agent.chat.enterFullscreen}</span>
+          </button>
           {speaking && (
             <button
               type="button"
@@ -239,6 +271,15 @@ export function AgentPage() {
             <PlusIcon size={16} /> {t.agent.chat.newConversation}
           </button>
         </div>
+        {fullscreen && (
+          <aside className="floating-robot" aria-label={t.agent.chat.floatingCharacter}>
+            <CharacterStage character={character} state={characterState} onCharacterClick={() => composerRef.current?.toggleVoice()} />
+            <div className="floating-robot-footer">
+              <CharacterSwitcher />
+            </div>
+            <span className="floating-robot-status" role="status">{bubble.text}</span>
+          </aside>
+        )}
         <div className="chat-log" ref={logRef}>
           {sessionTasks.length === 0 ? (
             <div className="empty">
