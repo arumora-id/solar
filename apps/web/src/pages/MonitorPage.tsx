@@ -6,10 +6,11 @@ import { AttachmentTable } from '../components/Attachments';
 import { AlertIcon, CheckCircleIcon, ClockIcon, HandIcon, RefreshIcon, SpinnerIcon, StopIcon } from '../components/Icons';
 import { ProgressMeter, StatusBadge } from '../components/Status';
 import { RoleBadge } from '../components/UserMenu';
-import { api } from '../lib/api';
+import { api, type TaskPage } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { formatClock, formatCompact, formatDuration, formatNumber, formatTime, formatUsd, isActive, ownerLabel } from '../lib/format';
 import { useLang, useT, type Dict } from '../lib/i18n';
+import { reducedMotion } from '../lib/motion';
 import { renderMarkdown } from '../lib/markdown';
 import { navigate } from '../lib/router';
 import { useSolar } from '../lib/store';
@@ -18,16 +19,11 @@ type Filter = 'all' | 'active' | 'awaiting_confirmation' | 'completed' | 'failed
 
 /** The status filters; their names are `t.monitor.filters[filter]`. */
 const FILTERS: Filter[] = ['all', 'active', 'awaiting_confirmation', 'completed', 'failed'];
+const PAGE_SIZES = [5, 10, 20, 50, 100] as const;
+type PageSize = (typeof PAGE_SIZES)[number];
 
 /** Owner filter (roles with tasks.all): everyone, mine, tasks from before accounts, or one user (`u:<id>`). */
 type OwnerFilter = 'all' | 'mine' | 'none' | `u:${string}`;
-
-function matchesOwner(task: Task, owner: OwnerFilter, myId: string | null): boolean {
-  if (owner === 'all') return true;
-  if (owner === 'mine') return Boolean(myId) && task.ownerId === myId;
-  if (owner === 'none') return !task.ownerId;
-  return task.ownerId === owner.slice(2);
-}
 
 /** The owner filter asks the server for that owner's tasks (`owner` of GET /api/tasks); undefined for everyone. */
 function ownerParam(owner: OwnerFilter): string | undefined {
@@ -52,13 +48,6 @@ function OwnerCell({ task, myId }: { task: Task; myId: string | null }) {
       {owner && !owner.deleted && owner.kind === 'user' && owner.role && <RoleBadge role={owner.role} />}
     </span>
   );
-}
-
-function matches(task: Task, filter: Filter, query: string): boolean {
-  if (filter === 'active' && !isActive(task.status)) return false;
-  if (filter !== 'all' && filter !== 'active' && task.status !== filter) return false;
-  if (query && !`${task.title} ${task.prompt} ${task.id}`.toLowerCase().includes(query.toLowerCase())) return false;
-  return true;
 }
 
 function AnimatedNumber({ value, format }: { value: number; format: (n: number) => string }) {
@@ -102,7 +91,7 @@ function Kpi({ label, icon, value, sub, format = (n: number) => formatCompact(Ma
 
 export function MonitorPage({ selectedId }: { selectedId: string | null }) {
   const t = useT();
-  const { tasks, refreshTasks, fetchTasks, usersVersion } = useSolar();
+  const { tasks, refreshTasks, loadTask, usersVersion } = useSolar();
   const { can, user } = useAuth();
   // superadmin and Head of IT Solar see every user's tasks, with their owner; staff see their own only (no owner UI)
   const seesAll = can('tasks.all');
@@ -110,6 +99,39 @@ export function MonitorPage({ selectedId }: { selectedId: string | null }) {
   const [filter, setFilter] = useState<Filter>('all');
   const [owner, setOwner] = useState<OwnerFilter>('all');
   const [query, setQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
+  const [page, setPage] = useState(1);
+  const [desktopPageSize, setDesktopPageSize] = useState<PageSize>(5);
+  const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 640px)').matches);
+  const pageSize: PageSize = isMobile ? 5 : desktopPageSize;
+  const [pageResult, setPageResult] = useState<TaskPage | null>(null);
+  const [pageLoading, setPageLoading] = useState(true);
+  const [pageError, setPageError] = useState(false);
+  const [reloadNonce, setReloadNonce] = useState(0);
+  const [updatesAvailable, setUpdatesAvailable] = useState(false);
+  const baselineRef = useRef<Map<string, string>>(new Map());
+  const tasksRef = useRef(tasks);
+  tasksRef.current = tasks;
+  const listRef = useRef<HTMLElement>(null);
+  const detailRef = useRef<HTMLElement>(null);
+  const previousSelectedIdRef = useRef(selectedId);
+
+  // Match the existing 640px CSS breakpoint, including desktop window resizing.
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 640px)');
+    const onChange = () => {
+      setIsMobile(media.matches);
+      setPage(1);
+    };
+    media.addEventListener('change', onChange);
+    return () => media.removeEventListener('change', onChange);
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [query]);
+
   const [stats, setStats] = useState<TaskStats | null>(null);
   const [now, setNow] = useState(Date.now());
   /** Every account (users.view), so people whose tasks are older than the loaded ones can be chosen too. */
@@ -128,18 +150,94 @@ export function MonitorPage({ selectedId }: { selectedId: string | null }) {
     };
   }, [canListUsers, usersVersion]);
 
-  // the general list holds the newest tasks only: a chosen owner's tasks are loaded from the server
   const ownerQuery = seesAll ? ownerParam(owner) : undefined;
-  useEffect(() => {
-    if (ownerQuery) void fetchTasks({ owner: ownerQuery });
-  }, [ownerQuery, fetchTasks]);
   const reloadList = () => {
     void refreshTasks();
-    if (ownerQuery) void fetchTasks({ owner: ownerQuery });
+    setReloadNonce((n) => n + 1);
   };
+  // The paginated Monitor is independent of the Conversation cache (only its latest 200 tasks).
+  useEffect(() => {
+    let alive = true;
+    setPageLoading(true);
+    setPageError(false);
+    const offset = (page - 1) * pageSize;
+    void api.taskPage({
+      limit: pageSize,
+      offset,
+      ...(filter !== 'all' ? { status: filter } : {}),
+      ...(ownerQuery ? { owner: ownerQuery } : {}),
+      ...(debouncedQuery ? { search: debouncedQuery } : {}),
+    }).then((result) => {
+      if (!alive) return;
+      const maxPage = Math.max(1, Math.ceil(result.total / pageSize));
+      if (page > maxPage) {
+        setPage(maxPage);
+        return;
+      }
+      setPageResult(result);
+      setPageLoading(false);
+      setPageError(false);
+      setUpdatesAvailable(false);
+      baselineRef.current = new Map(Object.values(tasksRef.current).map((task) => [task.id, task.status]));
+    }).catch(() => {
+      if (!alive) return;
+      setPageLoading(false);
+      setPageError(true);
+    });
+    return () => { alive = false; };
+  }, [page, pageSize, filter, ownerQuery, debouncedQuery, reloadNonce]);
+
+  // SSE updates live statuses on already loaded rows without shifting the current page.
+  // Newly created tasks/status-filter membership changes are offered as an explicit refresh.
+  useEffect(() => {
+    if (!pageResult || pageLoading) return;
+    const baseline = baselineRef.current;
+    for (const task of Object.values(tasks)) {
+      const previous = baseline.get(task.id);
+      if (previous === undefined || (previous !== task.status && filter !== 'all')) {
+        setUpdatesAvailable(true);
+        return;
+      }
+    }
+  }, [tasks, pageResult, pageLoading, filter]);
 
   const list = useMemo(() => Object.values(tasks).sort((a, b) => b.createdAt.localeCompare(a.createdAt)), [tasks]);
-  const visible = list.filter((task) => matches(task, filter, query) && (!seesAll || matchesOwner(task, owner, myId)));
+  const visible = (pageResult?.items ?? []).map((snapshot) => {
+    const live = tasks[snapshot.id];
+    if (!live) return snapshot;
+    if (['completed', 'failed', 'cancelled'].includes(snapshot.status) && isActive(live.status)) return snapshot;
+    return live;
+  });
+  const total = pageResult?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const firstItem = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const lastItem = Math.min(page * pageSize, total);
+
+  // A bookmarked /monitor/<taskId> may be older than the latest 200 cached tasks.
+  useEffect(() => {
+    if (selectedId && !tasks[selectedId] && !pageResult?.items.some((task) => task.id === selectedId)) void loadTask(selectedId);
+  }, [selectedId, tasks, pageResult, loadTask]);
+
+  const focusPanel = (element: HTMLElement | null) => {
+    if (!element) return;
+    element.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'start' });
+    element.focus({ preventScroll: true });
+  };
+  const openTask = (id: string) => {
+    navigate(`/monitor/${id}`);
+    if (isMobile) window.requestAnimationFrame(() => focusPanel(detailRef.current));
+  };
+  const backToList = () => {
+    navigate('/monitor');
+    window.requestAnimationFrame(() => focusPanel(listRef.current));
+  };
+  // Browser Back should also restore the list position, not strand the user below it.
+  useEffect(() => {
+    if (isMobile && previousSelectedIdRef.current && !selectedId) {
+      window.requestAnimationFrame(() => focusPanel(listRef.current));
+    }
+    previousSelectedIdRef.current = selectedId;
+  }, [selectedId, isMobile]);
   // the people to filter by: every account, plus the owners found in the tasks (deleted accounts, the access token)
   const owners = useMemo(() => {
     const map = new Map<string, TaskOwner>();
@@ -168,7 +266,7 @@ export function MonitorPage({ selectedId }: { selectedId: string | null }) {
   }, [list]);
 
   const by = (s: TaskStatus) => stats?.byStatus[s] ?? 0;
-  const selected = selectedId ? tasks[selectedId] : undefined;
+  const selected = selectedId ? (tasks[selectedId] ?? pageResult?.items.find((task) => task.id === selectedId)) : undefined;
 
   return (
     <main className="monitor">
@@ -194,13 +292,13 @@ export function MonitorPage({ selectedId }: { selectedId: string | null }) {
       <div className="filters">
         <div className="seg" role="group" aria-label={t.monitor.filters.label}>
           {FILTERS.map((f) => (
-            <button key={f} type="button" aria-pressed={filter === f} onClick={() => setFilter(f)}>
+            <button key={f} type="button" aria-pressed={filter === f} onClick={() => { setFilter(f); setPage(1); }}>
               {t.monitor.filters[f]}
             </button>
           ))}
         </div>
         {seesAll && (
-          <select className="select owner-filter" value={owner} onChange={(e) => setOwner(e.target.value as OwnerFilter)} aria-label={t.monitor.owner.filterLabel}>
+          <select className="select owner-filter" value={owner} onChange={(e) => { setOwner(e.target.value as OwnerFilter); setPage(1); }} aria-label={t.monitor.owner.filterLabel}>
             <option value="all">{t.monitor.owner.all}</option>
             <option value="mine">{t.monitor.owner.mine}</option>
             <option value="none">{t.monitor.owner.none}</option>
@@ -229,17 +327,36 @@ export function MonitorPage({ selectedId }: { selectedId: string | null }) {
           type="search"
           placeholder={t.monitor.search.placeholder}
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => { setQuery(e.target.value); setPage(1); }}
           aria-label={t.monitor.search.label}
         />
       </div>
 
       <div className="monitor-grid">
-        <section className="panel" aria-label={t.monitor.list.label}>
+        <section className="panel monitor-task-list" ref={listRef} tabIndex={-1} aria-label={t.monitor.list.label}>
           <div className="panel-head">
-            <h2>{t.monitor.list.heading(visible.length)}</h2>
+            <h2>{t.monitor.list.heading(total)}</h2>
+            {!isMobile && (
+              <label className="monitor-page-size">
+                {t.monitor.pagination.rowsPerPage}
+                <select
+                  className="select"
+                  value={desktopPageSize}
+                  onChange={(e) => { setDesktopPageSize(Number(e.target.value) as PageSize); setPage(1); }}
+                >
+                  {PAGE_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
+                </select>
+              </label>
+            )}
           </div>
-          {visible.length === 0 ? (
+          {pageLoading ? (
+            <p className="empty" role="status" style={{ padding: 24 }}>{t.monitor.pagination.loading}</p>
+          ) : pageError ? (
+            <div className="monitor-page-error" role="alert">
+              <p>{t.monitor.pagination.error}</p>
+              <button className="btn small" type="button" onClick={() => setReloadNonce((n) => n + 1)}>{t.monitor.pagination.retry}</button>
+            </div>
+          ) : visible.length === 0 ? (
             <p className="empty" style={{ padding: 24 }}>
               {t.monitor.list.empty}
             </p>
@@ -263,8 +380,8 @@ export function MonitorPage({ selectedId }: { selectedId: string | null }) {
                       key={task.id}
                       aria-selected={task.id === selectedId}
                       tabIndex={0}
-                      onClick={() => navigate(`/monitor/${task.id}`)}
-                      onKeyDown={(e) => e.key === 'Enter' && navigate(`/monitor/${task.id}`)}
+                      onClick={() => openTask(task.id)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') openTask(task.id); }}
                     >
                       <td>
                         <div className="task-title">{task.title}</div>
@@ -295,9 +412,33 @@ export function MonitorPage({ selectedId }: { selectedId: string | null }) {
               </table>
             </div>
           )}
+          {!pageLoading && !pageError && (
+            <div className="monitor-pagination" role="navigation" aria-label={t.monitor.pagination.navigation}>
+              <span className="monitor-page-range" aria-live="polite">{t.monitor.pagination.range(firstItem, lastItem, total)}</span>
+              <div className="monitor-page-controls">
+                <button type="button" className="btn small" disabled={page <= 1} onClick={() => setPage((n) => Math.max(1, n - 1))}>
+                  {t.monitor.pagination.previous}
+                </button>
+                <span className="monitor-page-number">{t.monitor.pagination.page(page, totalPages)}</span>
+                <button type="button" className="btn small" disabled={page >= totalPages} onClick={() => setPage((n) => Math.min(totalPages, n + 1))}>
+                  {t.monitor.pagination.next}
+                </button>
+              </div>
+            </div>
+          )}
+          {updatesAvailable && (
+            <button type="button" className="monitor-page-update" onClick={() => setReloadNonce((n) => n + 1)}>
+              {t.monitor.pagination.updates}
+            </button>
+          )}
         </section>
 
-        <section className="panel" aria-label={t.monitor.detail.label}>
+        <section className="panel monitor-task-detail" ref={detailRef} tabIndex={-1} aria-label={t.monitor.detail.label}>
+          {isMobile && selectedId && (
+            <button className="btn small monitor-back-to-list" type="button" onClick={backToList}>
+              {t.monitor.pagination.backToList}
+            </button>
+          )}
           {selected ? (
             <TaskDetailPanel task={selected} now={now} seesAll={seesAll} myId={myId} />
           ) : (

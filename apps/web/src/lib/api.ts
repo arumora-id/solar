@@ -67,6 +67,15 @@ export interface WordExport {
   warnings: string[];
 }
 
+/** A server-filtered slice of the complete authorized task history. */
+export interface TaskPage {
+  items: Task[];
+  total: number;
+  limit: number;
+  offset: number;
+  hasNext: boolean;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -284,6 +293,8 @@ export const api = {
   /** `owner` (tasks.all only): `me`, `none` (tasks from before accounts) or a user id. */
   listTasks: (params: { limit?: number; sessionId?: string; status?: TaskStatus; owner?: string } = {}) =>
     request<Task[]>('GET', `/api/tasks${query({ limit: params.limit, sessionId: params.sessionId, status: params.status, owner: params.owner })}`),
+  taskPage: (params: { limit: 5 | 10 | 20 | 50 | 100; offset: number; status?: TaskStatus | 'active'; owner?: string; search?: string }) =>
+    request<TaskPage>('GET', `/api/tasks/page${query(params)}`),
   stats: () => request<TaskStats>('GET', '/api/tasks/stats'),
   task: (id: string) => request<TaskDetail>('GET', `/api/tasks/${encodeURIComponent(id)}`),
   cancelTask: (id: string) => request<{ ok: true }>('POST', `/api/tasks/${encodeURIComponent(id)}/cancel`),

@@ -79,6 +79,20 @@ export const monitor = {
     other: (name: string) => `Task milik ${name}: Anda menjawab sebagai admin.`,
   },
 
+  pagination: {
+    navigation: 'Navigasi halaman task',
+    rowsPerPage: 'Baris per halaman',
+    loading: 'Memuat task…',
+    error: 'Daftar task gagal dimuat.',
+    retry: 'Coba lagi',
+    previous: 'Sebelumnya',
+    next: 'Berikutnya',
+    page: (current: number, total: number) => `Halaman ${numId(current)} / ${numId(total)}`,
+    range: (from: number, to: number, total: number) => `Menampilkan ${numId(from)}–${numId(to)} dari ${numId(total)} task`,
+    updates: 'Ada pembaruan task · Muat ulang daftar',
+    backToList: '← Kembali ke daftar',
+  },
+
   list: {
     label: 'Daftar task',
     heading: (n: number) => `Task (${numId(n)})`,
