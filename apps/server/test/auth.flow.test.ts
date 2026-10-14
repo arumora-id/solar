@@ -103,7 +103,7 @@ describe('registration, approval and login (file storage, superadmin from SOLAR_
     const ok = await budi.login('BUDI@solar.test');
     expect(ok.status).toBe(200);
     expect(ok.body).toMatchObject({ role: 'staff', via: 'session', user: { username: 'budi.santoso' } });
-    expect(ok.body.permissions).toEqual(['agent.use', 'knowledge.read', 'knowledge.write', 'skills.read', 'skills.manage', 'activity.view_own']);
+    expect(ok.body.permissions).toEqual(['agent.use', 'content.propose', 'activity.view_own']);
     const cookie = ok.setCookies.find((c) => c.startsWith('solar_session='))!;
     expect(cookie).toMatch(/^solar_session=[A-Za-z0-9_-]{43};/);
     expect(cookie).toContain('; HttpOnly');
@@ -310,24 +310,24 @@ describe('registration, approval and login (file storage, superadmin from SOLAR_
   it('refuses cookie-authenticated state changes from a foreign origin (CSRF), and login from one', async () => {
     const { client } = await userClient(server.url, admin, 'csrf.user', 'staff');
     const port = new URL(server.url).port;
-    const body = { path: 'notes/csrf.md', content: '# csrf' };
+    const body = { kind: 'knowledge', path: 'notes/csrf.md', title: 'CSRF', content: '# csrf' };
     // the token deployment does not check Host/Origin for the network: the same-origin guard does
-    const foreign = await client.put('/api/knowledge/file', body, { Origin: 'http://evil.example' });
+    const foreign = await client.post('/api/content-proposals', body, { Origin: 'http://evil.example' });
     expect(foreign.status).toBe(403);
     // another port of this computer is "same-site" for SameSite=Lax, but not the same origin
-    expect((await client.put('/api/knowledge/file', body, { Origin: 'http://127.0.0.1:1' })).status).toBe(403);
-    expect((await client.put('/api/knowledge/file', body, { Origin: 'null' })).status).toBe(403);
-    expect((await client.put('/api/knowledge/file', body, { 'Sec-Fetch-Site': 'cross-site' })).status).toBe(403);
+    expect((await client.post('/api/content-proposals', body, { Origin: 'http://127.0.0.1:1' })).status).toBe(403);
+    expect((await client.post('/api/content-proposals', body, { Origin: 'null' })).status).toBe(403);
+    expect((await client.post('/api/content-proposals', body, { 'Sec-Fetch-Site': 'cross-site' })).status).toBe(403);
     expect((await client.post('/api/auth/logout', {}, { Origin: 'http://evil.example' })).status).toBe(403);
     expect((await client.get('/api/auth/me')).status).toBe(200);
     // login CSRF
     expect((await new Client(server.url).post('/api/auth/login', { identifier: 'csrf.user', password: STRONG_PASSWORD }, { Origin: 'http://evil.example' })).status).toBe(403);
     // the app's own origin, and non-browser clients (no Origin), pass
-    expect((await client.put('/api/knowledge/file', body, { Origin: `http://127.0.0.1:${port}` })).status).toBe(200);
-    expect((await client.put('/api/knowledge/file', body, { 'Sec-Fetch-Site': 'same-origin' })).status).toBe(200);
-    expect((await client.put('/api/knowledge/file', body)).status).toBe(200);
+    expect((await client.post('/api/content-proposals', body, { Origin: `http://127.0.0.1:${port}` })).status).toBe(201);
+    expect((await client.post('/api/content-proposals', body, { 'Sec-Fetch-Site': 'same-origin' })).status).toBe(201);
+    expect((await client.post('/api/content-proposals', body)).status).toBe(201);
     // the access token is not ambient: no origin check
-    expect((await admin.put('/api/knowledge/file', body, { Origin: 'http://evil.example' })).status).toBe(200);
+    expect((await admin.put('/api/knowledge/file', { path: 'notes/csrf.md', content: '# csrf' }, { Origin: 'http://evil.example' })).status).toBe(200);
   });
 });
 

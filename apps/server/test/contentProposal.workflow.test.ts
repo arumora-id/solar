@@ -20,7 +20,7 @@ async function store() {
 
 describe('Skill/Knowledge workflow: Draft → Submitted → Approved / Rejected → Published', () => {
   it('keeps a Staff draft editable and hidden from other Staff', async () => {
-    const { s } = await store();
+    const { s, root } = await store();
     const first = await s.create(draft(), 'staff-a');
     expect(first.status).toBe('draft');
     expect(s.list('staff', 'staff-b')).toEqual([]);
@@ -30,7 +30,7 @@ describe('Skill/Knowledge workflow: Draft → Submitted → Approved / Rejected 
     const changed = await s.update(first.id, 'staff-a', { ...draft(), title: 'Corrected incident' });
     expect(changed.title).toBe('Corrected incident');
     expect(changed.status).toBe('draft');
-    const reopened = new ContentProposalStore((s as unknown as { file: string }).file.replace(/\/content-proposals\.json$/, ''));
+    const reopened = new ContentProposalStore(root);
     await reopened.init();
     expect(reopened.list('staff', 'staff-a')[0]?.title).toBe('Corrected incident');
   });

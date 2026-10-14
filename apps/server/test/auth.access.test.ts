@@ -135,16 +135,29 @@ describe('role matrix', () => {
     expect(JSON.stringify(config.body)).not.toContain(TEST_ACCESS_TOKEN);
   });
 
-  it('staff: may use the agent, write the knowledge base and manage skills', async () => {
-    expect((await alice.get('/api/knowledge')).status).toBe(200);
-    expect((await alice.put('/api/knowledge/file', { path: 'systems/STAFF.md', content: '# Staff system' })).status).toBe(200);
-    expect((await alice.post('/api/knowledge/import', { files: [{ path: 'systems/IMPORTED.md', content: '# Imported' }] })).status).toBe(201);
-    expect((await alice.delete('/api/knowledge/file?path=systems/STAFF.md')).status).toBe(200);
-    expect((await alice.get('/api/skills')).status).toBe(200);
-    const skill = await alice.post<{ id: string }>('/api/skills', { name: 'Staff skill', description: 'by staff', content: 'Do things well.' });
-    expect(skill.status).toBe(201);
-    expect((await alice.put(`/api/skills/${skill.body.id}`, { enabled: false })).status).toBe(200);
-    expect((await alice.delete(`/api/skills/${skill.body.id}`)).status).toBe(200);
+  it('staff: may propose but cannot read or modify administrator Skills/Knowledge', async () => {
+    for (const [method, url, payload] of [
+      ['GET', '/api/knowledge'],
+      ['GET', '/api/knowledge/file?path=systems/secret.md'],
+      ['GET', '/api/knowledge/search?q=secret'],
+      ['PUT', '/api/knowledge/file', { path: 'systems/STAFF.md', content: '# Staff' }],
+      ['POST', '/api/knowledge/import', { files: [{ path: 'systems/IMPORTED.md', content: '# Imported' }] }],
+      ['DELETE', '/api/knowledge/file?path=systems/STAFF.md'],
+      ['GET', '/api/skills'],
+      ['POST', '/api/skills', { name: 'Unapproved', content: 'Do things.' }],
+      ['PUT', '/api/skills/image-creation', { enabled: true }],
+      ['DELETE', '/api/skills/image-creation'],
+    ] as Array<[string, string, unknown?]>) {
+      expect((await alice.call(method, url, payload)).status, `${method} ${url}`).toBe(403);
+    }
+    const draft = await alice.post<{ id: string; status: string }>('/api/content-proposals', {
+      kind: 'skill', title: 'Candidate Skill', description: 'by staff', content: '# Draft',
+    });
+    expect(draft.status).toBe(201);
+    expect(draft.body.status).toBe('draft');
+    expect((await bob.get<Array<{ id: string }>>('/api/content-proposals')).body).not.toContainEqual(expect.objectContaining({ id: draft.body.id }));
+    expect((await alice.post(`/api/content-proposals/${draft.body.id}/submit`)).body).toMatchObject({ status: 'submitted' });
+    expect((await alice.post(`/api/content-proposals/${draft.body.id}/publish`)).status).toBe(403);
   });
 
   it('head of IT: tasks of everyone and staff accounts, but no system settings and no admin accounts', async () => {
@@ -256,7 +269,7 @@ describe('task visibility', () => {
       ['GET', `/api/attachments/${aliceAttachment.id}/content`],
       ['DELETE', `/api/attachments/${aliceAttachment.id}`],
     ] as Array<[string, string, unknown?]>) {
-      expect((await bob.call(method, path, body)).status, `${method} ${path}`).toBe(404);
+      expect((await bob.call(method, path, body)).status, `${method} ${path}`).toBe(path === '/api/knowledge/import-artifact' ? 403 : 404);
     }
     expect((await bob.get<Attachment[]>('/api/attachments?sessionId=alice-session')).body).toEqual([]);
     // nor attach her upload to his own request (even naming her conversation)

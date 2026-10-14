@@ -143,7 +143,7 @@ describe('rate limiter', () => {
 describe('roles and permissions (shared table)', () => {
   const has = (role: Role) => PERMISSIONS.filter((p) => can(role, p));
 
-  it('superadmin has everything; head of IT everything but user management and system settings; staff the agent, knowledge, skills and own activity', () => {
+  it('superadmin has everything; head of IT everything but user management and system settings; staff own tasks and proposal submission only', () => {
     expect(has('superadmin')).toEqual([...PERMISSIONS]);
     expect(has('head_of_it').sort()).toEqual(
       (
@@ -157,13 +157,14 @@ describe('roles and permissions (shared table)', () => {
           'knowledge.write',
           'skills.read',
           'skills.manage',
+          'content.review',
           'activity.view_all',
           'activity.view_own',
         ] as Permission[]
       ).sort(),
     );
     expect(has('staff').sort()).toEqual(
-      (['agent.use', 'knowledge.read', 'knowledge.write', 'skills.read', 'skills.manage', 'activity.view_own'] as Permission[]).sort(),
+      (['agent.use', 'content.propose', 'activity.view_own'] as Permission[]).sort(),
     );
     expect(ROLE_PERMISSIONS.staff).not.toContain('activity.view_all');
     expect(ROLE_PERMISSIONS.staff).not.toContain('settings.manage');
