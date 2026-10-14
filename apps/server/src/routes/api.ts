@@ -543,7 +543,7 @@ export function createApiRouter(deps: ApiDeps): Router {
   r.post('/attachments', requirePermission('agent.use'), uploadBody, async (req, res) => {
     const q = parse(z.object({ sessionId: z.string().trim().min(1).max(100), name: z.string().trim().min(1).max(300) }), req.query, req.lang);
     if (!Buffer.isBuffer(req.body) || req.body.length === 0) throw new HttpError(400, t(req.lang, 'api.fileEmpty'));
-    if (/\\.(png|jpe?g|webp)$/i.test(q.name) && !can(principalOf(req).role, 'image.use')) {
+    if (/\.(png|jpe?g|webp)$/i.test(q.name) && !can(principalOf(req).role, 'image.use')) {
       throw new HttpError(403, 'Only Superadmin can attach images for editing');
     }
     // the client may give up while the document is being read (chip removed, page left): then do not keep it
