@@ -265,18 +265,26 @@ export interface SkillInput {
   enabled?: boolean;
 }
 
-export type ContentProposal = {
-  id: string;
+/** Explicit review/publication lifecycle: only Published content enters live Skill/Knowledge stores. */
+export type ContentProposalStatus = 'draft' | 'submitted' | 'approved' | 'rejected' | 'published';
+export type ContentProposalInput = {
   kind: 'skill' | 'knowledge';
   title: string;
   path?: string;
   description?: string;
   content: string;
+};
+export type ContentProposal = ContentProposalInput & {
+  id: string;
   authorId: string;
   createdAt: string;
-  status: 'pending' | 'approved' | 'rejected';
+  updatedAt: string;
+  status: ContentProposalStatus;
   approvals: Partial<Record<'superadmin' | 'head_of_it', { reviewerId: string; at: string }>>;
+  submittedAt?: string;
   reviewedAt?: string;
+  publishedAt?: string;
+  publishedBy?: string;
   publishedId?: string;
   rejectionReason?: string;
 };

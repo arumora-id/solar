@@ -605,17 +605,15 @@ export function createApiRouter(deps: ApiDeps): Router {
   });
 
 
-  // ---- Skill / Knowledge proposals (NOT live until both review roles approve) ----------------------
+  // ---- Draft → Submitted → Approved / Rejected → Published -----------------------------
   const proposeBody = z.discriminatedUnion('kind', [
     z.object({
-      kind: z.literal('skill'),
-      title: z.string().trim().min(1).max(80),
+      kind: z.literal('skill'), title: z.string().trim().min(1).max(80),
       description: z.string().trim().max(1000).optional(),
       content: z.string().trim().min(1).max(100_000),
     }),
     z.object({
-      kind: z.literal('knowledge'),
-      title: z.string().trim().min(1).max(120),
+      kind: z.literal('knowledge'), title: z.string().trim().min(1).max(120),
       path: z.string().trim().min(1).max(300),
       content: z.string().trim().min(1).max(100_000),
     }),
@@ -626,21 +624,35 @@ export function createApiRouter(deps: ApiDeps): Router {
     res.json(contentProposals.list(p.role, p.id));
   });
   r.post('/content-proposals', requirePermission('content.propose'), async (req, res) => {
-    const body = parse(proposeBody, req.body, req.lang);
-    const proposal = await contentProposals.create(body, principalOf(req).id);
+    const input = parse(proposeBody, req.body, req.lang);
+    const proposal = await contentProposals.create(input, principalOf(req).id);
     res.status(201).json(proposal);
+  });
+  r.put('/content-proposals/:id', requirePermission('content.propose'), async (req, res) => {
+    const input = parse(proposeBody, req.body, req.lang);
+    try {
+      res.json(await contentProposals.update(req.params.id, principalOf(req).id, input));
+    } catch (err) { throw new HttpError(409, err instanceof Error ? err.message : String(err)); }
+  });
+  r.post('/content-proposals/:id/submit', requirePermission('content.propose'), async (req, res) => {
+    try {
+      res.json(await contentProposals.submit(req.params.id, principalOf(req).id));
+    } catch (err) { throw new HttpError(409, err instanceof Error ? err.message : String(err)); }
   });
   r.post('/content-proposals/:id/review', requirePermission('content.review'), async (req, res) => {
     const p = principalOf(req);
     if (p.role !== 'superadmin' && p.role !== 'head_of_it') throw new HttpError(403, 'Reviewer role required');
-    const decision = parse(z.object({
-      approved: z.boolean(),
-      reason: z.string().trim().max(2000).default(''),
-    }), req.body, req.lang);
+    const input = parse(z.object({ approved: z.boolean(), reason: z.string().trim().max(2000).default('') }), req.body, req.lang);
     try {
-      const proposal = await contentProposals.review(req.params.id, p.role, p.id, decision.approved, decision.reason, async (entry: ContentProposal) => {
+      res.json(await contentProposals.review(req.params.id, p.role, p.id, input.approved, input.reason));
+    } catch (err) { throw new HttpError(409, err instanceof Error ? err.message : String(err)); }
+  });
+  r.post('/content-proposals/:id/publish', requirePermission('content.review'), async (req, res) => {
+    const p = principalOf(req);
+    if (p.role !== 'superadmin' && p.role !== 'head_of_it') throw new HttpError(403, 'Reviewer role required');
+    try {
+      res.json(await contentProposals.publish(req.params.id, p.role, p.id, async (entry: ContentProposal) => {
         if (entry.kind === 'skill') {
-          // Never overwrite a built-in or administrator-authored Skill.
           const id = slugify(entry.title, 'skill');
           if (await skills.get(id)) throw new Error('A Skill with that identifier already exists');
           const created = await skills.create({ name: entry.title, description: entry.description ?? '', content: entry.content, enabled: false });
@@ -649,11 +661,8 @@ export function createApiRouter(deps: ApiDeps): Router {
         if (!entry.path) throw new Error('Knowledge path is required');
         if (await knowledge.locate(entry.path)) throw new Error('Knowledge path already exists');
         return (await knowledge.write(entry.path, entry.content)).path;
-      });
-      res.json(proposal);
-    } catch (err) {
-      throw new HttpError(409, err instanceof Error ? err.message : String(err));
-    }
+      }));
+    } catch (err) { throw new HttpError(409, err instanceof Error ? err.message : String(err)); }
   });
 
   // ---- skills ---------------------------------------------------------------

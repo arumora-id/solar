@@ -305,6 +305,10 @@ export const api = {
   contentProposals: () => request<ContentProposal[]>('GET', '/api/content-proposals'),
   createContentProposal: (input: { kind: 'skill' | 'knowledge'; title: string; description?: string; path?: string; content: string }) =>
     request<ContentProposal>('POST', '/api/content-proposals', input),
+  updateContentProposal: (id: string, input: { kind: 'skill' | 'knowledge'; title: string; description?: string; path?: string; content: string }) =>
+    request<ContentProposal>('PUT', `/api/content-proposals/${encodeURIComponent(id)}`, input),
+  submitContentProposal: (id: string) => request<ContentProposal>('POST', `/api/content-proposals/${encodeURIComponent(id)}/submit`, {}),
+  publishContentProposal: (id: string) => request<ContentProposal>('POST', `/api/content-proposals/${encodeURIComponent(id)}/publish`, {}),
   reviewContentProposal: (id: string, approved: boolean, reason: string) =>
     request<ContentProposal>('POST', `/api/content-proposals/${encodeURIComponent(id)}/review`, { approved, reason }),
   skills: () => request<SkillDetail[]>('GET', '/api/skills'),

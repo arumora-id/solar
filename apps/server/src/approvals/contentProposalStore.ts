@@ -1,10 +1,16 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { ContentProposal, Role } from '@solar/shared';
+import type { ContentProposal, ContentProposalInput, Role } from '@solar/shared';
 import { writeFileAtomic } from '../util/fs.js';
 import { newId, nowIso } from '../util/ids.js';
 
-/** Persistent staging area. Proposals are never part of the live agent's Skills or Knowledge until dual approval. */
+type ReviewerRole = 'superadmin' | 'head_of_it';
+
+/**
+ * Immutable on submission: drafts live only in this private staging file.
+ * The Skill/Knowledge stores change exclusively when a separately approved
+ * proposal is explicitly published by an authorized reviewer.
+ */
 export class ContentProposalStore {
   private readonly file: string;
   private entries: ContentProposal[] = [];
@@ -23,67 +29,106 @@ export class ContentProposalStore {
     }
   }
 
-  private exclusive<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.pending.then(operation);
-    this.pending = result.then(() => undefined, () => undefined);
-    return result;
+  private exclusive<T>(op: () => Promise<T>): Promise<T> {
+    const next = this.pending.then(op);
+    this.pending = next.then(() => undefined, () => undefined);
+    return next;
   }
 
-  private async save(): Promise<void> {
-    await writeFileAtomic(this.file, JSON.stringify(this.entries, null, 2), { mode: 0o600 });
+  private persist(): Promise<void> {
+    return writeFileAtomic(this.file, JSON.stringify(this.entries, null, 2), { mode: 0o600 });
   }
 
-  list(role: Role, id: string): ContentProposal[] {
-    const view = role === 'staff' ? this.entries.filter((e) => e.authorId === id) : this.entries;
-    return view.map((e) => structuredClone(e)).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  private get(id: string): ContentProposal {
+    const value = this.entries.find((e) => e.id === id);
+    if (!value) throw new Error('Proposal not found');
+    return value;
   }
 
-  create(input: Pick<ContentProposal, 'kind' | 'title' | 'path' | 'description' | 'content'>, authorId: string): Promise<ContentProposal> {
+  list(role: Role, principalId: string): ContentProposal[] {
+    const list = role === 'staff'
+      ? this.entries.filter((p) => p.authorId === principalId)
+      : this.entries;
+    return list.map((p) => structuredClone(p)).sort((a,b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  create(input: ContentProposalInput, authorId: string): Promise<ContentProposal> {
     return this.exclusive(async () => {
       if (this.entries.length >= 2000) throw new Error('Proposal queue reached its safety limit');
-      const entry: ContentProposal = {
-        ...input, id: newId('proposal'), authorId, createdAt: nowIso(), status: 'pending', approvals: {},
+      const now = nowIso();
+      const item: ContentProposal = {
+        ...input, id: newId('proposal'), authorId, createdAt: now,
+        updatedAt: now, status: 'draft', approvals: {},
       };
-      this.entries.push(entry);
-      await this.save();
-      return structuredClone(entry);
+      this.entries.push(item);
+      await this.persist();
+      return structuredClone(item);
     });
   }
 
-  /**
-   * A Superadmin AND a Head of IT must approve an immutable proposal.
-   * Only on the second distinct role approval does the approved content enter the live store.
-   * An error in publication leaves the proposal pending for retry; it never exposes half-reviewed content.
-   */
-  review(
-    proposalId: string,
-    role: 'superadmin' | 'head_of_it',
-    reviewerId: string,
-    approved: boolean,
-    rejectionReason: string,
-    publish: (entry: ContentProposal) => Promise<string>,
-  ): Promise<ContentProposal> {
+  update(id: string, authorId: string, input: ContentProposalInput): Promise<ContentProposal> {
     return this.exclusive(async () => {
-      const item = this.entries.find((p) => p.id === proposalId);
-      if (!item) throw new Error('Proposal not found');
-      if (item.status !== 'pending') throw new Error('Proposal is already closed');
-      if (item.approvals[role]) throw new Error('This reviewer role has already approved');
+      const item = this.get(id);
+      if (item.authorId !== authorId) throw new Error('Only the original author may edit a proposal');
+      if (item.status !== 'draft') throw new Error('Only Draft proposals can be edited');
+      Object.assign(item, input, { updatedAt: nowIso() });
+      await this.persist();
+      return structuredClone(item);
+    });
+  }
+
+  submit(id: string, authorId: string): Promise<ContentProposal> {
+    return this.exclusive(async () => {
+      const item = this.get(id);
+      if (item.authorId !== authorId) throw new Error('Only the original author may submit');
+      if (item.status !== 'draft') throw new Error('Only Draft proposals can be submitted');
+      const now = nowIso();
+      item.status = 'submitted';
+      item.submittedAt = now;
+      item.updatedAt = now;
+      await this.persist();
+      return structuredClone(item);
+    });
+  }
+
+  review(id: string, role: ReviewerRole, reviewerId: string, approved: boolean, reason: string): Promise<ContentProposal> {
+    return this.exclusive(async () => {
+      const item = this.get(id);
+      if (item.status !== 'submitted') throw new Error('Only Submitted proposals may be reviewed');
+      if (item.approvals[role]) throw new Error('This reviewer role has already approved this proposal');
+      const now = nowIso();
       if (!approved) {
+        if (!reason.trim()) throw new Error('A rejection reason is required');
         item.status = 'rejected';
-        item.rejectionReason = rejectionReason;
-        item.reviewedAt = nowIso();
+        item.rejectionReason = reason.trim();
+        item.reviewedAt = now;
       } else {
-        const approvals = { ...item.approvals, [role]: { reviewerId, at: nowIso() } };
-        if (approvals.superadmin && approvals.head_of_it) {
-          // Publishing is strictly create-only; never overwrite an administrator's existing content.
-          const publishedId = await publish(item);
-          item.publishedId = publishedId;
+        item.approvals[role] = { reviewerId, at: now };
+        if (item.approvals.superadmin && item.approvals.head_of_it) {
           item.status = 'approved';
-          item.reviewedAt = nowIso();
+          item.reviewedAt = now;
         }
-        item.approvals = approvals;
       }
-      await this.save();
+      item.updatedAt = now;
+      await this.persist();
+      return structuredClone(item);
+    });
+  }
+
+  publish(id: string, role: ReviewerRole, publisherId: string, action: (proposal: ContentProposal) => Promise<string>): Promise<ContentProposal> {
+    return this.exclusive(async () => {
+      const item = this.get(id);
+      if (item.status !== 'approved' || !item.approvals.superadmin || !item.approvals.head_of_it) {
+        throw new Error('Both reviewers must approve before publishing');
+      }
+      const publishedId = await action(structuredClone(item));
+      const now = nowIso();
+      item.publishedId = publishedId;
+      item.publishedBy = publisherId;
+      item.publishedAt = now;
+      item.updatedAt = now;
+      item.status = 'published';
+      await this.persist();
       return structuredClone(item);
     });
   }
