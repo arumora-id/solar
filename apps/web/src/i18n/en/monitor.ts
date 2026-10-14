@@ -65,6 +65,20 @@ export const monitor: Dict['monitor'] = {
     other: (name: string) => `${name}'s task: you are answering as an admin.`,
   },
 
+  pagination: {
+    navigation: 'Task page navigation',
+    rowsPerPage: 'Rows per page',
+    loading: 'Loading tasks…',
+    error: 'Could not load the task list.',
+    retry: 'Try again',
+    previous: 'Previous',
+    next: 'Next',
+    page: (current: number, total: number) => `Page ${numEn(current)} / ${numEn(total)}`,
+    range: (from: number, to: number, total: number) => `Showing ${numEn(from)}–${numEn(to)} of ${numEn(total)} tasks`,
+    updates: 'Task updates available · Refresh list',
+    backToList: '← Back to list',
+  },
+
   list: {
     label: 'Task list',
     heading: (n: number) => `Tasks (${numEn(n)})`,

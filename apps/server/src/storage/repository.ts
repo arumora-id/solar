@@ -1,15 +1,20 @@
 import type { ActivityEntry, ActivityOutcome, Artifact, Attachment, Confirmation, Task, TaskEvent, TaskStats, TaskStatus, User, UserStatus } from '@solar/shared';
 
-export interface ListTasksOptions {
-  limit: number;
-  offset?: number;
+export interface TaskListFilter {
   sessionId?: string;
-  status?: TaskStatus;
+  status?: TaskStatus | 'active';
+  /** Search title, prompt and id across the entire authorized task history. */
+  search?: string;
   /**
    * Only the tasks of this owner (a user id); `null` = only tasks without an owner (created before user accounts
    * existed); absent = every task.
    */
   ownerId?: string | null;
+}
+
+export interface ListTasksOptions extends TaskListFilter {
+  limit: number;
+  offset?: number;
 }
 
 /** A user account as stored: the API shape plus the password hash, which never leaves the server. */
@@ -87,6 +92,8 @@ export interface Repository {
   upsertTask(task: Task): Promise<void>;
   getTask(id: string): Promise<Task | null>;
   listTasks(options: ListTasksOptions): Promise<Task[]>;
+  /** Exact number of tasks matching the same access scope and filters as listTasks. */
+  countTasks(filter: TaskListFilter): Promise<number>;
   /** Totals of every task, or of one owner's tasks. */
   stats(filter?: { ownerId?: string }): Promise<TaskStats>;
 

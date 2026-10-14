@@ -9,6 +9,7 @@ import {
   type ActivityQuery,
   type CreateUserResult,
   type ListTasksOptions,
+  type TaskListFilter,
   type Repository,
   type StoredSession,
   type StoredUser,
@@ -123,14 +124,30 @@ export class FileRepository implements Repository {
     return r ? { ...r.task } : null;
   }
 
+  private matchingTasks(options: TaskListFilter): Task[] {
+    const search = options.search?.trim().toLocaleLowerCase();
+    return [...this.records.values()]
+      .map((r) => r.task)
+      .filter((t) => {
+        if (options.sessionId && t.sessionId !== options.sessionId) return false;
+        if (options.status === 'active' && !['queued', 'running', 'awaiting_confirmation'].includes(t.status)) return false;
+        if (options.status && options.status !== 'active' && t.status !== options.status) return false;
+        if (options.ownerId !== undefined && (t.ownerId ?? null) !== options.ownerId) return false;
+        if (search && !`${t.title} ${t.prompt} ${t.id}`.toLocaleLowerCase().includes(search)) return false;
+        return true;
+      });
+  }
+
   async listTasks(options: ListTasksOptions): Promise<Task[]> {
-    let tasks = [...this.records.values()].map((r) => r.task);
-    if (options.sessionId) tasks = tasks.filter((t) => t.sessionId === options.sessionId);
-    if (options.status) tasks = tasks.filter((t) => t.status === options.status);
-    if (options.ownerId !== undefined) tasks = tasks.filter((t) => (t.ownerId ?? null) === options.ownerId);
-    tasks.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const tasks = this.matchingTasks(options);
+    // Tie-break by id, matching Postgres so pagination is stable for equal creation times.
+    tasks.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
     const offset = options.offset ?? 0;
     return tasks.slice(offset, offset + options.limit).map((t) => ({ ...t }));
+  }
+
+  async countTasks(filter: TaskListFilter): Promise<number> {
+    return this.matchingTasks(filter).length;
   }
 
   async stats(filter: { ownerId?: string } = {}): Promise<TaskStats> {

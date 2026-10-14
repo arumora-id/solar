@@ -694,6 +694,11 @@ Buka `/monitor` (mis. <http://localhost:8790/monitor>):
 
 - **KPI**: total task, sedang berjalan, menunggu persetujuan, selesai, gagal/batal, estimasi biaya API.
 - **Tabel task** dengan status (ikon + label), progres realtime, waktu mulai, durasi, biaya; filter & pencarian.
+  Pagination mengambil **seluruh histori dari server**: default 5 task per halaman, dengan pilihan 5/10/20/50/100
+  pada layar lebih lebar dari 640px. Pada layar mobile (≤640px) jumlahnya selalu **5**. Jumlah total hasil,
+  navigasi Sebelumnya/Berikutnya dan pencarian lintas histori tidak bergantung pada cache 200 task di Conversation.
+  Perubahan task realtime tidak memaksa pengguna berpindah halaman; tombol pembaruan memuat ulang hasil terkini.
+  Memilih task di mobile otomatis membuka posisi/fokus panel detail; tersedia **Kembali ke daftar** dan browser Back.
 - **Detail task**: langkah aktif, model, jumlah API call, token (input/output/cache), permintaan, hasil, artefak, dan
   **timeline** setiap event (penalaran ringkas, pemanggilan tool beserta input, hasil validasi, persetujuan, error).
 - Task aktif dapat **dibatalkan** dari chat maupun monitor. Persetujuan juga bisa diberikan dari halaman mana pun.

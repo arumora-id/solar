@@ -5,7 +5,7 @@
  */
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright';
@@ -15,6 +15,25 @@ const origin = `http://127.0.0.1:${port}`;
 const tempData = await mkdtemp(join(tmpdir(), 'solar-ui-layout-'));
 const screenshots = join(process.env.RUNNER_TEMP ?? tmpdir(), 'solar-ui-screenshots');
 await mkdir(screenshots, { recursive: true });
+// Seed archived ownerless tasks before the isolated server boots: only the monitor must page them.
+await mkdir(join(tempData, 'tasks'), { recursive: true });
+for (let index = 1; index <= 13; index++) {
+  const task = {
+    id: `task_layout${String(index).padStart(4, '0')}`,
+    sessionId: 'historical-layout-session',
+    title: `Archive monitor task ${index}`,
+    prompt: `Layout fixture token-${index}`,
+    status: 'completed',
+    progress: 100,
+    currentStep: null,
+    model: 'layout-smoke',
+    createdAt: new Date(Date.UTC(2026, 9, 14, 1, 0, index)).toISOString(),
+    startedAt: null, finishedAt: null, result: null, error: null,
+    usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, apiCalls: 0, costUsd: 0 },
+    attachmentIds: [], language: 'en',
+  };
+  await writeFile(join(tempData, 'tasks', `${task.id}.json`), JSON.stringify(task));
+}
 
 const server = spawn(process.execPath, ['apps/server/dist/index.js'], {
   env: {
@@ -187,6 +206,28 @@ try {
 
   await page.locator('.topbar a[href="/monitor"]').click();
   await page.locator('.monitor-grid').waitFor();
+  await page.setViewportSize({ width: 1360, height: 900 });
+  await page.waitForFunction(() => document.querySelectorAll('.monitor-task-list tbody tr').length === 5);
+  assert.equal(await page.locator('.monitor-task-list tbody tr').count(), 5, 'Default Monitor must show only 5 tasks');
+  assert.equal(await page.locator('.monitor-task-list h2').innerText(), 'Tasks (13)', 'Total must count all authorized history');
+  const sizeControl = page.locator('.monitor-page-size select');
+  for (const [size, expected] of [['10', 10], ['20', 13], ['50', 13], ['100', 13], ['5', 5]]) {
+    await sizeControl.selectOption(size);
+    await page.waitForFunction((count) => document.querySelectorAll('.monitor-task-list tbody tr').length === count, expected);
+    assert.equal(await page.locator('.monitor-task-list tbody tr').count(), expected, `Page size ${size} ignored`);
+  }
+  await page.locator('.monitor-page-controls button').last().click();
+  await page.waitForFunction(() => document.querySelector('.monitor-page-number')?.textContent?.includes('2 / 3'));
+  await page.waitForFunction(() => document.querySelectorAll('.monitor-task-list tbody tr').length === 5);
+  assert.equal(await page.locator('.monitor-task-list tbody tr').count(), 5, 'Second page has wrong count');
+  await page.locator('.monitor-page-controls button').first().click();
+  await page.waitForFunction(() => document.querySelector('.monitor-page-number')?.textContent?.includes('1 / 3'));
+  await page.locator('.filters input[type="search"]').fill('token-13');
+  await page.waitForFunction(() => document.querySelector('.monitor-task-list h2')?.textContent === 'Tasks (1)');
+  assert.equal(await page.locator('.monitor-task-list tbody tr').count(), 1, 'Full-history search did not apply');
+  await page.locator('.filters input[type="search"]').fill('');
+  await page.waitForFunction(() => document.querySelector('.monitor-task-list h2')?.textContent === 'Tasks (13)');
+  await page.waitForFunction(() => document.querySelectorAll('.monitor-task-list tbody tr').length === 5);
   await checkMonitor(1920, 1080, 'wide-desktop');
   await checkMonitor(1360, 900, 'desktop');
   await checkMonitor(1024, 768, 'small-desktop');
@@ -194,6 +235,22 @@ try {
   await checkMonitor(320, 568, 'small-mobile');
   await checkMonitor(844, 390, 'landscape');
   await page.setViewportSize({ width: 390, height: 780 });
+  // A resize triggers a React media-query state update; wait for its commit before asserting.
+  await page.locator('.monitor-page-size').waitFor({ state: 'detached', timeout: 10000 });
+  await page.waitForFunction(() => document.querySelectorAll('.monitor-task-list tbody tr').length === 5);
+  assert.equal(await page.locator('.monitor-page-size').count(), 0, 'Mobile must not allow page size above 5');
+  await page.locator('.monitor-task-list tbody tr').first().click();
+  await page.waitForFunction(() => document.activeElement?.classList.contains('monitor-task-detail'));
+  assert.equal(new URL(page.url()).pathname.startsWith('/monitor/task_layout'), true, 'Task selection must preserve deep-link URL');
+  assert.equal(await page.locator('.monitor-back-to-list').isVisible(), true, 'Mobile needs Back to list control');
+  await page.locator('.monitor-back-to-list').click();
+  await page.waitForFunction(() => document.activeElement?.classList.contains('monitor-task-list'));
+  assert.equal(new URL(page.url()).pathname, '/monitor', 'Back to list should clear selected detail');
+  await page.locator('.monitor-task-list tbody tr').first().click();
+  await page.waitForFunction(() => document.activeElement?.classList.contains('monitor-task-detail'));
+  await page.goBack();
+  await page.waitForFunction(() => new URL(window.location.href).pathname === '/monitor');
+  await page.waitForFunction(() => document.activeElement?.classList.contains('monitor-task-list'));
   await page.locator('.topbar button.btn.ghost.icon').click();
   await checkMonitor(390, 780, 'mobile-dark');
   await page.locator('.topbar a[href="/"]').click();
@@ -209,7 +266,7 @@ try {
   await firstFilter.click();
   assert.equal(await firstFilter.getAttribute('aria-pressed'), 'true', 'Task filter did not activate');
   assert.equal(pageErrors.length, 0, `Browser runtime errors: ${pageErrors.join('; ')}`);
-  console.log('Responsive UI smoke passed: original Agent two-column/mobile stack, original max-width Monitoring without robot, Conversation-only fullscreen+floating character (desktop/mobile/landscape, Esc/toggle), character switcher, quick prompts, attachment upload/remove, dark theme, language, monitor filter.');
+  console.log('Responsive UI smoke passed: original Agent two-column/mobile stack, original max-width Monitoring without robot, 5/10/20/50/100 server pages and mobile detail focus/back, Conversation-only fullscreen+floating character (desktop/mobile/landscape, Esc/toggle), character switcher, quick prompts, attachment upload/remove, dark theme, language, monitor filter.');
   console.log('Screenshots:', screenshots);
 } catch (error) {
   console.error('Responsive UI smoke FAILED:', error);
