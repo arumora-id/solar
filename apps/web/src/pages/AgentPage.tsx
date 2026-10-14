@@ -161,13 +161,17 @@ export function AgentPage() {
   return (
     <main className="agent-page">
       <section className="stage-card" aria-label="SOLAR AI AGENT">
-        <div className="speech" ref={speechRef} role="status">
-          {bubble.text}
-          {bubble.sub && <span className="sub">{bubble.sub}</span>}
-        </div>
-        <div className="stage-area">
-          <CharacterStage character={character} state={characterState} onCharacterClick={() => composerRef.current?.toggleVoice()} />
-          <CharacterSwitcher />
+        <div className="stage-main">
+          <div className="stage-area">
+            <CharacterStage character={character} state={characterState} onCharacterClick={() => composerRef.current?.toggleVoice()} />
+          </div>
+          <div className="stage-info">
+            <div className="speech" ref={speechRef} role="status">
+              {bubble.text}
+              {bubble.sub && <span className="sub">{bubble.sub}</span>}
+            </div>
+            <CharacterSwitcher />
+          </div>
         </div>
         {!compact && (
           <div className="stage-footer">

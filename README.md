@@ -70,6 +70,7 @@ konfirmasi wajib), dan setiap pekerjaan bisa dipantau di **web monitoring task**
 | Integrasi bawaan | Publish artefak ke GitHub dalam **satu commit**; buat backlog Plane secara **bulk** (epic → story, label, prioritas, anti-duplikat). |
 | Akun & peran | Masuk dengan **username atau email** + password (layar masuk beranimasi GSAP), **pendaftaran mandiri** yang disetujui Superadmin / Head of IT Solar, tiga peran - **Superadmin**, **Head of IT Solar**, **Staf Solar** - dengan izin berbeda (staf hanya melihat task-nya sendiri), sesi cookie HttpOnly, batas percobaan login, dan **log aktivitas** (audit) dengan filter & ekspor CSV. Lihat [Akun, login & peran](#akun-login--peran). |
 | Monitoring | Halaman `/monitor`: KPI, progres realtime, langkah kerja, penalaran ringkas, persetujuan, token & estimasi biaya, artefak. |
+| Tampilan layar penuh | Conversation menggunakan area browser yang tersedia, dengan karakter 3D animasi berukuran kecil di atas chat dan input tetap di bawah. Monitor memakai seluruh lebar area browser, dengan karakter mini yang menunjukkan aktivitas task. |
 | Penyimpanan | **Neon Postgres** + **object storage S3** (Neon/S3/R2/MinIO), atau otomatis file lokal bila belum dikonfigurasi. |
 | Platform | Browser (Chrome/Edge/Firefox/Safari) dan **desktop Windows** (Electron, installer NSIS). |
 
@@ -162,7 +163,7 @@ npm run desktop:dev           # build lalu buka jendela SOLAR (memakai .env dan 
 
 ```bash
 npm install
-npm run desktop:dist:win      # hasil: apps/desktop/release/SOLAR-AI-AGENT-Setup-1.0.0.exe
+npm run desktop:dist:win      # hasil: apps/desktop/release/SOLAR-AI-AGENT-Setup-<versi>.exe
 ```
 
 Atau dari GitHub: tab **Actions → "Desktop installer (Windows)" → Run workflow**, lalu unduh artifact installer
@@ -465,6 +466,8 @@ dan buat backlog di Plane.
 Buat sequence diagram login SSO dengan Keycloak termasuk alur token kedaluwarsa.
 ```
 
+**Tata letak:** karakter 3D tampil kecil di atas area percakapan, sedangkan chat mengisi sisa tinggi dan lebar jendela aplikasi di bawah bilah navigasi. Pilihan karakter, klik untuk mikrofon, template perintah, lampiran, dan tombol percakapan baru tetap tersedia. Di layar sempit, riwayat percakapan menggulir di dalam panel tanpa harus membesarkan animasi. Ini adalah pemanfaatan penuh area aplikasi, bukan mode fullscreen browser yang menyembunyikan tab atau bilah alamat.
+
 Percakapan dalam satu sesi saling terhubung: permintaan berikutnya (mis. "tambahkan NFR keamanan ke TSD tadi")
 mendapat konteks task sebelumnya. Tombol **Percakapan baru** memulai konteks kosong.
 
@@ -687,7 +690,7 @@ header/env (boleh `${VAR}`), kebijakan konfirmasi, dan opsional daftar tool yang
 
 ## Web monitoring task
 
-Buka `/monitor` (mis. <http://localhost:8790/monitor>):
+Buka `/monitor` (mis. <http://localhost:8790/monitor>). Dashboard menggunakan lebar penuh area aplikasi. Karakter 3D mini di bagian atas mengikuti karakter yang dipilih; animasinya berubah saat ada task yang berjalan atau menunggu persetujuan:
 
 - **KPI**: total task, sedang berjalan, menunggu persetujuan, selesai, gagal/batal, estimasi biaya API.
 - **Tabel task** dengan status (ikon + label), progres realtime, waktu mulai, durasi, biaya; filter & pencarian.
@@ -789,6 +792,8 @@ dokumen nyata (`apps/server/test/fixtures/documents`: Word, PowerPoint, Excel, P
 zip bomb, PDF hasil scan, file rusak, ekstensi yang salah, API unggah dan tool dokumen agent.
 
 ### Rilis
+
+**Gerbang rilis dan deployment VPS:** sebelum merge/tag, pastikan PR disetujui reviewer, CI Linux/browser serta packaging Windows lulus pada commit terakhir, dan QA alur task/approval/streaming serta aplikasi Electron sudah diverifikasi. Menjalankan workflow rilis hanya menerbitkan installer Windows dan ZIP server; **tidak memperbarui VPS secara otomatis**. Untuk deployment produksi, verifikasi lebih dahulu host/domain dan metode layanan yang sedang digunakan (mis. systemd, PM2 atau container) dari konfigurasi VPS sebenarnya. Catat backup `.env` dan data persisten, direktori rilis lama, prosedur restart, pemeriksaan kesehatan dan langkah rollback sebelum mengganti versi. Jangan menyalin ulang `.env` contoh ke produksi atau menghapus data pengguna. Detail persiapan self-host tersedia di [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md); prosedur VPS Docker Compose, backup, dan rollback yang sesuai topologi SOLAR saat ini didokumentasikan di [docs/VPS_DEPLOYMENT.md](docs/VPS_DEPLOYMENT.md).
 
 Workflow **Desktop installer (Windows)** membuat installer Windows dan paket server + web app, lalu menerbitkan
 GitHub Release berisi keduanya:

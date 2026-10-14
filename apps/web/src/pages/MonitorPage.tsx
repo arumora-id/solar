@@ -1,6 +1,9 @@
 import gsap from 'gsap';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Confirmation, Task, TaskEvent, TaskOwner, TaskStats, TaskStatus, User } from '@solar/shared';
+import type { CharacterState } from '../character/CharacterScene';
+import { CharacterStage } from '../character/CharacterStage';
+import { useCharacter } from '../components/CharacterPicker';
 import { ArtifactList } from '../components/Artifacts';
 import { AttachmentTable } from '../components/Attachments';
 import { AlertIcon, CheckCircleIcon, ClockIcon, HandIcon, RefreshIcon, SpinnerIcon, StopIcon } from '../components/Icons';
@@ -103,6 +106,7 @@ function Kpi({ label, icon, value, sub, format = (n: number) => formatCompact(Ma
 export function MonitorPage({ selectedId }: { selectedId: string | null }) {
   const t = useT();
   const { tasks, refreshTasks, fetchTasks, usersVersion } = useSolar();
+  const character = useCharacter();
   const { can, user } = useAuth();
   // superadmin and Head of IT Solar see every user's tasks, with their owner; staff see their own only (no owner UI)
   const seesAll = can('tasks.all');
@@ -169,17 +173,27 @@ export function MonitorPage({ selectedId }: { selectedId: string | null }) {
 
   const by = (s: TaskStatus) => stats?.byStatus[s] ?? 0;
   const selected = selectedId ? tasks[selectedId] : undefined;
+  const characterState: CharacterState = list.some((task) => task.status === 'awaiting_confirmation')
+    ? 'asking'
+    : list.some((task) => isActive(task.status))
+      ? 'working'
+      : 'idle';
 
   return (
     <main className="monitor">
-      <div className="row">
-        <div style={{ flex: 1 }}>
-          <h1>{t.monitor.title}</h1>
-          <div className="hint">{t.monitor.intro}</div>
+      <div className="monitor-header">
+        <div className="monitor-robot">
+          <CharacterStage character={character} state={characterState} />
         </div>
-        <button type="button" className="btn small" onClick={reloadList}>
-          <RefreshIcon /> {t.common.reload}
-        </button>
+        <div className="row">
+          <div style={{ flex: 1 }}>
+            <h1>{t.monitor.title}</h1>
+            <div className="hint">{t.monitor.intro}</div>
+          </div>
+          <button type="button" className="btn small" onClick={reloadList}>
+            <RefreshIcon /> {t.common.reload}
+          </button>
+        </div>
       </div>
 
       <section className="kpis" aria-label={t.monitor.kpi.label}>
