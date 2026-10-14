@@ -66,6 +66,9 @@ export const agent = {
   /** The conversation panel of the Agent page. */
   chat: {
     title: 'Percakapan',
+    enterFullscreen: 'Layar penuh',
+    exitFullscreen: 'Keluar layar penuh',
+    floatingCharacter: 'Karakter SOLAR mengambang',
     dropTitle: 'Lepaskan untuk melampirkan dokumen',
     dropFormats: 'PDF, Word, Excel, PowerPoint, Markdown atau teks',
     stopSpeaking: 'Hentikan suara',
