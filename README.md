@@ -270,7 +270,11 @@ aktif). Task, lampiran dan log aktivitas tercatat atas nama akun yang membuatnya
 |---|:-:|:-:|:-:|
 | Memakai agent: membuat task, melampirkan dokumen, mengunduh artefak, menjawab persetujuan - untuk task **sendiri** | ✅ | ✅ | ✅ |
 | Melihat & menangani task **semua** pengguna (detail, artefak, persetujuan, batal); task menampilkan pemiliknya | ✅ | ✅ | - |
-| Membaca & menulis knowledge base, melihat & mengelola skill | ✅ | ✅ | ✅ |
+| Membaca & mengelola Skill/Knowledge aktif, termasuk konfigurasi kontennya | ✅ | ✅ | - |
+| Mengajukan Skill/Knowledge sebagai Draft → Submitted | ✅ | - | ✅ (hanya usulan sendiri) |
+| Menyetujui/menolak usulan Skill/Knowledge | ✅ wajib | ✅ wajib | - |
+| Menerbitkan usulan yang telah disetujui dua peran | ✅ | ✅ | - |
+| Membuat/mengedit gambar dengan Skill bawaan (bisa aktif/nonaktif) | ✅ | - | - |
 | Melihat daftar akun dan jumlah pendaftaran yang menunggu | ✅ | ✅ | - |
 | Menyetujui pendaftaran | ✅ peran apa pun | ✅ sebagai Staf Solar | - |
 | Menonaktifkan / mengaktifkan akun | ✅ | ✅ hanya akun Staf Solar | - |
@@ -528,6 +532,7 @@ mengikuti isi dokumen tersebut, bukan asumsi.
 | CSV | `.csv` | Satu tabel; pemisah `,` `;` tab atau `\|` dikenali otomatis (juga petunjuk `sep=;` dari Excel), baris judul di atas tabel menjadi keterangan; maks. 2.000 baris. |
 | PowerPoint | `.pptx` | Slide sesuai urutan presentasi (`## Slide N: judul`), poin bertingkat, tabel, data grafik, SmartArt, deskripsi gambar, **catatan pembicara**. |
 | Markdown / teks | `.md`, `.markdown`, `.txt` | Apa adanya (UTF-8, UTF-16 dengan atau tanpa BOM, atau Windows-1252 dari ekspor lama). |
+| Gambar (Superadmin) | `.png`, `.jpg`, `.jpeg`, `.webp` | Dipakai sebagai sumber pengeditan gambar oleh Skill Image Generation and Editing jika diaktifkan; bukan ekstraksi teks atau OCR. |
 
 **Cara agent memakai dokumen.** Dokumen pendek (sampai 60.000 karakter) langsung disertakan ke permintaan; dokumen yang
 lebih panjang dibaca bertahap dengan tool `list_documents`, `read_document` (per bagian/halaman) dan `search_documents`
@@ -647,10 +652,36 @@ Skill bawaan (`skills/`):
 | `plane-backlog` | Konversi TSD → epic/story di plane.mesthi.com, prioritas MoSCoW, label. |
 | `github-publishing` | Struktur folder, file yang dipublish, format commit. |
 | `guardrail` | Aturan Anda sendiri (`guardrail.md`): agent jadi *thinking partner* yang jujur tanpa basa-basi. Tanpa pujian pembuka, asumsi yang patah disebut sebelum deliverable, permintaan pendapat/review/keputusan dijawab dengan enam langkah, dan setiap jawaban ditutup dengan satu pertanyaan yang Anda hindari. Nonaktifkan skill ini untuk mematikan seluruh guardrail. |
+| `image-creation` | Generate gambar dari prompt atau edit gambar PNG/JPEG/WebP (hasil baru berupa PNG yang dapat diunduh); **hanya Superadmin**, default **nonaktif**. Menggunakan OpenAI Images API dan memerlukan `OPENAI_API_KEY`. |
 
 Menambah skill: **Pengaturan → Skills → Tambah skill / Impor SKILL.md**, atau buat folder baru di
 `data/skills/<id>/SKILL.md` (desktop: `%APPDATA%\SOLAR\data\skills`). Skill bawaan bisa dinonaktifkan atau di-override
 (edit = salinan di folder pengguna; hapus salinan = kembali ke versi bawaan).
+
+### Pengajuan dan publikasi Skill / Knowledge
+
+**Pengaturan → Usulan** memakai alur **Draft → Submitted → Approved / Rejected → Published**.
+
+- **Draft:** Staf Solar dapat menyimpan dan mengubah usulannya sendiri, belum terlihat oleh reviewer lain.
+- **Submitted:** isi dikunci untuk review; pengusul tak lagi bisa mengubah konten.
+- **Approved:** wajib disetujui oleh **satu Superadmin dan satu Head of IT Solar**. Setuju dari satu peran saja belum cukup.
+- **Rejected:** salah satu reviewer menolak disertai alasan; usulan tersebut ditutup. Pengusul boleh menyalin isinya ke Draft baru.
+- **Published:** Superadmin atau Head of IT memilih tombol **Terbitkan** setelah kedua persetujuan tercatat.
+  Hanya pada langkah ini konten masuk ke Knowledge/Skills aktif. Skill yang diterbitkan tetap **nonaktif**
+  sampai administrator mengaktifkannya. Publikasi tidak menimpa Skill atau Knowledge yang sudah ada.
+
+Staf tidak dapat membuka daftar/isi Skill atau Knowledge administratif maupun memanggil API manajemennya.
+Endpoint pengajuan hanya mengembalikan milik pengusul kepada Staff; reviewer melihat Submitted dan tahap sesudahnya.
+Perubahan konfigurasi model dan plugin MCP tetap Superadmin saja.
+
+### Image Skill (Superadmin)
+
+Buka **Pengaturan → Skills → Image Generation and Editing** dan aktifkan switch jika diperlukan;
+Superadmin dapat meminta pembuatan PNG dari prompt atau mengedit file PNG/JPG/WebP yang diunggah lewat Conversation.
+SOLAR menyimpan setiap hasil sebagai artefak baru, tanpa menimpa gambar sumber. Ukuran yang didukung antara
+lain square, landscape, dan portrait. Jika Skill nonaktif, tool gambar tidak disediakan kepada agent.
+Head of IT dapat melihat status Skill namun tidak bisa mengaktifkan atau menggunakan pembuat gambar.
+
 
 ## Plugin MCP: GitHub, Plane, Visual Paradigm
 
