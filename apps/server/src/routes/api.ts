@@ -1,12 +1,14 @@
 import express, { type NextFunction, type Request, type Response, type Router } from 'express';
 import { zipSync, strToU8 } from 'fflate';
 import { z } from 'zod';
+import { slugify } from '../util/ids.js';
 import {
   ATTACHMENT_EXTENSIONS,
   can,
   LANGUAGES,
   type ActivityAction,
   type Artifact,
+  type ContentProposal,
   type Attachment,
   type KnowledgeType,
   type PluginView,
@@ -18,6 +20,7 @@ import {
 } from '@solar/shared';
 import type { ActivityInput, ActivityLog, ActivityTarget } from '../activity/activityLog.js';
 import type { AuthService, Principal } from '../auth/authService.js';
+import type { ContentProposalStore } from '../approvals/contentProposalStore.js';
 import { authenticate, principalOf, requestMeta, requirePermission, requireUser, sameOriginGuard } from '../auth/http.js';
 import { APP_NAME, APP_VERSION, type AppConfig } from '../config.js';
 import { errorMessage, langOf, t, taskLang, type Lang } from '../i18n.js';
@@ -61,6 +64,7 @@ export interface ApiDeps {
   models: ModelRouter;
   auth: AuthService;
   activity: ActivityLog;
+  contentProposals: ContentProposalStore;
 }
 
 declare global {
@@ -165,7 +169,7 @@ export function streamVisible(principal: Principal, scope: MessageScope | undefi
 }
 
 export function createApiRouter(deps: ApiDeps): Router {
-  const { config, tasks, artifacts, attachments, skills, plugins, mcp, bus, knowledge, llm, models, auth, activity } = deps;
+  const { config, tasks, artifacts, attachments, skills, plugins, mcp, bus, knowledge, llm, models, auth, activity, contentProposals } = deps;
   const r = express.Router();
   r.use(languageMiddleware);
   const jsonBody = express.json({ limit: '4mb' });
@@ -595,6 +599,58 @@ export function createApiRouter(deps: ApiDeps): Router {
     if (outcome === 'not-found') throw new HttpError(404, t(req.lang, 'api.attachmentNotFound'));
     if (outcome === 'in-use') throw new HttpError(409, t(req.lang, 'api.attachmentInUse'));
     res.status(204).end();
+  });
+
+
+  // ---- Skill / Knowledge proposals (NOT live until both review roles approve) ----------------------
+  const proposeBody = z.discriminatedUnion('kind', [
+    z.object({
+      kind: z.literal('skill'),
+      title: z.string().trim().min(1).max(80),
+      description: z.string().trim().max(1000).optional(),
+      content: z.string().trim().min(1).max(100_000),
+    }),
+    z.object({
+      kind: z.literal('knowledge'),
+      title: z.string().trim().min(1).max(120),
+      path: z.string().trim().min(1).max(300),
+      content: z.string().trim().min(1).max(100_000),
+    }),
+  ]);
+
+  r.get('/content-proposals', (req, res) => {
+    const p = principalOf(req);
+    res.json(contentProposals.list(p.role, p.id));
+  });
+  r.post('/content-proposals', requirePermission('content.propose'), async (req, res) => {
+    const body = parse(proposeBody, req.body, req.lang);
+    const proposal = await contentProposals.create(body, principalOf(req).id);
+    res.status(201).json(proposal);
+  });
+  r.post('/content-proposals/:id/review', requirePermission('content.review'), async (req, res) => {
+    const p = principalOf(req);
+    if (p.role !== 'superadmin' && p.role !== 'head_of_it') throw new HttpError(403, 'Reviewer role required');
+    const decision = parse(z.object({
+      approved: z.boolean(),
+      reason: z.string().trim().max(2000).default(''),
+    }), req.body, req.lang);
+    try {
+      const proposal = await contentProposals.review(req.params.id, p.role, p.id, decision.approved, decision.reason, async (entry: ContentProposal) => {
+        if (entry.kind === 'skill') {
+          // Never overwrite a built-in or administrator-authored Skill.
+          const id = slugify(entry.title, 'skill');
+          if (await skills.get(id)) throw new Error('A Skill with that identifier already exists');
+          const created = await skills.create({ name: entry.title, description: entry.description ?? '', content: entry.content, enabled: false });
+          return created.id;
+        }
+        if (!entry.path) throw new Error('Knowledge path is required');
+        if (await knowledge.locate(entry.path)) throw new Error('Knowledge path already exists');
+        return (await knowledge.write(entry.path, entry.content)).path;
+      });
+      res.json(proposal);
+    } catch (err) {
+      throw new HttpError(409, err instanceof Error ? err.message : String(err));
+    }
   });
 
   // ---- skills ---------------------------------------------------------------
