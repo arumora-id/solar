@@ -25,7 +25,7 @@ describe('Skill/Knowledge workflow: Draft → Submitted → Approved / Rejected 
     expect(first.status).toBe('draft');
     expect(s.list('staff', 'staff-b')).toEqual([]);
     expect(s.list('staff', 'staff-a').map((p) => p.id)).toEqual([first.id]);
-    expect(s.list('superadmin', 'admin')).toHaveLength(1);
+    expect(s.list('superadmin', 'admin')).toHaveLength(0); // Draft stays private until Submitted
     await expect(s.update(first.id, 'staff-b', draft())).rejects.toThrow('author');
     const changed = await s.update(first.id, 'staff-a', { ...draft(), title: 'Corrected incident' });
     expect(changed.title).toBe('Corrected incident');
