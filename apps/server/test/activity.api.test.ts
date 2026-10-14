@@ -91,7 +91,9 @@ beforeAll(async () => {
   server = await startAuthServer({
     config: authTestConfig({ SOLAR_ACCESS_TOKEN: TEST_ACCESS_TOKEN, SOLAR_ADMIN_USERNAME: 'root', SOLAR_ADMIN_EMAIL: 'root@solar.test', SOLAR_ADMIN_PASSWORD: STRONG_PASSWORD, SOLAR_ADMIN_NAME: 'Root Admin' }, dataDir),
     responses: model,
-    extraTools: [approvalTool],
+    // This is a synthetic approval tool, not an administrator-configured MCP integration.
+    // Production MCP tools stay unavailable to Staff by design.
+    extraTools: [{ ...approvalTool, source: 'builtin', pluginId: undefined }],
   });
   root = new Client(server.url);
   const login = await root.login('root');
