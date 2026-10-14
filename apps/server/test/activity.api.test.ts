@@ -220,7 +220,7 @@ describe('tasks, approvals, the agent, knowledge, skills and settings', () => {
     // skills (a name that a spreadsheet would run as a formula)
     const skill = (await root.post<{ id: string }>('/api/skills', { name: '=HYPERLINK("http://evil.test")', description: 'x', content: 'Do things.' })).body;
     expect((await root.put(`/api/skills/${skill.id}`, { enabled: false })).status).toBe(200);
-    expect((await alice.put(`/api/skills/${skill.id}`, { content: 'Do other things.' })).status).toBe(200);
+    expect((await root.put(`/api/skills/${skill.id}`, { content: 'Do other things.' })).status).toBe(200);
     expect((await root.delete(`/api/skills/${skill.id}`)).status).toBe(200);
     // settings, with secrets in their bodies
     expect(
