@@ -163,7 +163,7 @@ npm run desktop:dev           # build lalu buka jendela SOLAR (memakai .env dan 
 
 ```bash
 npm install
-npm run desktop:dist:win      # hasil: apps/desktop/release/SOLAR-AI-AGENT-Setup-1.0.0.exe
+npm run desktop:dist:win      # hasil: apps/desktop/release/SOLAR-AI-AGENT-Setup-<versi>.exe
 ```
 
 Atau dari GitHub: tab **Actions → "Desktop installer (Windows)" → Run workflow**, lalu unduh artifact installer
@@ -792,6 +792,8 @@ dokumen nyata (`apps/server/test/fixtures/documents`: Word, PowerPoint, Excel, P
 zip bomb, PDF hasil scan, file rusak, ekstensi yang salah, API unggah dan tool dokumen agent.
 
 ### Rilis
+
+**Gerbang rilis dan deployment VPS:** sebelum merge/tag, pastikan PR disetujui reviewer, CI Linux/browser serta packaging Windows lulus pada commit terakhir, dan QA alur task/approval/streaming serta aplikasi Electron sudah diverifikasi. Menjalankan workflow rilis hanya menerbitkan installer Windows dan ZIP server; **tidak memperbarui VPS secara otomatis**. Untuk deployment produksi, verifikasi lebih dahulu host/domain dan metode layanan yang sedang digunakan (mis. systemd, PM2 atau container) dari konfigurasi VPS sebenarnya. Catat backup `.env` dan data persisten, direktori rilis lama, prosedur restart, pemeriksaan kesehatan dan langkah rollback sebelum mengganti versi. Jangan menyalin ulang `.env` contoh ke produksi atau menghapus data pengguna. Detail persiapan self-host tersedia di [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md).
 
 Workflow **Desktop installer (Windows)** membuat installer Windows dan paket server + web app, lalu menerbitkan
 GitHub Release berisi keduanya:
