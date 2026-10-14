@@ -14,6 +14,10 @@ const BY_EXTENSION: Record<string, { kind: AttachmentKind; mimeType: string }> =
   '.md': { kind: 'markdown', mimeType: 'text/markdown' },
   '.markdown': { kind: 'markdown', mimeType: 'text/markdown' },
   '.txt': { kind: 'text', mimeType: 'text/plain' },
+  '.png': { kind: 'image', mimeType: 'image/png' },
+  '.jpg': { kind: 'image', mimeType: 'image/jpeg' },
+  '.jpeg': { kind: 'image', mimeType: 'image/jpeg' },
+  '.webp': { kind: 'image', mimeType: 'image/webp' },
 };
 
 const LEGACY: Record<string, string> = {

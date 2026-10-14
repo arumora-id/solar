@@ -52,9 +52,17 @@ export class AttachmentService {
     if (body.length > this.options.maxFileBytes) {
       throw new DocumentError(t(lang, 'doc.tooLarge', { file: name, mb: Math.round(this.options.maxFileBytes / 1024 / 1024) }), 413);
     }
-    const { mimeType } = detectKind(name, lang);
+    const { kind, mimeType } = detectKind(name, lang);
     const started = Date.now();
-    const extracted = await extractIsolated(body, name, { lang });
+    if (kind === 'image') {
+      const png = mimeType === 'image/png' && body.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]));
+      const jpeg = mimeType === 'image/jpeg' && body[0] === 0xff && body[1] === 0xd8 && body[2] === 0xff;
+      const webp = mimeType === 'image/webp' && body.toString('ascii', 0, 4) === 'RIFF' && body.toString('ascii', 8, 12) === 'WEBP';
+      if (!png && !jpeg && !webp) throw new DocumentError('File image tidak sesuai format PNG/JPG/WEBP.', 415);
+    }
+    const extracted = kind === 'image'
+      ? { kind: 'image' as const, markdown: '[Image attached for image editing; original bytes available to image tool]', parts: null, warnings: [] as string[] }
+      : await extractIsolated(body, name, { lang });
     const id = newId('att');
     const safe = name.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[-.]+/, '') || 'document';
     // the original lives in its own folder, so no file name can collide with the extracted text
