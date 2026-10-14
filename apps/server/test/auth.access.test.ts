@@ -259,6 +259,54 @@ describe('staged content workflow and role isolation', () => {
     expect((await superadmin.post(`/api/content-proposals/${rejected.body.id}/publish`, {})).status).toBe(409);
   });
 
+  it('recovers an interrupted publication only when the existing destination belongs to that proposal', async () => {
+    const skillTitle = 'Interrupted Skill Publication';
+    const skillData = { kind: 'skill', title: skillTitle, description: 'Recovery test', content: '# Resumable instructions' };
+    const draft = await alice.post<{ id: string }>('/api/content-proposals', skillData);
+    const id = draft.body.id;
+    await alice.post(`/api/content-proposals/${id}/submit`, {});
+    await head.post(`/api/content-proposals/${id}/review`, { approved: true });
+    await superadmin.post(`/api/content-proposals/${id}/review`, { approved: true });
+
+    // Simulate SKILL.md written but its disabled-state and proposal status not persisted.
+    const marked = `${skillData.content}\n\n<!-- solar-content-proposal:${id} -->\n`;
+    const existing = await superadmin.post('/api/skills', {
+      name: skillTitle, description: skillData.description, content: marked, enabled: true,
+    });
+    expect(existing.status).toBe(201);
+    const recovered = await head.post<{ status: string; publishedId: string }>(
+      `/api/content-proposals/${id}/publish`, {},
+    );
+    expect(recovered.status).toBe(200);
+    expect(recovered.body).toMatchObject({ status: 'published', publishedId: 'interrupted-skill-publication' });
+    const after = await head.get<{ enabled: boolean }>('/api/skills/interrupted-skill-publication');
+    expect(after.body.enabled).toBe(false);
+
+    const collisionDraft = await bob.post<{ id: string }>('/api/content-proposals', {
+      kind: 'skill', title: 'Collision Protected', content: '# Staff proposed',
+    });
+    await bob.post(`/api/content-proposals/${collisionDraft.body.id}/submit`, {});
+    await head.post(`/api/content-proposals/${collisionDraft.body.id}/review`, { approved: true });
+    await superadmin.post(`/api/content-proposals/${collisionDraft.body.id}/review`, { approved: true });
+    await superadmin.post('/api/skills', { name: 'Collision Protected', content: '# Administrator original' });
+    expect((await head.post(`/api/content-proposals/${collisionDraft.body.id}/publish`, {})).status).toBe(409);
+    expect((await head.get<{ content: string }>('/api/skills/collision-protected')).body.content).toBe('# Administrator original');
+
+    const knowledgeDraft = await alice.post<{ id: string }>('/api/content-proposals', {
+      kind: 'knowledge', title: 'Recovery Knowledge', path: 'reference/recovery-knowledge.md', content: '# Stable content',
+    });
+    const kid = knowledgeDraft.body.id;
+    await alice.post(`/api/content-proposals/${kid}/submit`, {});
+    await superadmin.post(`/api/content-proposals/${kid}/review`, { approved: true });
+    await head.post(`/api/content-proposals/${kid}/review`, { approved: true });
+    await superadmin.put('/api/knowledge/file', {
+      path: 'reference/recovery-knowledge.md',
+      content: `# Stable content\n\n<!-- solar-content-proposal:${kid} -->\n`,
+    });
+    expect((await head.post(`/api/content-proposals/${kid}/publish`, {})).body)
+      .toMatchObject({ status: 'published', publishedId: 'reference/recovery-knowledge.md' });
+  });
+
   it('keeps built-in image creation disabled by default and Superadmin-only configurable', async () => {
     const skills = (await head.get<Array<{ id: string; enabled: boolean }>>('/api/skills')).body;
     expect(skills.find((x) => x.id === 'image-creation')).toMatchObject({ enabled: false });
