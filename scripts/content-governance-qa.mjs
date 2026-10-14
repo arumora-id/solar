@@ -201,18 +201,20 @@ try {
   await imageCard.waitFor();
   assert.equal(await imageCard.locator('input[type="checkbox"]').isChecked(), false,
     'Image skill not disabled by default');
-  await imageCard.locator('input[type="checkbox"]').check();
+  await imageCard.locator('input[type="checkbox"]').click();
   await admin.waitForFunction(async () => {
     const res = await fetch('/api/skills/image-creation');
     return res.ok && (await res.json()).enabled === true;
   });
+  await imageCard.locator('input[type="checkbox"]').waitFor({ state: 'visible' });
   assert.equal(await imageCard.locator('input[type="checkbox"]').isChecked(), true, 'Superadmin image activation failed');
   await admin.screenshot({ path: join(screenshots, 'superadmin-image-enabled.png'), fullPage: true });
-  await imageCard.locator('input[type="checkbox"]').uncheck();
+  await imageCard.locator('input[type="checkbox"]').click();
   await admin.waitForFunction(async () => {
     const res = await fetch('/api/skills/image-creation');
     return res.ok && (await res.json()).enabled === false;
   });
+  assert.equal(await imageCard.locator('input[type="checkbox"]').isChecked(), false, 'Superadmin image deactivation failed');
 
   // Real browser uploader + real backend validation: no external Images API call.
   await closeSettings(admin);
