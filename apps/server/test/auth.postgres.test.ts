@@ -109,6 +109,26 @@ describe.skipIf(!url)('Postgres: users, sessions, task owners', () => {
     expect(await a.updateUser('usr_nobody', { name: 'x' })).toBeNull();
   });
 
+  it('paginates all authorized Postgres tasks with identical timestamps and literal search', async () => {
+    const timestamp = '2026-10-11T00:00:00.000Z';
+    for (const id of ['task_pg_pagination_001', 'task_pg_pagination_002', 'task_pg_pagination_003']) {
+      await a.upsertTask({
+        ...task(id, 'usr_budi'),
+        title: id.endsWith('003') ? 'pg_pagination 50%_match' : id,
+        status: id.endsWith('003') ? 'running' : 'completed',
+        createdAt: timestamp,
+      });
+    }
+    const filter = { ownerId: 'usr_budi', search: 'pg_pagination' };
+    expect(await a.countTasks(filter)).toBe(3);
+    const first = await a.listTasks({ ...filter, limit: 2, offset: 0 });
+    const second = await b.listTasks({ ...filter, limit: 2, offset: 2 });
+    expect([...first, ...second].map((t) => t.id)).toEqual(['task_pg_pagination_003', 'task_pg_pagination_002', 'task_pg_pagination_001']);
+    expect(await a.countTasks({ ...filter, ownerId: null })).toBe(0);
+    expect(await b.countTasks({ ownerId: 'usr_budi', search: '50%_' })).toBe(1);
+    expect((await a.listTasks({ ownerId: 'usr_budi', status: 'active', limit: 5 })).map((t) => t.id)).toContain('task_pg_pagination_003');
+  });
+
   it('stores sessions by hash, renews, revokes all but one, expires, and drops them with the account', async () => {
     const s = (hash: string, userId: string, expiresAt: string): StoredSession => ({
       tokenHash: hash,
