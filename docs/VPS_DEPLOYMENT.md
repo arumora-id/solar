@@ -1,136 +1,117 @@
-# Deployment SOLAR AI AGENT ke VPS (Docker Compose)
+# Deployment SOLAR ke VPS dengan Docker Compose
 
-Dokumen ini menjelaskan **topologi VPS yang dilaporkan operator pada 14 Oktober 2026**,
-bukan instruksi deployment universal. Perintah yang bertanda deployment/rollback **tidak
-boleh dijalankan** sebelum release gate, backup, dan jadwal pemeliharaan disetujui.
+Dokumen ini adalah **runbook operator** untuk instalasi SOLAR dengan konfigurasi Docker
+Compose terpisah: satu file utama untuk container/network/mount, dan satu override
+untuk membangun image dari source. Sesuaikan nama file/direktori dengan lingkungan.
+**Jangan menaruh IP privat, path internal, nama jaringan internal, atau kredensial VPS
+di repository publik.** Simpan inventaris lingkungan sebenarnya di dokumentasi
+operasional privat.
 
-## Topologi yang sudah diverifikasi dari output operator
+## Release gate
 
-| Elemen | Nilai |
-|---|---|
-| Domain | `https://solar.mesthi.com/` (HTTP 200 saat diperiksa; bukan verifikasi versi aplikasi) |
-| Compose project / service | `solar` / `solar` |
-| Container | `solar-app` |
-| Image | `mesthi/solar:local` (tag mutable, **bukan** version pin) |
-| Compose files di VPS | `/home/ubuntu/ai-project/solar/compose.vps.yml` dan `compose.source.yml` |
-| Build context | `/home/ubuntu/ai-project/solar-source` |
-| Dockerfile | `Dockerfile.vps` di source |
-| Compose network logical | `nginx`, nama nyata `ai-engineer_default` |
-| Akses publik | Melalui container reverse-proxy `nginx` di jaringan yang sama; service tidak publish port host |
-| Mount permanen | `/home/ubuntu/ai-project/solar/.env:/app/.env` dan `data:/app/data` |
-| Runtime | UID 1000 (`node`), restart `unless-stopped` |
+**Jangan deploy hanya karena HTTP 200 atau CI hijau.** Semua syarat berikut wajib:
 
-Di direktori `solar-source`, `.dockerignore` dan `Dockerfile.vps` **untracked** pada
-saat diperiksa. Keduanya adalah bagian deployment lokal yang harus dipertahankan.
-Jangan jalankan `git clean -fd`, `git reset --hard`, atau menghapus source directory
-tanpa mengetahui seluruh perubahan dan backup. Image `mesthi/solar:local` bisa
-ditimpa saat build; simpan image ID dan tag rollback **sebelum** build.
+1. PR fitur sudah di-review secara independen, disetujui, dan di-merge ke `main`.
+2. CI di commit final sukses: typecheck, test, build, browser responsive smoke,
+   packaging Windows, dan bundling server. Test yang skipped belum diverifikasi.
+3. QA manual/staging alur nyata sukses: login, task streaming, approval,
+   lampiran, riwayat chat panjang, karakter/mikrofon, Monitoring, dan Electron Windows.
+4. GitHub Release dan tag semver baru merujuk ke commit yang sama dengan kode
+   yang telah disetujui. Untuk kandidat ini gunakan `v1.0.1` **hanya jika**
+   tag tersebut sudah terbit dan masih merupakan versi berikutnya.
+5. Operator telah menyiapkan window maintenance, backup konsisten dan rollback,
+   serta memverifikasi source repo dan konfigurasi deployment yang sebenarnya.
 
-## Release gate (wajib sebelum perubahan produksi)
+GitHub Release menerbitkan installer Windows dan paket server self-hosted.
+**GitHub Release bukan deployment VPS**: Docker image pada VPS harus diperbarui
+melalui prosedur operator atau automation terverifikasi secara terpisah.
 
-1. PR fitur telah disetujui reviewer independen dan digabung ke `main` **setelah**
-   seluruh review dan QA diselesaikan.
-2. CI pada **commit final** lulus: typecheck, unit/integration, build,
-   Chromium UI dan paket installer Windows. Test skipped bukan test passed.
-3. QA alur yang tidak tercakup CI dilakukan di lingkungan aman: task nyata,
-   login, streaming, persetujuan, lampiran, riwayat panjang, dan aplikasi Electron
-   di Windows. Jangan gunakan task produksi yang berisiko untuk pengujian.
-4. Tag versi baru dan GitHub Release mengarah pada commit main yang disetujui.
-   Pastikan tag `v1.0.1` memang telah dipublikasikan, bukan mengasumsikannya.
-5. Pastikan sumber `solar-source` dapat dibangun dan `Dockerfile.vps` beserta
-   `.dockerignore` cocok dengan aplikasi pada tag tersebut.
-   Karena Dockerfile memakai `COPY . .`, pastikan `.dockerignore` menyingkirkan
-   `.env`, kredensial, `.git`, direktori data, dan berkas sensitif dari build context.
-6. Tentukan window maintenance/drain task, kesiapan backup data **yang konsisten**,
-   termasuk snapshot Neon/Postgres atau S3 apabila layanan tersebut dipakai.
-   Backup folder `data` saja tidak melindungi database eksternal.
-7. Review pemetaan trafik nginx, izin secret, kapasitas VPS, rencana rollback,
-   dan smoke test sesudah deploy dengan operator.
+## Arsitektur dan preflight
 
-## Pemeriksaan read-only sebelum cutover
+Pada pola ini, Docker Compose biasanya mendefinisikan:
+
+- service SOLAR, image yang dibangun lokal, kebijakan restart, dan Docker network
+  yang juga diakses reverse proxy HTTPS
+- bind mounts menuju konfigurasi rahasia dan direktori data persisten
+- override `build.context` ke direktori checkout source serta Dockerfile lokal
+
+Nama logical network Compose bisa berbeda dari nama aktual Docker network. Periksa
+pemetaan; tidak adanya published port host **normal** jika reverse proxy berjalan
+di network Docker yang sama. HTTP 200 dari HTTPS membuktikan jalur awal merespons,
+**bukan** versi UI yang benar, kesehatan backend, ataupun fungsi agent.
+
+Gunakan nama path aktual dari inventaris operasional privat. Contoh pemeriksaan
+berikut mengasumsikan dua file Compose yang telah disebut; sesuaikan bila berbeda.
 
 ```bash
-cd /home/ubuntu/ai-project/solar || exit 1
+# Isi DEPLOY_DIR dan SOURCE_DIR dari inventaris privat sebelum menjalankan.
+: "${DEPLOY_DIR:?set DEPLOY_DIR}"
+: "${SOURCE_DIR:?set SOURCE_DIR}"
 
+cd "$DEPLOY_DIR" || exit 1
 docker compose -f compose.vps.yml -f compose.source.yml config --services
-docker inspect solar-app --format \
-  'State={{.State.Status}} ImageID={{.Image}} Restart={{.HostConfig.RestartPolicy.Name}}'
-docker inspect solar-app --format \
-  '{{range .Mounts}}{{println .Source "->" .Destination}}{{end}}'
-docker network inspect ai-engineer_default \
-  --format '{{range .Containers}}{{println .Name}}{{end}}'
-git -C /home/ubuntu/ai-project/solar-source status --short
-git -C /home/ubuntu/ai-project/solar-source rev-parse HEAD
-curl -sS -o /dev/null --max-time 15 -w 'HTTP %{http_code}\n' \
-  https://solar.mesthi.com/
+git -C "$SOURCE_DIR" status --short
+git -C "$SOURCE_DIR" rev-parse HEAD
 ```
 
-Jangan tampilkan `docker inspect` JSON penuh atau `docker compose config` lengkap:
-keduanya dapat memuat kredensial dari environment. Pada 14 Oktober, host `.env`
-berizin `664`; UID host dan container sama-sama 1000 dan uji baca sebagai
-`node` berhasil. Evaluasi pembatasan ke `600` setelah memastikan tidak ada
-proses lain yang memerlukan group-read. Jangan mempublikasikan isi `.env`.
+**Jangan memublikasikan** keluaran `docker compose config` atau
+`docker inspect` JSON penuh: keduanya dapat mengandung nilai environment
+rahasia. Gunakan `docker inspect --format` yang hanya memilih metadata aman.
 
-## Prosedur operator setelah semua gate lulus
+Jika Dockerfile memakai `COPY . .`, periksa `.dockerignore` sebelum build:
+harus mengecualikan `.env`, credential, `.git`, file backup, dan direktori data
+agar rahasia tidak ikut tersalin ke image. Dockerfile dan ignore file yang
+**untracked** adalah aset deployment lokal: backup, jangan `git clean -fd`,
+`git reset --hard` atau memaksa checkout yang akan menimpa file tersebut.
 
-1. **Kunci identitas artefak**: catat SHA commit/tag GitHub, SHA source VPS,
-   Docker image ID saat ini, dan hasil pemeriksaan HTTPS/health. Tidak boleh
-   ada perubahan source lain di tengah prosedur.
-2. **Amankan konfigurasi lokal**: backup `compose.vps.yml`,
-   `compose.source.yml`, `Dockerfile.vps`, dan `.dockerignore` dengan
-   mempertahankan permissions; simpan di lokasi hanya dapat diakses operator.
-   Pastikan Git worktree tidak berisi modifikasi tracked yang tidak diharapkan.
-3. **Simpan image lama**: sebelum `docker compose build`, catat
-   `docker inspect solar-app --format '{{.Image}}'` lalu buat tag rollback
-   terpisah yang tidak digunakan untuk build, misalnya
-   `docker image tag <OLD_IMAGE_ID> mesthi/solar:rollback-pre-v1.0.1`.
-   Ganti placeholder dengan ID **nyata yang diperiksa**.
-4. **Backup state**: hentikan/selesaikan task yang menulis data, ambil backup
-   konsisten `.env` serta `data` dan, apabila dikonfigurasi, snapshot database
-   dan object storage eksternal. Pastikan dapat dipulihkan tanpa menghapus akun.
-5. **Sinkronisasi source terverifikasi**: pada `solar-source` fetch tag rilis
-   yang sudah diterbitkan dan pindah ke commit tag secara aman tanpa menghapus
-   `Dockerfile.vps` serta `.dockerignore` untracked. Hentikan proses jika
-   checkout konflik atau status Git tidak sesuai; **jangan** paksa checkout.
-6. **Build tanpa cutover** (baru setelah pemeriksaan Dockerfile dan ignore file):
-   `docker compose -f compose.vps.yml -f compose.source.yml build solar`.
-   Verifikasi hasil build dan image ID baru sebelum mengganti container.
-7. **Cutover terkontrol** dalam maintenance window:
-   `docker compose -f compose.vps.yml -f compose.source.yml up -d --no-build --force-recreate solar`.
-   Perintah tersebut memakai konfigurasi dan mount yang telah diverifikasi;
-   tidak menjalankan ulang build pada tahap cutover.
-8. **Acceptance**: `docker inspect` menunjukkan image baru dan health
-   `healthy`; `https://solar.mesthi.com/` bisa diakses. Periksa login,
-   Conversation dan Monitoring penuh/responsif, sesi yang sudah ada, realtime
-   task/stream, persetujuan, dan data/artifact lama. HTTP 200 **saja**
-   tidak cukup. Simpan bukti hasil serta timestamp.
-9. Jika acceptance gagal, **rollback segera** sesuai bagian berikut dan
-   periksa log secara tersaring agar secret tidak terpapar.
+## Rencana backup dan cutover (operator setelah gate lulus)
 
-## Rollback yang telah disiapkan, bukan diuji pada VPS ini
+1. Identifikasi SHA commit/tag rilis, source commit saat ini, container,
+   **image ID lama** (`docker inspect <container> --format '{{.Image}}'`),
+   image tag efektif Compose, mount, network, dan health.
+2. Amankan file Compose, Dockerfile, `.dockerignore` yang dipakai, serta
+   konfigurasi `.env` pada backup terlindungi dengan izin khusus operator.
+3. **Sebelum build**, simpan image lama dengan tag rollback yang berbeda
+   dari image target build, menggunakan image ID yang sudah diverifikasi.
+   Jangan memakai tag mutable target sebagai satu-satunya salinan image lama.
+4. Ambil backup konsisten file persisten setelah menghentikan/menuntaskan task
+   yang masih menulis. Jika ada Postgres/Neon atau S3, buat snapshot eksternal
+   yang juga dapat dipulihkan. Backup direktori lokal saja tidak cukup.
+5. Di checkout source, `git fetch --tags`; periksa `git status`; checkout tag
+   release **tanpa** menghapus/mengubah file lokal deployment. Pastikan
+   `git rev-parse HEAD` sama dengan commit rilis. Hentikan operasi jika
+   checkout menolak karena konflik.
+6. Periksa build context dan `.dockerignore` kembali. Build dulu **tanpa
+   cutover** menggunakan `docker compose -f <base> -f <override> build <service>`.
+   Periksa image ID baru dan kegagalan build sebelum mengganti service.
+7. Saat maintenance window dan backup selesai, ganti container dari image
+   yang telah dibangun menggunakan
+   `docker compose -f <base> -f <override> up -d --no-build --force-recreate <service>`.
+   Jangan lakukan `down -v`, `docker volume prune` atau menghapus bind mount.
+8. Verifikasi image ID baru, status `healthy`, routing HTTPS, login,
+   Conversation/Monitoring, task streaming, approval, sesi, dan artefak lama.
+   Catat timestamp, SHA, hasil smoke test serta bukti perubahan.
 
-Gunakan hanya jika image lama sebelumnya telah ditandai dan datanya kompatibel:
+## Rollback dan risiko state
 
-```bash
-cd /home/ubuntu/ai-project/solar || exit 1
-docker image inspect mesthi/solar:rollback-pre-v1.0.1 >/dev/null || exit 1
+Jika acceptance gagal, **hentikan deployment dan rollback**:
 
-# Kembalikan tag kerja ke image lama yang telah diamankan; tanpa build.
-docker image tag mesthi/solar:rollback-pre-v1.0.1 mesthi/solar:local
-docker compose -f compose.vps.yml -f compose.source.yml \
-  up -d --no-build --force-recreate solar
-```
+1. Pastikan tag rollback immutable tadi masih mengarah ke image ID lama.
+2. Re-tag image lama ke tag kerja yang digunakan service Compose, kemudian
+   jalankan `docker compose ... up -d --no-build --force-recreate <service>`.
+   Jangan membangun ulang saat rollback.
+3. Periksa kesehatan, routing HTTPS, login, dan persistensi data.
+4. Jangan otomatis memulihkan snapshot database lama atau menurunkan skema
+   tanpa menilai perubahan migrasi dan kemungkinan data baru masuk.
 
-Cek ulang image ID, health, HTTPS, login, task dan data setelah rollback.
-**Jangan** otomatis memulihkan backup state lama ke database yang sudah
-berubah, apalagi menjalankan downgrade skema, tanpa penilaian migrasi dan
-integritas data. Prosedur rollback di atas masih memerlukan **dry-run pada
-lingkungan staging** sebelum dianggap teruji.
+**Rencana ini belum merupakan rollback teruji** sampai operator berhasil
+melakukan dry-run di staging dengan konfigurasi sepadan. Izin file `.env`
+sebaiknya minimum yang diperlukan (umumnya 600) setelah memverifikasi UID
+proses dan apakah ada proses lain yang benar-benar membutuhkan group-read.
 
-## Catatan GitHub Release vs deployment VPS
+## Pengujian Windows
 
-Workflow `Desktop installer (Windows)` menghasilkan installer Windows (.exe)
-dan ZIP server self-hosted serta dapat memublikasikan GitHub Release.
-Workflow itu **tidak mengeksekusi** deployment Docker di VPS ini.
-Installer Windows juga perlu QA peluncuran di perangkat Windows nyata;
-lulus packaging tidak membuktikan keseluruhan pengalaman pengguna.
+Build NSIS `.exe` pada CI memeriksa packaging, bukan bahwa aplikasi pasti
+berjalan di Windows. Sebelum GitHub Release umum, buka installer di perangkat
+Windows uji, verifikasi startup server lokal, login, fitur Conversation dan
+Monitoring, dan preservasi pengaturan saat upgrade.
