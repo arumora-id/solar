@@ -16,6 +16,7 @@ import { knowledgeIntro } from './knowledgeTools.js';
 import { createMcpTools } from './mcpTools.js';
 import { estimateCostUsd } from './models.js';
 import { buildSystemPrompt } from './systemPrompt.js';
+import { selectAgentTools } from './roleTools.js';
 import type { AgentTool, ToolResultContent } from './types.js';
 
 // The Responses API transport types and the tool-output conversion live in the LLM layer; re-exported for tests.
@@ -70,20 +71,13 @@ export function createAgentRunner(deps: AgentDeps): TaskRunner {
     // which keeps the prompt cache warm and the encrypted reasoning items valid.
     const isStaff = ctx.requester?.role === 'staff';
     const canUseImages = ctx.requester?.role === 'superadmin' && (await deps.skills.get('image-creation'))?.enabled === true;
-    // Admin-managed integrations and credentials must never be visible to Staff,
-    // either as settings or as agent tool specifications. Staff can propose content instead.
-    const protectedTools = new Set([
-      'list_knowledge', 'read_knowledge', 'search_knowledge', 'save_knowledge', 'import_artifact_to_knowledge',
-      'load_skill', 'read_skill_file', 'publish_artifacts_to_github',
-      'plane_list_projects', 'plane_create_backlog_items',
-    ]);
-    const builtinTools = deps.builtinTools.filter((tool) => {
-      if (tool.name === 'create_or_edit_image') return canUseImages;
-      if (isStaff && protectedTools.has(tool.name)) return false;
-      return true;
-    });
-    // Never put administrator Knowledge or Skill names into a Staff agent prompt.
-    const tools = [...builtinTools, ...(isStaff ? [] : createMcpTools(deps.mcp))];
+    // Scope tool specifications before passing anything to the model. A hidden
+    // admin menu alone is not enough: the agent must not see or call those tools.
+    const tools = selectAgentTools(
+      ctx.requester?.role, canUseImages, deps.builtinTools,
+      isStaff ? [] : createMcpTools(deps.mcp),
+    );
+    const builtinTools = tools.filter((tool) => tool.source !== 'mcp');
     const toolMap = new Map(tools.map((t) => [t.name, t]));
     const connected = isStaff ? [] : deps.mcp.statuses().filter((s) => s.state === 'connected');
     const knowledge = isStaff ? [] : await deps.knowledge.list();
