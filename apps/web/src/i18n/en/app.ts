@@ -39,6 +39,7 @@ export const app: Dict['app'] = {
       models: 'AI models',
       knowledge: 'Knowledge',
       skills: 'Skills',
+      proposals: 'Proposals',
       plugins: 'MCP plugins',
       voice: 'Voice',
       users: 'Users',

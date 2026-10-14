@@ -44,6 +44,7 @@ export const app = {
       models: 'Model AI',
       knowledge: 'Knowledge',
       skills: 'Skills',
+      proposals: 'Usulan',
       plugins: 'Plugin MCP',
       voice: 'Suara',
       users: 'Pengguna',
