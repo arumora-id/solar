@@ -662,7 +662,12 @@ export function createApiRouter(deps: ApiDeps): Router {
           if (existing) {
             if (existing.source === 'user' && existing.name === entry.title
               && existing.description === (entry.description ?? '')
-              && existing.content.trim() === body.trim()) return id;
+              && existing.content.trim() === body.trim()) {
+              // If the previous attempt stopped after writing SKILL.md but before
+              // updating its disabled state, retry must still keep it inactive.
+              if (existing.enabled) await skills.update(id, { enabled: false });
+              return id;
+            }
             throw new Error('A Skill with that identifier already exists');
           }
           const created = await skills.create({
