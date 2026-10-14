@@ -218,6 +218,7 @@ try {
   }
   await page.locator('.monitor-page-controls button').last().click();
   await page.waitForFunction(() => document.querySelector('.monitor-page-number')?.textContent?.includes('2 / 3'));
+  await page.waitForFunction(() => document.querySelectorAll('.monitor-task-list tbody tr').length === 5);
   assert.equal(await page.locator('.monitor-task-list tbody tr').count(), 5, 'Second page has wrong count');
   await page.locator('.monitor-page-controls button').first().click();
   await page.waitForFunction(() => document.querySelector('.monitor-page-number')?.textContent?.includes('1 / 3'));
