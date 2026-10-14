@@ -309,6 +309,23 @@ describe('staged content workflow and role isolation', () => {
       .toMatchObject({ status: 'published', publishedId: 'reference/recovery-knowledge.md' });
   });
 
+  it('blocks Staff and Head of IT from uploading raster images through the API directly', async () => {
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg==', 'base64');
+    for (const client of [alice, head]) {
+      for (const name of ['unauthorized.png', 'unauthorized.JPG', 'unauthorized.webp']) {
+        const result = await client.raw('POST', `/api/attachments?sessionId=image-access-qa&name=${name}`,
+          png, { 'Content-Type': 'application/octet-stream' });
+        expect(result.status, `${name} must be forbidden`).toBe(403);
+      }
+    }
+    const permitted = await superadmin.raw('POST', '/api/attachments?sessionId=image-access-qa&name=allowed.png',
+      png, { 'Content-Type': 'application/octet-stream' });
+    expect(permitted.status).toBe(201);
+    const created = await permitted.json() as { id: string; kind: string };
+    expect(created.kind).toBe('image');
+    expect((await superadmin.delete(`/api/attachments/${created.id}`)).status).toBe(200);
+  });
+
   it('keeps built-in image creation disabled by default and Superadmin-only configurable', async () => {
     const skills = (await head.get<Array<{ id: string; enabled: boolean }>>('/api/skills')).body;
     expect(skills.find((x) => x.id === 'image-creation')).toMatchObject({ enabled: false });
