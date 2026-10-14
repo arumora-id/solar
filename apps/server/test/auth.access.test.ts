@@ -206,6 +206,65 @@ describe('role matrix', () => {
   });
 });
 
+describe('staged content workflow and role isolation', () => {
+  it('keeps drafts private, requires two reviewer roles, and publishes only on request', async () => {
+    const skillPayload = { kind: 'skill', title: 'Release Checklist Review', description: 'From staff', content: '# Checklist' };
+    const draft = await alice.post<{ id: string; status: string }>('/api/content-proposals', skillPayload);
+    expect(draft.status).toBe(201);
+    expect(draft.body.status).toBe('draft');
+    const id = draft.body.id;
+    expect((await head.get<Array<{ id: string }>>('/api/content-proposals')).body.find((x) => x.id === id)).toBeUndefined();
+    expect((await bob.get<Array<{ id: string }>>('/api/content-proposals')).body.find((x) => x.id === id)).toBeUndefined();
+    expect((await bob.put(`/api/content-proposals/${id}`, skillPayload)).status).toBe(409);
+    expect((await alice.put(`/api/content-proposals/${id}`, { ...skillPayload, content: '# Updated checklist' })).body).toMatchObject({ status: 'draft', content: '# Updated checklist' });
+    expect((await head.post(`/api/content-proposals/${id}/review`, { approved: true })).status).toBe(409);
+    expect((await alice.post(`/api/content-proposals/${id}/submit`)).body).toMatchObject({ status: 'submitted' });
+    expect((await alice.put(`/api/content-proposals/${id}`, skillPayload)).status).toBe(409);
+    expect((await alice.post(`/api/content-proposals/${id}/review`, { approved: true })).status).toBe(403);
+    expect((await alice.post(`/api/content-proposals/${id}/publish`)).status).toBe(403);
+    expect((await superadmin.post(`/api/content-proposals/${id}/publish`)).status).toBe(409);
+    expect((await head.post(`/api/content-proposals/${id}/review`, { approved: true })).body).toMatchObject({ status: 'submitted' });
+    expect((await head.post(`/api/content-proposals/${id}/review`, { approved: true })).status).toBe(409);
+    expect((await superadmin.post(`/api/content-proposals/${id}/review`, { approved: true })).body).toMatchObject({ status: 'approved' });
+    expect((await head.get<Array<{ id: string }>>('/api/skills')).body.find((x) => x.id === 'release-checklist-review')).toBeUndefined();
+    const published = await head.post<{ status: string; publishedId: string }>(`/api/content-proposals/${id}/publish`, {});
+    expect(published.status).toBe(200);
+    expect(published.body).toMatchObject({ status: 'published', publishedId: 'release-checklist-review' });
+    expect((await head.get<Array<{ id: string; enabled: boolean }>>('/api/skills')).body.find((x) => x.id === 'release-checklist-review')?.enabled).toBe(false);
+    expect((await head.post(`/api/content-proposals/${id}/publish`, {})).status).toBe(409);
+    expect((await alice.get('/api/skills/release-checklist-review')).status).toBe(403);
+    expect((await bob.get<Array<{ id: string }>>('/api/content-proposals')).body.some((x) => x.id === id)).toBe(false);
+  });
+
+  it('publishes knowledge only after review, rejects with reason, never exposes it to staff', async () => {
+    const knowledgePayload = { kind: 'knowledge', title: 'Draft Guidance', path: 'reference/dual-approved-guidance.md', content: '# Approved guidance' };
+    const result = await alice.post<{ id: string }>('/api/content-proposals', knowledgePayload);
+    const id = result.body.id;
+    await alice.post(`/api/content-proposals/${id}/submit`, {});
+    await superadmin.post(`/api/content-proposals/${id}/review`, { approved: true });
+    expect((await head.get('/api/knowledge/file?path=reference/dual-approved-guidance.md')).status).toBe(404);
+    await head.post(`/api/content-proposals/${id}/review`, { approved: true });
+    expect((await head.get('/api/knowledge/file?path=reference/dual-approved-guidance.md')).status).toBe(404);
+    expect((await superadmin.post(`/api/content-proposals/${id}/publish`, {})).body).toMatchObject({ status: 'published', publishedId: knowledgePayload.path });
+    expect((await head.get('/api/knowledge/file?path=reference/dual-approved-guidance.md')).status).toBe(200);
+    expect((await bob.get('/api/knowledge/file?path=reference/dual-approved-guidance.md')).status).toBe(403);
+    const rejected = await bob.post<{ id: string }>('/api/content-proposals', { kind: 'skill', title: 'Bad draft', content: '# Incomplete' });
+    await bob.post(`/api/content-proposals/${rejected.body.id}/submit`, {});
+    expect((await head.post(`/api/content-proposals/${rejected.body.id}/review`, { approved: false, reason: '' })).status).toBe(409);
+    expect((await head.post(`/api/content-proposals/${rejected.body.id}/review`, { approved: false, reason: 'Incomplete sources' })).body).toMatchObject({ status: 'rejected', rejectionReason: 'Incomplete sources' });
+    expect((await superadmin.post(`/api/content-proposals/${rejected.body.id}/publish`, {})).status).toBe(409);
+  });
+
+  it('keeps built-in image creation disabled by default and Superadmin-only configurable', async () => {
+    const skills = (await head.get<Array<{ id: string; enabled: boolean }>>('/api/skills')).body;
+    expect(skills.find((x) => x.id === 'image-creation')).toMatchObject({ enabled: false });
+    expect((await head.put('/api/skills/image-creation', { enabled: true })).status).toBe(403);
+    expect((await alice.put('/api/skills/image-creation', { enabled: true })).status).toBe(403);
+    expect((await superadmin.put('/api/skills/image-creation', { enabled: true })).body).toMatchObject({ enabled: true });
+    expect((await superadmin.put('/api/skills/image-creation', { enabled: false })).body).toMatchObject({ enabled: false });
+  });
+});
+
 describe('task visibility', () => {
   let aliceTask: Task;
   let aliceDiagramTask: TaskDetail;
