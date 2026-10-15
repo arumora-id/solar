@@ -170,15 +170,14 @@ export class LlmProviderStore {
   effectiveRoutes(): Record<string, string[]> {
     const routes = { ...this.routes };
     if (!routes[DEFAULT_ROUTE]?.length) routes[DEFAULT_ROUTE] = [`${ENV_PROVIDER_ID}/${this.config.openai.model}`];
-    for (const imageRoute of [IMAGE_GENERATION_ROUTE, IMAGE_EDIT_ROUTE]) {
-      if (!routes[imageRoute]?.length) routes[imageRoute] = [`${ENV_PROVIDER_ID}/${DEFAULT_IMAGE_MODEL}`];
-    }
     return routes;
   }
 
   route(name = DEFAULT_ROUTE): string[] {
     const routes = this.effectiveRoutes();
-    return routes[name]?.length ? routes[name]! : routes[DEFAULT_ROUTE]!;
+    if (routes[name]?.length) return routes[name]!;
+    if (name === IMAGE_GENERATION_ROUTE || name === IMAGE_EDIT_ROUTE) return [`${ENV_PROVIDER_ID}/${DEFAULT_IMAGE_MODEL}`];
+    return routes[DEFAULT_ROUTE]!;
   }
 
   view(): LlmSettingsView {

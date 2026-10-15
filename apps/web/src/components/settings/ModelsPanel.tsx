@@ -145,8 +145,8 @@ export function ModelsPanel() {
       setView(v);
       setRoute(v.routes.default ?? []);
       setRouteDirty(false);
-      setImageGenerationRoute(v.routes['image-generation']?.[0] ?? '');
-      setImageEditRoute(v.routes['image-edit']?.[0] ?? '');
+      setImageGenerationRoute(v.routes['image-generation']?.[0] ?? 'openai/gpt-image-2');
+      setImageEditRoute(v.routes['image-edit']?.[0] ?? 'openai/gpt-image-2');
       // the status bubble and System tab show whether the primary model is ready
       void reloadConfig();
     },
