@@ -1,6 +1,6 @@
 import OpenAI, { toFile } from 'openai';
 import { z } from 'zod';
-import { IMAGE_EDIT_ROUTE, IMAGE_GENERATION_ROUTE, splitRouteEntry, type LlmProviderStore } from '../llm/providerStore.js';
+import { splitRouteEntry, type LlmProviderStore } from '../llm/providerStore.js';
 import type { AttachmentService } from '../tasks/attachmentService.js';
 import type { ArtifactService } from '../tasks/artifactService.js';
 import type { AgentTool, ToolOutput } from './types.js';
@@ -50,10 +50,12 @@ export function createImageTools(
         source = { bytes: await artifacts.read(a), mime: a.mimeType as 'image/png' | 'image/jpeg' | 'image/webp', name: a.name };
       }
       if (source && (source.bytes.length === 0 || source.bytes.length > MAX_INPUT_BYTES)) throw new Error('Source image must be between 1 byte and 20 MB');
-      // Each image endpoint has its own primary/fallback list configured in Settings → Model AI.
-      // The base URL is the API root (e.g. https://router.mesthi.com/v1), not a full /images/... URL.
-      const routeName = source ? IMAGE_EDIT_ROUTE : IMAGE_GENERATION_ROUTE;
-      const entries = providers.route(routeName);
+      // The API method selects /images/edits vs /images/generations automatically.
+      // One shared image model can support both, while legacy v1.0.5 routes remain valid.
+      const operation = source ? 'edit' : 'generate';
+      const routeName = source ? 'image-edit' : 'image-generation';
+      const { entries, requireCapability } = providers.imageRoute(operation);
+      const capability = source ? 'imageEditing' : 'imageGeneration';
       let bytes: Buffer | undefined;
       let lastError = 'No usable provider configured';
       for (const entry of entries) {
@@ -66,6 +68,11 @@ export function createImageTools(
         }
         if (!provider.apiKey && !provider.baseUrl) {
           lastError = `Image provider "${providerId}" has no API key or local base URL`;
+          continue;
+        }
+        const declared = provider.config.models?.find((m) => m.id === model);
+        if ((requireCapability && declared?.[capability] !== true) || declared?.[capability] === false) {
+          lastError = `Image model "${entry}" does not declare support for ${operation}`;
           continue;
         }
         try {

@@ -15,6 +15,8 @@ typography, and all immutable details precisely.
 - Never claim an image was created until the tool returns an artifact id.
 - Preserve the original input: each edit produces a **new** task artifact.
 - Be precise about changes and preserve important unchanged objects.
-- Image generation and editing use the separate Model AI routes `image-generation` and `image-edit`.
-  They may use an OpenAI-compatible gateway with `/v1/images/generations` and `/v1/images/edits`.
+- Set provider model capabilities in Settings → Model AI: `image-generate` and/or `image-edit`.
+  A single capability-marked image model may handle both API operations.
+- SOLAR automatically calls the appropriate endpoint: `/v1/images/generations` or `/v1/images/edits`.
+  The v1.0.5 separate routes remain supported for backward compatibility.
 - If the skill is disabled, do not attempt to call image tools.

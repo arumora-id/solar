@@ -44,11 +44,14 @@ function env(role: 'superadmin' | 'head_of_it' | 'staff' = 'superadmin') {
     'image-generation': ['openai/gpt-image-2'],
     'image-edit': ['openai/gpt-image-2'],
   };
-  const resolved: Record<string, { config: { enabled: boolean }; apiKey: string; baseUrl?: string; headers: Record<string, string> }> = {
+  const resolved: Record<string, { config: { enabled: boolean; models?: Array<{ id: string; imageGeneration?: boolean; imageEditing?: boolean }> }; apiKey: string; baseUrl?: string; headers: Record<string, string> }> = {
     openai: { config: { enabled: true }, apiKey: 'test-key', headers: {} },
   };
   const providers = {
-    route: (name: string) => routes[name]!,
+    imageRoute: (operation: 'generate' | 'edit') => ({
+      entries: routes.image ?? routes[operation === 'generate' ? 'image-generation' : 'image-edit']!,
+      requireCapability: Boolean(routes.image),
+    }),
     resolve: (id: string) => resolved[id],
   } as unknown as LlmProviderStore;
   const tool = createImageTools(providers, artifacts, attachments)[0]!;
@@ -169,6 +172,35 @@ describe('superadmin Image Skill tool, mocked provider (no API credential/networ
     await expect(tool.execute({ prompt: 'Test', title: 'No image', size: 'auto' }, ctx)).rejects.toThrow('unavailable or disabled');
     expect(images.generate).not.toHaveBeenCalled();
     expect(createArtifact).not.toHaveBeenCalled();
+  });
+
+  it('uses one capability-marked OmniRoute model for BOTH API endpoints', async () => {
+    const { tool, ctx, routes, resolved, attachments } = env();
+    routes.image = ['omniroute/shared-image-model'];
+    resolved.omniroute = {
+      config: { enabled: true, models: [{ id: 'shared-image-model', imageGeneration: true, imageEditing: true }] },
+      apiKey: 'router-test-key', baseUrl: 'https://router.mesthi.com/v1', headers: {},
+    };
+    await tool.execute({ prompt: 'Sunset over sea', title: 'Generated', size: 'auto' }, ctx);
+    (ctx as unknown as { attachments: unknown[] }).attachments = [sampleAttachment];
+    await tool.execute({ prompt: 'Make it brighter', title: 'Edited', source_attachment_id: sampleAttachment.id, size: 'auto' }, ctx);
+    expect(images.generate).toHaveBeenCalledWith(expect.objectContaining({ model: 'shared-image-model' }), expect.anything());
+    expect(images.edit).toHaveBeenCalledWith(expect.objectContaining({ model: 'shared-image-model' }), expect.anything());
+    expect(attachments.readOriginal).toHaveBeenCalledOnce();
+    expect(images.clients).toHaveLength(2);
+    expect(images.clients[0]).toMatchObject({ baseURL: 'https://router.mesthi.com/v1' });
+  });
+
+  it('does not call the Edit Image endpoint for a generation-only model', async () => {
+    const { tool, ctx, routes, resolved } = env();
+    routes.image = ['omniroute/only-generate'];
+    resolved.omniroute = {
+      config: { enabled: true, models: [{ id: 'only-generate', imageGeneration: true, imageEditing: false }] },
+      apiKey: 'router-test-key', baseUrl: 'https://router.mesthi.com/v1', headers: {},
+    };
+    (ctx as unknown as { attachments: unknown[] }).attachments = [sampleAttachment];
+    await expect(tool.execute({ prompt: 'Edit', title: 'No edit', source_attachment_id: sampleAttachment.id, size: 'auto' }, ctx)).rejects.toThrow('does not declare support');
+    expect(images.edit).not.toHaveBeenCalled();
   });
 
 });
