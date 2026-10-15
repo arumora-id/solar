@@ -14,7 +14,7 @@ type PresetId = 'omniroute' | 'openai' | 'openrouter' | 'anthropic' | 'gemini' |
  * hint and a name with words to translate are in `t.settings.models.presetHint` / `presetName` under its id.
  */
 const PRESETS: Array<{ id: PresetId; label: string; name: string; kind: LlmProviderKind; baseUrl: string; apiKey: string }> = [
-  { id: 'omniroute', label: 'OmniRoute', name: 'OmniRoute', kind: 'openai-chat', baseUrl: 'http://localhost:PORT/v1', apiKey: '' },
+  { id: 'omniroute', label: 'OmniRoute', name: 'OmniRoute', kind: 'openai-chat', baseUrl: 'https://router.mesthi.com/v1', apiKey: '' },
   { id: 'openai', label: 'OpenAI', name: 'OpenAI (Chat)', kind: 'openai-chat', baseUrl: 'https://api.openai.com/v1', apiKey: '' },
   { id: 'openrouter', label: 'OpenRouter', name: 'OpenRouter', kind: 'openai-chat', baseUrl: 'https://openrouter.ai/api/v1', apiKey: '' },
   { id: 'anthropic', label: 'Anthropic', name: 'Anthropic', kind: 'openai-chat', baseUrl: 'https://api.anthropic.com/v1', apiKey: '' },
@@ -131,6 +131,8 @@ export function ModelsPanel() {
   const [view, setView] = useState<LlmSettingsView | null>(null);
   const [route, setRoute] = useState<string[]>([]);
   const [routeDirty, setRouteDirty] = useState(false);
+  const [imageGenerationRoute, setImageGenerationRoute] = useState('');
+  const [imageEditRoute, setImageEditRoute] = useState('');
   const [newEntry, setNewEntry] = useState('');
   const [draft, setDraft] = useState<Draft | null>(null);
   const [tests, setTests] = useState<Record<string, TestResult>>({});
@@ -143,6 +145,8 @@ export function ModelsPanel() {
       setView(v);
       setRoute(v.routes.default ?? []);
       setRouteDirty(false);
+      setImageGenerationRoute(v.routes['image-generation']?.[0] ?? '');
+      setImageEditRoute(v.routes['image-edit']?.[0] ?? '');
       // the status bubble and System tab show whether the primary model is ready
       void reloadConfig();
     },
@@ -308,6 +312,62 @@ export function ModelsPanel() {
           </button>
         </div>
         <p className="hint">{words.route.appliesHint}</p>
+      </div>
+
+      <div className="card" style={{ marginTop: 12 }}>
+        <div className="card-head">
+          <h4>{words.imageRoutes.title}</h4>
+        </div>
+        <p className="hint">{words.imageRoutes.hint}</p>
+        <datalist id="solar-image-model-choices">
+          {view?.providers.filter((p) => p.enabled).flatMap((p) => p.models.map((m) => `${p.id}/${m.id}`)).map((entry) => (
+            <option key={entry} value={entry} />
+          ))}
+        </datalist>
+        <label className="field">
+          <span>{words.imageRoutes.generate}</span>
+          <input
+            className="input"
+            list="solar-image-model-choices"
+            placeholder="omniroute/gpt-image-2"
+            value={imageGenerationRoute}
+            onChange={(e) => setImageGenerationRoute(e.target.value)}
+          />
+        </label>
+        <label className="field">
+          <span>{words.imageRoutes.edit}</span>
+          <input
+            className="input"
+            list="solar-image-model-choices"
+            placeholder="omniroute/gpt-image-2"
+            value={imageEditRoute}
+            onChange={(e) => setImageEditRoute(e.target.value)}
+          />
+        </label>
+        <div className="row" style={{ marginTop: 10 }}>
+          <button
+            type="button"
+            className="btn primary small"
+            disabled={busy || ![imageGenerationRoute, imageEditRoute].every((r) => /^[a-z0-9][a-z0-9-]*\/.+/.test(r.trim()))}
+            onClick={() => void run(() => api.setRoutes({
+              ...view?.routes,
+              'image-generation': [imageGenerationRoute.trim()],
+              'image-edit': [imageEditRoute.trim()],
+            }))}
+          >
+            {words.imageRoutes.save}
+          </button>
+          <button
+            type="button"
+            className="btn small"
+            disabled={busy}
+            onClick={() => void run(() => api.setRoutes(Object.fromEntries(
+              Object.entries(view?.routes ?? {}).filter(([key]) => key !== 'image-generation' && key !== 'image-edit'),
+            )))}
+          >
+            {words.imageRoutes.reset}
+          </button>
+        </div>
       </div>
 
       <div className="row" style={{ margin: '14px 0 8px' }}>
