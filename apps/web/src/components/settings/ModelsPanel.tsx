@@ -63,6 +63,8 @@ export function modelsToLines(models: LlmModelConfig[]): string {
         m.maxOutputTokens ? `max=${m.maxOutputTokens}` : '',
         m.reasoning === true ? 'reasoning' : m.reasoning === false ? 'no-reasoning' : '',
         m.effort ? `effort=${m.effort}` : '',
+        m.imageGeneration === true ? 'image-generate' : m.imageGeneration === false ? 'no-image-generate' : '',
+        m.imageEditing === true ? 'image-edit' : m.imageEditing === false ? 'no-image-edit' : '',
         m.price ? `price=${m.price.input}/${m.price.cachedInput}/${m.price.output}` : '',
       ]
         .filter(Boolean)
@@ -84,6 +86,10 @@ export function linesToModels(text: string): LlmModelConfig[] {
       else if (k === 'reasoning') m.reasoning = true;
       else if (k === 'no-reasoning') m.reasoning = false;
       else if (k === 'effort' && v) m.effort = v;
+      else if (k === 'image-generate') m.imageGeneration = true;
+      else if (k === 'no-image-generate') m.imageGeneration = false;
+      else if (k === 'image-edit') m.imageEditing = true;
+      else if (k === 'no-image-edit') m.imageEditing = false;
       else if (k === 'price') {
         const [input, cachedInput, output] = v.split('/').map(Number);
         if ([input, cachedInput, output].every((n) => Number.isFinite(n) && n! >= 0)) m.price = { input: input!, cachedInput: cachedInput!, output: output! };
@@ -131,8 +137,7 @@ export function ModelsPanel() {
   const [view, setView] = useState<LlmSettingsView | null>(null);
   const [route, setRoute] = useState<string[]>([]);
   const [routeDirty, setRouteDirty] = useState(false);
-  const [imageGenerationRoute, setImageGenerationRoute] = useState('');
-  const [imageEditRoute, setImageEditRoute] = useState('');
+  const [imageModel, setImageModel] = useState('');
   const [newEntry, setNewEntry] = useState('');
   const [draft, setDraft] = useState<Draft | null>(null);
   const [tests, setTests] = useState<Record<string, TestResult>>({});
@@ -145,8 +150,7 @@ export function ModelsPanel() {
       setView(v);
       setRoute(v.routes.default ?? []);
       setRouteDirty(false);
-      setImageGenerationRoute(v.routes['image-generation']?.[0] ?? 'openai/gpt-image-2');
-      setImageEditRoute(v.routes['image-edit']?.[0] ?? 'openai/gpt-image-2');
+      setImageModel(v.routes.image?.[0] ?? '');
       // the status bubble and System tab show whether the primary model is ready
       void reloadConfig();
     },
@@ -315,58 +319,55 @@ export function ModelsPanel() {
       </div>
 
       <div className="card" style={{ marginTop: 12 }}>
-        <div className="card-head">
-          <h4>{words.imageRoutes.title}</h4>
-        </div>
+        <div className="card-head"><h4>{words.imageRoutes.title}</h4></div>
         <p className="hint">{words.imageRoutes.hint}</p>
-        <datalist id="solar-image-model-choices">
-          {view?.providers.filter((p) => p.enabled).flatMap((p) => p.models.map((m) => `${p.id}/${m.id}`)).map((entry) => (
-            <option key={entry} value={entry} />
-          ))}
-        </datalist>
         <label className="field">
-          <span>{words.imageRoutes.generate}</span>
-          <input
-            className="input"
-            list="solar-image-model-choices"
-            placeholder="omniroute/gpt-image-2"
-            value={imageGenerationRoute}
-            onChange={(e) => setImageGenerationRoute(e.target.value)}
-          />
+          <span>{words.imageRoutes.model}</span>
+          <select className="select" value={imageModel} onChange={(e) => setImageModel(e.target.value)}>
+            <option value="">{words.imageRoutes.auto}</option>
+            {view?.providers.filter((p) => p.enabled).flatMap((p) => p.models
+              .filter((m) => m.imageGeneration === true || m.imageEditing === true)
+              .map((m) => `${p.id}/${m.id}`)).map((entry) => (
+                <option key={entry} value={entry}>{entry}</option>
+              ))}
+            {imageModel && !view?.providers.some((p) => p.models.some((m) => `${p.id}/${m.id}` === imageModel && (m.imageGeneration || m.imageEditing))) && (
+              <option value={imageModel}>{imageModel}</option>
+            )}
+          </select>
         </label>
-        <label className="field">
-          <span>{words.imageRoutes.edit}</span>
-          <input
-            className="input"
-            list="solar-image-model-choices"
-            placeholder="omniroute/gpt-image-2"
-            value={imageEditRoute}
-            onChange={(e) => setImageEditRoute(e.target.value)}
-          />
-        </label>
+        {imageModel && (() => {
+          const slash = imageModel.indexOf('/');
+          const provider = view?.providers.find((p) => p.id === imageModel.slice(0, slash));
+          const model = provider?.models.find((m) => m.id === imageModel.slice(slash + 1));
+          return (
+            <p className="hint">
+              {words.imageRoutes.generate}: {model?.imageGeneration ? words.imageRoutes.supported : words.imageRoutes.unsupported} ·{' '}
+              {words.imageRoutes.edit}: {model?.imageEditing ? words.imageRoutes.supported : words.imageRoutes.unsupported}
+            </p>
+          );
+        })()}
+        {!view?.routes.image && (view?.routes['image-generation']?.length || view?.routes['image-edit']?.length) ? (
+          <p className="hint">{words.imageRoutes.legacy}</p>
+        ) : null}
         <div className="row" style={{ marginTop: 10 }}>
           <button
             type="button"
             className="btn primary small"
-            disabled={busy || ![imageGenerationRoute, imageEditRoute].every((r) => /^[a-z0-9][a-z0-9-]*\/.+/.test(r.trim()))}
-            onClick={() => void run(() => api.setRoutes({
-              ...view?.routes,
-              'image-generation': [imageGenerationRoute.trim()],
-              'image-edit': [imageEditRoute.trim()],
-            }))}
-          >
-            {words.imageRoutes.save}
-          </button>
+            disabled={busy || !imageModel}
+            onClick={() => {
+              const routes = Object.fromEntries(Object.entries(view?.routes ?? {})
+                .filter(([key]) => !['image', 'image-generation', 'image-edit'].includes(key)));
+              void run(() => api.setRoutes({ ...routes, image: [imageModel] }));
+            }}
+          >{words.imageRoutes.save}</button>
           <button
             type="button"
             className="btn small"
             disabled={busy}
             onClick={() => void run(() => api.setRoutes(Object.fromEntries(
-              Object.entries(view?.routes ?? {}).filter(([key]) => key !== 'image-generation' && key !== 'image-edit'),
+              Object.entries(view?.routes ?? {}).filter(([key]) => !['image', 'image-generation', 'image-edit'].includes(key)),
             )))}
-          >
-            {words.imageRoutes.reset}
-          </button>
+          >{words.imageRoutes.reset}</button>
         </div>
       </div>
 
@@ -440,6 +441,31 @@ export function ModelsPanel() {
               placeholder={'claude-sonnet; max=64000\nqwen3:32b; price=0/0/0'}
             />
           </label>
+          {linesToModels(draft.models).length > 0 && (
+            <div className="field">
+              <span>{words.imageRoutes.capabilities}</span>
+              <p className="hint">{words.imageRoutes.capabilityHint}</p>
+              {linesToModels(draft.models).map((model, index) => (
+                <div className="row" key={`${model.id}-${index}`} style={{ marginTop: 6, flexWrap: 'wrap' }}>
+                  <code style={{ flex: 1, minWidth: 120, overflowWrap: 'anywhere' }}>{model.id}</code>
+                  {(['imageGeneration', 'imageEditing'] as const).map((capability) => (
+                    <label className="toggle" key={capability}>
+                      <input
+                        type="checkbox"
+                        checked={model[capability] === true}
+                        onChange={(e) => {
+                          const models = linesToModels(draft.models);
+                          models[index] = { ...models[index]!, [capability]: e.target.checked };
+                          setDraft({ ...draft, models: modelsToLines(models) });
+                        }}
+                      />
+                      {capability === 'imageGeneration' ? words.imageRoutes.generate : words.imageRoutes.edit}
+                    </label>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
           <details>
             <summary className="hint" style={{ cursor: 'pointer' }}>
               {words.fields.advanced}

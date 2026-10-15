@@ -363,6 +363,9 @@ export interface LlmModelConfig {
   effort?: string;
   /** Largest output (incl. reasoning) the model accepts. */
   maxOutputTokens?: number;
+  /** Explicit model capabilities for OpenAI-compatible image endpoints. */
+  imageGeneration?: boolean;
+  imageEditing?: boolean;
   /** USD per 1M tokens, for cost estimates (0 for local models). */
   price?: { input: number; cachedInput: number; output: number };
 }

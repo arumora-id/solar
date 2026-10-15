@@ -16,6 +16,8 @@ export const DEFAULT_ROUTE = 'default';
 /** Image endpoints use independent routes; they do not change the chat model. */
 export const IMAGE_GENERATION_ROUTE = 'image-generation';
 export const IMAGE_EDIT_ROUTE = 'image-edit';
+/** A single image model route used for both API operations, when configured. */
+export const IMAGE_ROUTE = 'image';
 export const DEFAULT_IMAGE_MODEL = 'gpt-image-2';
 
 const VAR_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
@@ -28,6 +30,8 @@ export const LlmModelSchema = z.object({
   reasoning: z.boolean().optional(),
   effort: z.enum(REASONING_EFFORTS).optional(),
   maxOutputTokens: z.number().int().min(256).max(1_000_000).optional(),
+  imageGeneration: z.boolean().optional(),
+  imageEditing: z.boolean().optional(),
   price: PriceSchema.optional(),
 });
 
@@ -180,6 +184,26 @@ export class LlmProviderStore {
     return routes[DEFAULT_ROUTE]!;
   }
 
+  /**
+   * Model API capabilities are independent of the provider's chat transport.
+   * Priority: explicit shared image model, existing v1.0.5 operation routes,
+   * a unique capability-marked model, then the legacy .env image default.
+   * Never fall through to the chat model route.
+   */
+  imageRoute(operation: 'generate' | 'edit'): { entries: string[]; requireCapability: boolean } {
+    const shared = this.routes[IMAGE_ROUTE];
+    if (shared?.length) return { entries: shared, requireCapability: true };
+    const legacy = this.routes[operation === 'generate' ? IMAGE_GENERATION_ROUTE : IMAGE_EDIT_ROUTE];
+    if (legacy?.length) return { entries: legacy, requireCapability: false };
+    const capability = operation === 'generate' ? 'imageGeneration' : 'imageEditing';
+    const eligible = this.all().flatMap(({ config }) =>
+      config.enabled ? config.models.filter((model) => model[capability] === true)
+        .map((model) => `${config.id}/${model.id}`) : [],
+    );
+    if (eligible.length === 1) return { entries: eligible, requireCapability: true };
+    return { entries: [`${ENV_PROVIDER_ID}/${DEFAULT_IMAGE_MODEL}`], requireCapability: false };
+  }
+
   view(): LlmSettingsView {
     const providers: LlmProviderView[] = this.all().map(({ config, source }) => {
       const r = this.resolve(config.id)!;
@@ -233,7 +257,15 @@ export class LlmProviderStore {
     const parsed = RoutesSchema.parse(routes);
     for (const [name, entries] of Object.entries(parsed)) {
       for (const entry of entries) {
-        if (!this.get(splitRouteEntry(entry).providerId)) throw new LocalizedError(both('store.provider.unknownInRoute', { route: name, entry }), 'en');
+        const { providerId, model } = splitRouteEntry(entry);
+        const found = this.get(providerId);
+        if (!found) throw new LocalizedError(both('store.provider.unknownInRoute', { route: name, entry }), 'en');
+        if (name === IMAGE_ROUTE) {
+          const declared = found.config.models.find((candidate) => candidate.id === model);
+          if (!declared || (declared.imageGeneration !== true && declared.imageEditing !== true)) {
+            throw new Error(`Image model "${entry}" must be declared with imageGeneration and/or imageEditing enabled in the provider model list`);
+          }
+        }
       }
     }
     this.routes = Object.fromEntries(Object.entries(parsed).filter(([, entries]) => entries.length > 0));
