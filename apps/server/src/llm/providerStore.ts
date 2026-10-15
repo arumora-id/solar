@@ -201,6 +201,7 @@ export class LlmProviderStore {
         .map((model) => `${config.id}/${model.id}`) : [],
     );
     if (eligible.length === 1) return { entries: eligible, requireCapability: true };
+    if (eligible.length > 1) throw new Error(`Multiple models support image ${operation}; choose a Preferred image model in Settings → Model AI`);
     return { entries: [`${ENV_PROVIDER_ID}/${DEFAULT_IMAGE_MODEL}`], requireCapability: false };
   }
 

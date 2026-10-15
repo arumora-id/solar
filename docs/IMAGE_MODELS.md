@@ -26,5 +26,5 @@ The chat LLM route is never used as an image fallback. API credentials are maske
 - v1.0.5 explicit `image-generation` and `image-edit` model routes remain active until changed in the UI; no data migration is required.
 - An existing image model without capability flags can still run through the old routes for compatibility.
 - If no image routes are configured and there is exactly one capability-marked model for an operation, that model is selected.
-- If multiple different models are marked for an operation and no route is configured, the historic `openai/gpt-image-2` fallback remains. Configure the Preferred image model explicitly to avoid ambiguity.
+- If multiple different models are marked for an operation and no route is configured, SOLAR asks for an explicit Preferred image model instead of silently sending images to a different provider.
 - Existing provider/model config is retained in the `data/llm.json` bind mount.

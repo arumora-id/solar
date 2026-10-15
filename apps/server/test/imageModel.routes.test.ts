@@ -53,14 +53,14 @@ describe('capability-based image model routing', () => {
     } finally { await cleanup(); }
   });
 
-  it('falls back to env image model only when no explicit or unique image-capable model is present', async () => {
+  it('requires an explicit preferred model if multiple providers advertise image generation', async () => {
     const { store, cleanup } = await fixture();
     try {
       await store.create({
         id: 'second', name: 'Another image provider', kind: 'openai-chat', enabled: true,
         models: [{ id: 'another', imageGeneration: true }],
       });
-      expect(store.imageRoute('generate').entries).toEqual(['openai/gpt-image-2']);
+      expect(() => store.imageRoute('generate')).toThrow('choose a Preferred image model');
       expect(store.imageRoute('edit').entries).toEqual(['omniroute/both-operations']);
     } finally { await cleanup(); }
   });
