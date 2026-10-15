@@ -75,6 +75,14 @@ export const settings: Dict['settings'] = {
       appliesHint: 'Takes effect from the next task, no restart needed.',
     },
 
+    imageRoutes: {
+      title: 'Image models (Generate / Edit)',
+      hint: 'Select a separate provider/model for /images/generations and /images/edits. Use Base URL https://router.mesthi.com/v1 (without /images/generations) and configure the provider API key. Image routes do not affect chat routing. The image skill remains Superadmin-only and must be enabled.',
+      generate: 'Generate Image — provider/model',
+      edit: 'Edit Image — provider/model',
+      save: 'Save image models',
+      reset: 'Reset to OpenAI gpt-image-2',
+    },
     providers: 'Providers',
     addProvider: 'Add provider',
     newProvider: 'New provider',
@@ -85,7 +93,7 @@ export const settings: Dict['settings'] = {
       ollama: 'Ollama (local)',
     },
     presetHint: {
-      omniroute: 'Change the host/port to match your OmniRoute installation.',
+      omniroute: 'Starting URL: https://router.mesthi.com/v1. Change it for a different gateway.',
       ollama: 'No API key needed. Add the models you have already pulled.',
     },
     fields: {

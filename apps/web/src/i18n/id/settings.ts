@@ -87,6 +87,14 @@ export const settings = {
       appliesHint: 'Berlaku untuk task berikutnya, tanpa restart.',
     },
 
+    imageRoutes: {
+      title: 'Model gambar (Generate / Edit)',
+      hint: 'Pilih provider/model khusus untuk API /images/generations dan /images/edits. Gunakan Base URL https://router.mesthi.com/v1 (tanpa /images/generations), lalu isi API key pada provider. Model gambar tidak mengubah rute percakapan. Skill gambar tetap khusus Superadmin dan harus diaktifkan.',
+      generate: 'Generate Image — provider/model',
+      edit: 'Edit Image — provider/model',
+      save: 'Simpan model gambar',
+      reset: 'Kembali ke OpenAI gpt-image-2',
+    },
     providers: 'Provider',
     addProvider: 'Tambah provider',
     newProvider: 'Provider baru',
@@ -99,7 +107,7 @@ export const settings = {
     },
     /** Shown under the preset buttons after one is picked. */
     presetHint: {
-      omniroute: 'Ganti host/port sesuai instalasi OmniRoute Anda.',
+      omniroute: 'URL awal: https://router.mesthi.com/v1. Sesuaikan jika menggunakan gateway lain.',
       ollama: 'Tanpa API key. Tambahkan model yang sudah di-pull.',
     },
     fields: {

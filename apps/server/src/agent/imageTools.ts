@@ -1,6 +1,6 @@
 import OpenAI, { toFile } from 'openai';
 import { z } from 'zod';
-import type { AppConfig } from '../config.js';
+import { IMAGE_EDIT_ROUTE, IMAGE_GENERATION_ROUTE, splitRouteEntry, type LlmProviderStore } from '../llm/providerStore.js';
 import type { AttachmentService } from '../tasks/attachmentService.js';
 import type { ArtifactService } from '../tasks/artifactService.js';
 import type { AgentTool, ToolOutput } from './types.js';
@@ -9,7 +9,7 @@ import { zodTool } from './zodTool.js';
 const MAX_INPUT_BYTES = 20 * 1024 * 1024;
 
 export function createImageTools(
-  config: AppConfig,
+  providers: LlmProviderStore,
   artifacts: ArtifactService,
   attachments: AttachmentService,
 ): AgentTool[] {
@@ -38,7 +38,6 @@ export function createImageTools(
     },
     async execute(input, ctx) {
       if (ctx.requester?.role !== 'superadmin') throw new Error('Superadmin only');
-      if (!config.openai.apiKey) throw new Error('OPENAI_API_KEY is required for image generation');
       let source: { bytes: Buffer; mime: 'image/png' | 'image/jpeg' | 'image/webp'; name: string } | null = null;
       if (input.source_attachment_id) {
         const a = ctx.attachments.find((x) => x.id === input.source_attachment_id);
@@ -51,33 +50,63 @@ export function createImageTools(
         source = { bytes: await artifacts.read(a), mime: a.mimeType as 'image/png' | 'image/jpeg' | 'image/webp', name: a.name };
       }
       if (source && (source.bytes.length === 0 || source.bytes.length > MAX_INPUT_BYTES)) throw new Error('Source image must be between 1 byte and 20 MB');
-      const client = new OpenAI({
-        apiKey: config.openai.apiKey,
-        ...(config.openai.baseUrl ? { baseURL: config.openai.baseUrl } : {}),
-        timeout: 120_000,
-        maxRetries: 1,
-      });
-      const output = source
-        ? await client.images.edit({
-            model: 'gpt-image-2',
-            image: await toFile(source.bytes, source.name, { type: source.mime }),
-            prompt: input.prompt,
-            size: input.size,
-            output_format: 'png',
-          })
-        : await client.images.generate({
-            model: 'gpt-image-2',
-            prompt: input.prompt,
-            size: input.size,
-            output_format: 'png',
+      // Each image endpoint has its own primary/fallback list configured in Settings → Model AI.
+      // The base URL is the API root (e.g. https://router.mesthi.com/v1), not a full /images/... URL.
+      const routeName = source ? IMAGE_EDIT_ROUTE : IMAGE_GENERATION_ROUTE;
+      const entries = providers.route(routeName);
+      let bytes: Buffer | undefined;
+      let lastError = 'No usable provider configured';
+      for (const entry of entries) {
+        if (ctx.signal.aborted) throw new Error('Task cancelled');
+        const { providerId, model } = splitRouteEntry(entry);
+        const provider = providers.resolve(providerId);
+        if (!provider || !provider.config.enabled) {
+          lastError = `Image provider "${providerId}" is unavailable or disabled`;
+          continue;
+        }
+        if (!provider.apiKey && !provider.baseUrl) {
+          lastError = `Image provider "${providerId}" has no API key or local base URL`;
+          continue;
+        }
+        try {
+          const client = new OpenAI({
+            apiKey: provider.apiKey || 'not-needed',
+            ...(provider.baseUrl ? { baseURL: provider.baseUrl } : {}),
+            ...(provider.organization ? { organization: provider.organization } : {}),
+            ...(provider.project ? { project: provider.project } : {}),
+            defaultHeaders: provider.headers,
+            timeout: 120_000,
+            maxRetries: 1,
           });
-      if (ctx.signal.aborted) throw new Error('Task cancelled before image was saved');
-      const encoded = output.data?.[0]?.b64_json;
-      if (!encoded) throw new Error('Image provider returned no image data');
-      const bytes = Buffer.from(encoded, 'base64');
-      if (bytes.length < 16 || !bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) {
-        throw new Error('Image provider did not return a valid PNG');
+          const output = source
+            ? await client.images.edit({
+                model,
+                image: await toFile(source.bytes, source.name, { type: source.mime }),
+                prompt: input.prompt,
+                size: input.size,
+                output_format: 'png',
+              }, { signal: ctx.signal })
+            : await client.images.generate({
+                model,
+                prompt: input.prompt,
+                size: input.size,
+                output_format: 'png',
+              }, { signal: ctx.signal });
+          const encoded = output.data?.[0]?.b64_json;
+          if (!encoded) throw new Error('Image provider returned no base64 image data');
+          const candidate = Buffer.from(encoded, 'base64');
+          if (candidate.length < 16 || !candidate.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
+            throw new Error('Image provider did not return a valid PNG');
+          }
+          bytes = candidate;
+          break;
+        } catch (error) {
+          if (ctx.signal.aborted) throw new Error('Task cancelled');
+          lastError = error instanceof Error ? error.message : String(error);
+        }
       }
+      if (!bytes) throw new Error(`Image request failed (${routeName}): ${lastError}`);
+      if (ctx.signal.aborted) throw new Error('Task cancelled before image was saved');
       const artifact = await ctx.createArtifact({
         name: source ? 'edited-image.png' : 'generated-image.png',
         title: input.title,

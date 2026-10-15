@@ -13,6 +13,10 @@ import { slugify } from '../util/ids.js';
 /** The provider defined by OPENAI_* in .env. Always present, read-only in the UI. */
 export const ENV_PROVIDER_ID = 'openai';
 export const DEFAULT_ROUTE = 'default';
+/** Image endpoints use independent routes; they do not change the chat model. */
+export const IMAGE_GENERATION_ROUTE = 'image-generation';
+export const IMAGE_EDIT_ROUTE = 'image-edit';
+export const DEFAULT_IMAGE_MODEL = 'gpt-image-2';
 
 const VAR_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
 
@@ -171,7 +175,9 @@ export class LlmProviderStore {
 
   route(name = DEFAULT_ROUTE): string[] {
     const routes = this.effectiveRoutes();
-    return routes[name]?.length ? routes[name]! : routes[DEFAULT_ROUTE]!;
+    if (routes[name]?.length) return routes[name]!;
+    if (name === IMAGE_GENERATION_ROUTE || name === IMAGE_EDIT_ROUTE) return [`${ENV_PROVIDER_ID}/${DEFAULT_IMAGE_MODEL}`];
+    return routes[DEFAULT_ROUTE]!;
   }
 
   view(): LlmSettingsView {
