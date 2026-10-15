@@ -119,7 +119,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
       plugins,
       mcp,
       attachments,
-      builtinTools: [...createBuiltinTools({ config, skills, artifacts, attachments }), ...createKnowledgeTools(knowledge, artifacts), ...createImageTools(config, artifacts, attachments), ...(options.extraTools ?? [])],
+      builtinTools: [...createBuiltinTools({ config, skills, artifacts, attachments }), ...createKnowledgeTools(knowledge, artifacts), ...createImageTools(llm, artifacts, attachments), ...(options.extraTools ?? [])],
     }),
   );
 
