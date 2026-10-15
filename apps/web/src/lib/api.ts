@@ -7,6 +7,7 @@ import type {
   AuthMe,
   AuthState,
   Confirmation,
+  ContentProposal,
   CreateTaskRequest,
   KnowledgeEntry,
   KnowledgeFile,
@@ -301,6 +302,15 @@ export const api = {
   confirmations: () => request<Confirmation[]>('GET', '/api/confirmations'),
   resolveConfirmation: (id: string, approved: boolean, note?: string) =>
     request<{ ok: true }>('POST', `/api/confirmations/${encodeURIComponent(id)}`, { approved, note }),
+  contentProposals: () => request<ContentProposal[]>('GET', '/api/content-proposals'),
+  createContentProposal: (input: { kind: 'skill' | 'knowledge'; title: string; description?: string; path?: string; content: string }) =>
+    request<ContentProposal>('POST', '/api/content-proposals', input),
+  updateContentProposal: (id: string, input: { kind: 'skill' | 'knowledge'; title: string; description?: string; path?: string; content: string }) =>
+    request<ContentProposal>('PUT', `/api/content-proposals/${encodeURIComponent(id)}`, input),
+  submitContentProposal: (id: string) => request<ContentProposal>('POST', `/api/content-proposals/${encodeURIComponent(id)}/submit`, {}),
+  publishContentProposal: (id: string) => request<ContentProposal>('POST', `/api/content-proposals/${encodeURIComponent(id)}/publish`, {}),
+  reviewContentProposal: (id: string, approved: boolean, reason: string) =>
+    request<ContentProposal>('POST', `/api/content-proposals/${encodeURIComponent(id)}/review`, { approved, reason }),
   skills: () => request<SkillDetail[]>('GET', '/api/skills'),
   createSkill: (input: SkillInput) => request<SkillDetail>('POST', '/api/skills', input),
   importSkill: (markdown: string) => request<SkillDetail>('POST', '/api/skills/import', { markdown }),

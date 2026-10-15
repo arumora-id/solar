@@ -16,6 +16,7 @@ import { knowledgeIntro } from './knowledgeTools.js';
 import { createMcpTools } from './mcpTools.js';
 import { estimateCostUsd } from './models.js';
 import { buildSystemPrompt } from './systemPrompt.js';
+import { selectAgentTools } from './roleTools.js';
 import type { AgentTool, ToolResultContent } from './types.js';
 
 // The Responses API transport types and the tool-output conversion live in the LLM layer; re-exported for tests.
@@ -68,18 +69,26 @@ export function createAgentRunner(deps: AgentDeps): TaskRunner {
   return async (ctx: TaskRunContext) => {
     // Tools and instructions are frozen for the whole task: the input stays append-only,
     // which keeps the prompt cache warm and the encrypted reasoning items valid.
-    const tools = [...deps.builtinTools, ...createMcpTools(deps.mcp)];
+    const isStaff = ctx.requester?.role === 'staff';
+    const canUseImages = ctx.requester?.role === 'superadmin' && (await deps.skills.get('image-creation'))?.enabled === true;
+    // Scope tool specifications before passing anything to the model. A hidden
+    // admin menu alone is not enough: the agent must not see or call those tools.
+    const tools = selectAgentTools(
+      ctx.requester?.role, canUseImages, deps.builtinTools,
+      isStaff ? [] : createMcpTools(deps.mcp),
+    );
+    const builtinTools = tools.filter((tool) => tool.source !== 'mcp');
     const toolMap = new Map(tools.map((t) => [t.name, t]));
-    const connected = deps.mcp.statuses().filter((s) => s.state === 'connected');
-    const knowledge = await deps.knowledge.list();
+    const connected = isStaff ? [] : deps.mcp.statuses().filter((s) => s.state === 'connected');
+    const knowledge = isStaff ? [] : await deps.knowledge.list();
     const instructions = buildSystemPrompt({
       config,
-      skills: await deps.skills.list(),
+      skills: isStaff ? [] : await deps.skills.list(),
       knowledge,
       plugins: connected
         .map((s) => ({ config: deps.plugins.get(s.id), toolCount: deps.mcp.bindings().filter((b) => b.plugin.id === s.id).length }))
         .filter((p): p is { config: NonNullable<typeof p.config>; toolCount: number } => Boolean(p.config)),
-      builtinToolNames: deps.builtinTools.map((t) => t.name),
+      builtinToolNames: builtinTools.map((t) => t.name),
     });
     const toolSpecs = tools.map((t) => ({ name: t.name, description: t.description, parameters: t.inputSchema }));
 
@@ -92,7 +101,7 @@ export function createAgentRunner(deps: AgentDeps): TaskRunner {
         ? `<session_history>\nEarlier requests in this conversation (oldest first). Their artifacts can be read with read_artifact and their documents with read_document.\n${ctx.sessionContext}\n</session_history>`
         : '',
       await documentsIntro(ctx.attachments, deps.attachments),
-      await knowledgeIntro(deps.knowledge, knowledge, ctx.task.prompt, ctx.attachments.map((a) => a.name)),
+      ...(isStaff ? [] : [await knowledgeIntro(deps.knowledge, knowledge, ctx.task.prompt, ctx.attachments.map((a) => a.name))]),
       `<request>\n${ctx.task.prompt}\n</request>`,
     ]
       .filter(Boolean)

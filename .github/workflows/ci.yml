@@ -34,6 +34,14 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Responsive UI smoke tests
         run: node scripts/ui-layout-smoke.mjs
+      - name: Role governance, content workflow and image permissions QA (Chromium)
+        run: node scripts/content-governance-qa.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: solar-governance-qa-screenshots
+          path: ${{ runner.temp }}/solar-governance-screenshots/*.png
+          if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -72,10 +72,13 @@ export class SkillStore {
 
   private async disabledIds(): Promise<Set<string>> {
     try {
-      const raw = JSON.parse(await readFile(this.stateFile, 'utf8')) as { disabled?: string[] };
-      return new Set(raw.disabled ?? []);
+      const raw = JSON.parse(await readFile(this.stateFile, 'utf8')) as { disabled?: string[]; imageSkillEnabled?: boolean };
+      const disabled = new Set(raw.disabled ?? []);
+      // Opt-in: existing installations must NOT gain image generation on upgrade.
+      if (raw.imageSkillEnabled !== true) disabled.add('image-creation');
+      return disabled;
     } catch {
-      return new Set();
+      return new Set(['image-creation']);
     }
   }
 
@@ -83,7 +86,8 @@ export class SkillStore {
     const set = await this.disabledIds();
     if (disabled) set.add(id);
     else set.delete(id);
-    await writeFileAtomic(this.stateFile, JSON.stringify({ disabled: [...set].sort() }, null, 2));
+    const imageSkillEnabled = id === 'image-creation' ? !disabled : !set.has('image-creation');
+    await writeFileAtomic(this.stateFile, JSON.stringify({ disabled: [...set].sort(), imageSkillEnabled }, null, 2));
   }
 
   private async readSkillDir(dir: string, id: string, source: SkillSource, disabled: Set<string>): Promise<SkillDetail | null> {

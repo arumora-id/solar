@@ -91,7 +91,9 @@ beforeAll(async () => {
   server = await startAuthServer({
     config: authTestConfig({ SOLAR_ACCESS_TOKEN: TEST_ACCESS_TOKEN, SOLAR_ADMIN_USERNAME: 'root', SOLAR_ADMIN_EMAIL: 'root@solar.test', SOLAR_ADMIN_PASSWORD: STRONG_PASSWORD, SOLAR_ADMIN_NAME: 'Root Admin' }, dataDir),
     responses: model,
-    extraTools: [approvalTool],
+    // This is a synthetic approval tool, not an administrator-configured MCP integration.
+    // Production MCP tools stay unavailable to Staff by design.
+    extraTools: [{ ...approvalTool, source: 'builtin', pluginId: undefined }],
   });
   root = new Client(server.url);
   const login = await root.login('root');
@@ -200,12 +202,12 @@ describe('tasks, approvals, the agent, knowledge, skills and settings', () => {
     const c1 = await pendingFor(alice, t1.id);
     expect((await alice.post(`/api/confirmations/${c1.id}`, { approved: true })).status).toBe(200);
     await finished(alice, t1.id);
-    // the agent saves a knowledge file once alice approves it
-    const t2 = (await alice.post<Task>('/api/tasks', { prompt: '[kb] keep AUDITGATE', sessionId: 's-act', language: 'en' })).body;
-    const c2 = await pendingFor(alice, t2.id);
+    // the agent saves a knowledge file once a superadmin approves it
+    const t2 = (await root.post<Task>('/api/tasks', { prompt: '[kb] keep AUDITGATE', sessionId: 's-act', language: 'en' })).body;
+    const c2 = await pendingFor(root, t2.id);
     expect(c2.tool).toBe('save_knowledge');
-    expect((await alice.post(`/api/confirmations/${c2.id}`, { approved: true })).status).toBe(200);
-    expect((await finished(alice, t2.id)).task.status).toBe('completed');
+    expect((await root.post(`/api/confirmations/${c2.id}`, { approved: true })).status).toBe(200);
+    expect((await finished(root, t2.id)).task.status).toBe('completed');
     // a task cancelled while it waits; its approval is declined first by another one
     const t3 = (await alice.post<Task>('/api/tasks', { prompt: '[approve] and then cancel', sessionId: 's-act' })).body;
     const c3 = await pendingFor(alice, t3.id);
@@ -215,13 +217,13 @@ describe('tasks, approvals, the agent, knowledge, skills and settings', () => {
     expect((await alice.post(`/api/tasks/${t4.id}/cancel`)).status).toBe(200);
 
     // knowledge by hand
-    expect((await alice.put('/api/knowledge/file', { path: 'systems/HANDMADE.md', content: '# Handmade\n' })).status).toBe(200);
-    expect((await alice.delete('/api/knowledge/file?path=systems/HANDMADE.md')).status).toBe(200);
+    expect((await root.put('/api/knowledge/file', { path: 'systems/HANDMADE.md', content: '# Handmade\n' })).status).toBe(200);
+    expect((await root.delete('/api/knowledge/file?path=systems/HANDMADE.md')).status).toBe(200);
     // skills (a name that a spreadsheet would run as a formula)
-    const skill = (await alice.post<{ id: string }>('/api/skills', { name: '=HYPERLINK("http://evil.test")', description: 'x', content: 'Do things.' })).body;
-    expect((await alice.put(`/api/skills/${skill.id}`, { enabled: false })).status).toBe(200);
-    expect((await alice.put(`/api/skills/${skill.id}`, { content: 'Do other things.' })).status).toBe(200);
-    expect((await alice.delete(`/api/skills/${skill.id}`)).status).toBe(200);
+    const skill = (await root.post<{ id: string }>('/api/skills', { name: '=HYPERLINK("http://evil.test")', description: 'x', content: 'Do things.' })).body;
+    expect((await root.put(`/api/skills/${skill.id}`, { enabled: false })).status).toBe(200);
+    expect((await root.put(`/api/skills/${skill.id}`, { content: 'Do other things.' })).status).toBe(200);
+    expect((await root.delete(`/api/skills/${skill.id}`)).status).toBe(200);
     // settings, with secrets in their bodies
     expect(
       (await root.post('/api/llm/providers', { id: 'acme', name: 'Acme AI', kind: 'openai-chat', baseUrl: 'http://127.0.0.1:9/v1', apiKey: PROVIDER_KEY, headers: { 'X-Key': PROVIDER_KEY }, models: [{ id: 'acme-1' }] })).status,
@@ -238,17 +240,18 @@ describe('tasks, approvals, the agent, knowledge, skills and settings', () => {
     const mine = await all(alice);
     expect(find(mine, 'task.create', (e) => e.targetId === t1.id)).toMatchObject({ targetLabel: '[approve] write it', details: { language: 'id', attachments: 0 } });
     expect(find(mine, 'confirmation.approve', (e) => e.details?.taskId === t1.id)).toMatchObject({ targetType: 'confirmation', details: { tool: 'test_external_write' } });
-    expect(find(mine, 'knowledge.write', (e) => e.details?.via === 'agent')).toMatchObject({
-      actorId: users.alice.id,
-      actorName: 'Alice Staff',
+    const adminEvents = await all(root, `actor=${users.root.id}`);
+    expect(find(adminEvents, 'knowledge.write', (e) => e.details?.via === 'agent')).toMatchObject({
+      actorId: users.root.id,
+      actorName: 'Root Admin',
       targetId: 'systems/AUDITGATE.md',
       details: { via: 'agent', taskId: t2.id, replaced: null },
       ip: null,
     });
     expect(find(mine, 'task.cancel', (e) => e.targetId === t4.id)).toBeDefined();
-    expect(find(mine, 'knowledge.write', (e) => e.targetId === 'systems/HANDMADE.md')).toBeDefined();
-    expect(find(mine, 'knowledge.delete', (e) => e.targetId === 'systems/HANDMADE.md')).toBeDefined();
-    expect(mine.filter((e) => e.action.startsWith('skill.')).map((e) => e.action).reverse()).toEqual(['skill.create', 'skill.disable', 'skill.update', 'skill.delete']);
+    expect(find(adminEvents, 'knowledge.write', (e) => e.targetId === 'systems/HANDMADE.md')).toBeDefined();
+    expect(find(adminEvents, 'knowledge.delete', (e) => e.targetId === 'systems/HANDMADE.md')).toBeDefined();
+    expect(adminEvents.filter((e) => e.action.startsWith('skill.')).map((e) => e.action).reverse()).toEqual(['skill.create', 'skill.disable', 'skill.update', 'skill.delete']);
     // declined by the Head of IT: in the Head's log, not alice's
     expect(find(mine, 'confirmation.reject')).toBeUndefined();
     expect(find(await all(head, `actor=${users.head.id}`), 'confirmation.reject', (e) => e.details?.taskId === t3.id)).toBeDefined();
@@ -284,7 +287,7 @@ describe('tasks, approvals, the agent, knowledge, skills and settings', () => {
 describe('who sees what', () => {
   it('staff see only their own entries, whatever they ask for; head and superadmin see everyone', async () => {
     const own = await all(alice, `actor=${users.root.id}`);
-    expect(own.length).toBeGreaterThan(5);
+    expect(own.length).toBeGreaterThan(3);
     expect(own.every((e) => e.actorId === users.alice.id)).toBe(true);
     const everyone = await all(head);
     expect(everyone.some((e) => e.actorId === users.root.id)).toBe(true);
@@ -421,12 +424,12 @@ describe('refused attempts, names people choose, stored text', () => {
     expect(task.status).toBe(201);
     // the title is cut between characters, never inside the emoji
     expect(task.body.title).toBe(`${'x'.repeat(86)}...`);
-    const kb = await alice.put('/api/knowledge/file', { path: 'systems/SPOOF.md', content: '---\ntitle: "invoice‮fdp.exe"\n---\n# T\ud800\n' });
+    const kb = await root.put('/api/knowledge/file', { path: 'systems/SPOOF.md', content: '---\ntitle: "invoice‮fdp.exe"\n---\n# T\ud800\n' });
     expect(kb.status).toBe(200);
     await finished(alice, task.body.id);
     const mine = await all(alice);
     expect(find(mine, 'task.create', (e) => e.targetId === task.body.id)).toMatchObject({ targetLabel: `${'x'.repeat(86)}...`, details: { sessionId: 's�' } });
-    expect(find(mine, 'knowledge.write', (e) => e.targetId === 'systems/SPOOF.md')!.details).toMatchObject({ title: 'invoice�fdp.exe' });
+    expect(find(await all(root, `actor=${users.root.id}`), 'knowledge.write', (e) => e.targetId === 'systems/SPOOF.md')!.details).toMatchObject({ title: 'invoice�fdp.exe' });
     const onDisk = readdirSync(join(dataDir, 'activity'))
       .map((f) => readFileSync(join(dataDir, 'activity', f), 'utf8'))
       .join('\n');

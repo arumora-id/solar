@@ -217,11 +217,18 @@ try {
     assert.equal(await page.locator('.monitor-task-list tbody tr').count(), expected, `Page size ${size} ignored`);
   }
   await page.locator('.monitor-page-controls button').last().click();
-  await page.waitForFunction(() => document.querySelector('.monitor-page-number')?.textContent?.includes('2 / 3'));
-  await page.waitForFunction(() => document.querySelectorAll('.monitor-task-list tbody tr').length === 5);
+  await page.waitForFunction(() =>
+    document.querySelector('.monitor-page-number')?.textContent?.includes('2 / 3') &&
+    document.querySelectorAll('.monitor-task-list tbody tr').length === 5 &&
+    document.querySelector('.monitor-task-list tbody tr')?.textContent?.includes('Archive monitor task 8'),
+  );
   assert.equal(await page.locator('.monitor-task-list tbody tr').count(), 5, 'Second page has wrong count');
   await page.locator('.monitor-page-controls button').first().click();
-  await page.waitForFunction(() => document.querySelector('.monitor-page-number')?.textContent?.includes('1 / 3'));
+  await page.waitForFunction(() =>
+    document.querySelector('.monitor-page-number')?.textContent?.includes('1 / 3') &&
+    document.querySelectorAll('.monitor-task-list tbody tr').length === 5 &&
+    document.querySelector('.monitor-task-list tbody tr')?.textContent?.includes('Archive monitor task 13'),
+  );
   await page.locator('.filters input[type="search"]').fill('token-13');
   await page.waitForFunction(() => document.querySelector('.monitor-task-list h2')?.textContent === 'Tasks (1)');
   assert.equal(await page.locator('.monitor-task-list tbody tr').count(), 1, 'Full-history search did not apply');

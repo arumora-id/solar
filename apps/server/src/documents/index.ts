@@ -83,6 +83,8 @@ async function dispatch(ctx: ParseContext): Promise<ParsedDocument> {
     case 'markdown':
     case 'text':
       return { kind, markdown: decodeText(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength), lang), parts: null };
+    case 'image':
+      return { kind, markdown: '[Image input: use image editing tool to inspect and edit the binary]', parts: null };
     case 'csv': {
       const text = decodeText(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength), lang);
       const { markdown, warnings: csvWarnings } = csvToMarkdown(text, titleOf(ctx.fileName), lang);

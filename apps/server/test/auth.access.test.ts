@@ -84,7 +84,9 @@ beforeAll(async () => {
   server = await startAuthServer({
     config: authTestConfig({ SOLAR_ACCESS_TOKEN: TEST_ACCESS_TOKEN, SOLAR_ADMIN_USERNAME: 'root', SOLAR_ADMIN_EMAIL: 'root@solar.test', SOLAR_ADMIN_PASSWORD: STRONG_PASSWORD }, dataDir),
     responses: model,
-    extraTools: [approvalTool],
+    // This is a synthetic approval tool, not an administrator-configured MCP integration.
+    // Production MCP tools stay unavailable to Staff by design.
+    extraTools: [{ ...approvalTool, source: 'builtin', pluginId: undefined }],
   });
   admin = tokenClient(server.url);
   const sa = await userClient(server.url, admin, 'sadmin', 'superadmin', 'Super Admin');
@@ -135,16 +137,29 @@ describe('role matrix', () => {
     expect(JSON.stringify(config.body)).not.toContain(TEST_ACCESS_TOKEN);
   });
 
-  it('staff: may use the agent, write the knowledge base and manage skills', async () => {
-    expect((await alice.get('/api/knowledge')).status).toBe(200);
-    expect((await alice.put('/api/knowledge/file', { path: 'systems/STAFF.md', content: '# Staff system' })).status).toBe(200);
-    expect((await alice.post('/api/knowledge/import', { files: [{ path: 'systems/IMPORTED.md', content: '# Imported' }] })).status).toBe(201);
-    expect((await alice.delete('/api/knowledge/file?path=systems/STAFF.md')).status).toBe(200);
-    expect((await alice.get('/api/skills')).status).toBe(200);
-    const skill = await alice.post<{ id: string }>('/api/skills', { name: 'Staff skill', description: 'by staff', content: 'Do things well.' });
-    expect(skill.status).toBe(201);
-    expect((await alice.put(`/api/skills/${skill.body.id}`, { enabled: false })).status).toBe(200);
-    expect((await alice.delete(`/api/skills/${skill.body.id}`)).status).toBe(200);
+  it('staff: may propose but cannot read or modify administrator Skills/Knowledge', async () => {
+    for (const [method, url, payload] of [
+      ['GET', '/api/knowledge'],
+      ['GET', '/api/knowledge/file?path=systems/secret.md'],
+      ['GET', '/api/knowledge/search?q=secret'],
+      ['PUT', '/api/knowledge/file', { path: 'systems/STAFF.md', content: '# Staff' }],
+      ['POST', '/api/knowledge/import', { files: [{ path: 'systems/IMPORTED.md', content: '# Imported' }] }],
+      ['DELETE', '/api/knowledge/file?path=systems/STAFF.md'],
+      ['GET', '/api/skills'],
+      ['POST', '/api/skills', { name: 'Unapproved', content: 'Do things.' }],
+      ['PUT', '/api/skills/image-creation', { enabled: true }],
+      ['DELETE', '/api/skills/image-creation'],
+    ] as Array<[string, string, unknown?]>) {
+      expect((await alice.call(method, url, payload)).status, `${method} ${url}`).toBe(403);
+    }
+    const draft = await alice.post<{ id: string; status: string }>('/api/content-proposals', {
+      kind: 'skill', title: 'Candidate Skill', description: 'by staff', content: '# Draft',
+    });
+    expect(draft.status).toBe(201);
+    expect(draft.body.status).toBe('draft');
+    expect((await bob.get<Array<{ id: string }>>('/api/content-proposals')).body).not.toContainEqual(expect.objectContaining({ id: draft.body.id }));
+    expect((await alice.post(`/api/content-proposals/${draft.body.id}/submit`)).body).toMatchObject({ status: 'submitted' });
+    expect((await alice.post(`/api/content-proposals/${draft.body.id}/publish`)).status).toBe(403);
   });
 
   it('head of IT: tasks of everyone and staff accounts, but no system settings and no admin accounts', async () => {
@@ -190,6 +205,134 @@ describe('role matrix', () => {
   it('superadmin: system settings', async () => {
     expect((await superadmin.get('/api/llm')).status).toBe(200);
     expect((await superadmin.get('/api/plugins')).status).toBe(200);
+  });
+});
+
+describe('staged content workflow and role isolation', () => {
+  it('keeps drafts private, requires two reviewer roles, and publishes only on request', async () => {
+    const skillPayload = { kind: 'skill', title: 'Release Checklist Review', description: 'From staff', content: '# Checklist' };
+    const draft = await alice.post<{ id: string; status: string }>('/api/content-proposals', skillPayload);
+    expect(draft.status).toBe(201);
+    expect(draft.body.status).toBe('draft');
+    const id = draft.body.id;
+    expect((await head.get<Array<{ id: string }>>('/api/content-proposals')).body.find((x) => x.id === id)).toBeUndefined();
+    expect((await bob.get<Array<{ id: string }>>('/api/content-proposals')).body.find((x) => x.id === id)).toBeUndefined();
+    expect((await bob.put(`/api/content-proposals/${id}`, skillPayload)).status).toBe(409);
+    expect((await alice.put(`/api/content-proposals/${id}`, { ...skillPayload, content: '# Updated checklist' })).body).toMatchObject({ status: 'draft', content: '# Updated checklist' });
+    expect((await head.post(`/api/content-proposals/${id}/review`, { approved: true })).status).toBe(409);
+    expect((await alice.post(`/api/content-proposals/${id}/submit`)).body).toMatchObject({ status: 'submitted' });
+    expect((await alice.put(`/api/content-proposals/${id}`, skillPayload)).status).toBe(409);
+    expect((await alice.post(`/api/content-proposals/${id}/review`, { approved: true })).status).toBe(403);
+    expect((await alice.post(`/api/content-proposals/${id}/publish`)).status).toBe(403);
+    expect((await superadmin.post(`/api/content-proposals/${id}/publish`)).status).toBe(409);
+    expect((await head.post(`/api/content-proposals/${id}/review`, { approved: true })).body).toMatchObject({ status: 'submitted' });
+    expect((await head.post(`/api/content-proposals/${id}/review`, { approved: true })).status).toBe(409);
+    expect((await superadmin.post(`/api/content-proposals/${id}/review`, { approved: true })).body).toMatchObject({ status: 'approved' });
+    expect((await head.get<Array<{ id: string }>>('/api/skills')).body.find((x) => x.id === 'release-checklist-review')).toBeUndefined();
+    const published = await head.post<{ status: string; publishedId: string }>(`/api/content-proposals/${id}/publish`, {});
+    expect(published.status).toBe(200);
+    expect(published.body).toMatchObject({ status: 'published', publishedId: 'release-checklist-review' });
+    expect((await head.get<Array<{ id: string; enabled: boolean }>>('/api/skills')).body.find((x) => x.id === 'release-checklist-review')?.enabled).toBe(false);
+    expect((await head.post(`/api/content-proposals/${id}/publish`, {})).status).toBe(409);
+    const skillFile = await head.get<{ content: string }>('/api/skills/release-checklist-review');
+    expect(skillFile.body.content).toContain(`<!-- solar-content-proposal:${id} -->`);
+    expect((await alice.get('/api/skills/release-checklist-review')).status).toBe(403);
+    expect((await bob.get<Array<{ id: string }>>('/api/content-proposals')).body.some((x) => x.id === id)).toBe(false);
+  });
+
+  it('publishes knowledge only after review, rejects with reason, never exposes it to staff', async () => {
+    const knowledgePayload = { kind: 'knowledge', title: 'Draft Guidance', path: 'reference/dual-approved-guidance.md', content: '# Approved guidance' };
+    const result = await alice.post<{ id: string }>('/api/content-proposals', knowledgePayload);
+    const id = result.body.id;
+    await alice.post(`/api/content-proposals/${id}/submit`, {});
+    await superadmin.post(`/api/content-proposals/${id}/review`, { approved: true });
+    expect((await head.get('/api/knowledge/file?path=reference/dual-approved-guidance.md')).status).toBe(404);
+    await head.post(`/api/content-proposals/${id}/review`, { approved: true });
+    expect((await head.get('/api/knowledge/file?path=reference/dual-approved-guidance.md')).status).toBe(404);
+    expect((await superadmin.post(`/api/content-proposals/${id}/publish`, {})).body).toMatchObject({ status: 'published', publishedId: knowledgePayload.path });
+    const approvedFile = await head.get<{ content: string }>('/api/knowledge/file?path=reference/dual-approved-guidance.md');
+    expect(approvedFile.status).toBe(200);
+    expect(approvedFile.body.content).toContain(`<!-- solar-content-proposal:${id} -->`);
+    expect((await bob.get('/api/knowledge/file?path=reference/dual-approved-guidance.md')).status).toBe(403);
+    const rejected = await bob.post<{ id: string }>('/api/content-proposals', { kind: 'skill', title: 'Bad draft', content: '# Incomplete' });
+    await bob.post(`/api/content-proposals/${rejected.body.id}/submit`, {});
+    expect((await head.post(`/api/content-proposals/${rejected.body.id}/review`, { approved: false, reason: '' })).status).toBe(409);
+    expect((await head.post(`/api/content-proposals/${rejected.body.id}/review`, { approved: false, reason: 'Incomplete sources' })).body).toMatchObject({ status: 'rejected', rejectionReason: 'Incomplete sources' });
+    expect((await superadmin.post(`/api/content-proposals/${rejected.body.id}/publish`, {})).status).toBe(409);
+  });
+
+  it('recovers an interrupted publication only when the existing destination belongs to that proposal', async () => {
+    const skillTitle = 'Interrupted Skill Publication';
+    const skillData = { kind: 'skill', title: skillTitle, description: 'Recovery test', content: '# Resumable instructions' };
+    const draft = await alice.post<{ id: string }>('/api/content-proposals', skillData);
+    const id = draft.body.id;
+    await alice.post(`/api/content-proposals/${id}/submit`, {});
+    await head.post(`/api/content-proposals/${id}/review`, { approved: true });
+    await superadmin.post(`/api/content-proposals/${id}/review`, { approved: true });
+
+    // Simulate SKILL.md written but its disabled-state and proposal status not persisted.
+    const marked = `${skillData.content}\n\n<!-- solar-content-proposal:${id} -->\n`;
+    const existing = await superadmin.post('/api/skills', {
+      name: skillTitle, description: skillData.description, content: marked, enabled: true,
+    });
+    expect(existing.status).toBe(201);
+    const recovered = await head.post<{ status: string; publishedId: string }>(
+      `/api/content-proposals/${id}/publish`, {},
+    );
+    expect(recovered.status).toBe(200);
+    expect(recovered.body).toMatchObject({ status: 'published', publishedId: 'interrupted-skill-publication' });
+    const after = await head.get<{ enabled: boolean }>('/api/skills/interrupted-skill-publication');
+    expect(after.body.enabled).toBe(false);
+
+    const collisionDraft = await bob.post<{ id: string }>('/api/content-proposals', {
+      kind: 'skill', title: 'Collision Protected', content: '# Staff proposed',
+    });
+    await bob.post(`/api/content-proposals/${collisionDraft.body.id}/submit`, {});
+    await head.post(`/api/content-proposals/${collisionDraft.body.id}/review`, { approved: true });
+    await superadmin.post(`/api/content-proposals/${collisionDraft.body.id}/review`, { approved: true });
+    await superadmin.post('/api/skills', { name: 'Collision Protected', content: '# Administrator original' });
+    expect((await head.post(`/api/content-proposals/${collisionDraft.body.id}/publish`, {})).status).toBe(409);
+    expect((await head.get<{ content: string }>('/api/skills/collision-protected')).body.content).toBe('# Administrator original');
+
+    const knowledgeDraft = await alice.post<{ id: string }>('/api/content-proposals', {
+      kind: 'knowledge', title: 'Recovery Knowledge', path: 'reference/recovery-knowledge.md', content: '# Stable content',
+    });
+    const kid = knowledgeDraft.body.id;
+    await alice.post(`/api/content-proposals/${kid}/submit`, {});
+    await superadmin.post(`/api/content-proposals/${kid}/review`, { approved: true });
+    await head.post(`/api/content-proposals/${kid}/review`, { approved: true });
+    await superadmin.put('/api/knowledge/file', {
+      path: 'reference/recovery-knowledge.md',
+      content: `# Stable content\n\n<!-- solar-content-proposal:${kid} -->\n`,
+    });
+    expect((await head.post(`/api/content-proposals/${kid}/publish`, {})).body)
+      .toMatchObject({ status: 'published', publishedId: 'reference/recovery-knowledge.md' });
+  });
+
+  it('blocks Staff and Head of IT from uploading raster images through the API directly', async () => {
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg==', 'base64');
+    for (const client of [alice, head]) {
+      for (const name of ['unauthorized.png', 'unauthorized.JPG', 'unauthorized.webp']) {
+        const result = await client.raw('POST', `/api/attachments?sessionId=image-access-qa&name=${name}`,
+          png, { 'Content-Type': 'application/octet-stream' });
+        expect(result.status, `${name} must be forbidden`).toBe(403);
+      }
+    }
+    const permitted = await superadmin.raw('POST', '/api/attachments?sessionId=image-access-qa&name=allowed.png',
+      png, { 'Content-Type': 'application/octet-stream' });
+    expect(permitted.status).toBe(201);
+    const created = await permitted.json() as { id: string; kind: string };
+    expect(created.kind).toBe('image');
+    expect((await superadmin.delete(`/api/attachments/${created.id}`)).status).toBe(204);
+  });
+
+  it('keeps built-in image creation disabled by default and Superadmin-only configurable', async () => {
+    const skills = (await head.get<Array<{ id: string; enabled: boolean }>>('/api/skills')).body;
+    expect(skills.find((x) => x.id === 'image-creation')).toMatchObject({ enabled: false });
+    expect((await head.put('/api/skills/image-creation', { enabled: true })).status).toBe(403);
+    expect((await alice.put('/api/skills/image-creation', { enabled: true })).status).toBe(403);
+    expect((await superadmin.put('/api/skills/image-creation', { enabled: true })).body).toMatchObject({ enabled: true });
+    expect((await superadmin.put('/api/skills/image-creation', { enabled: false })).body).toMatchObject({ enabled: false });
   });
 });
 
@@ -256,7 +399,7 @@ describe('task visibility', () => {
       ['GET', `/api/attachments/${aliceAttachment.id}/content`],
       ['DELETE', `/api/attachments/${aliceAttachment.id}`],
     ] as Array<[string, string, unknown?]>) {
-      expect((await bob.call(method, path, body)).status, `${method} ${path}`).toBe(404);
+      expect((await bob.call(method, path, body)).status, `${method} ${path}`).toBe(path === '/api/knowledge/import-artifact' ? 403 : 404);
     }
     expect((await bob.get<Attachment[]>('/api/attachments?sessionId=alice-session')).body).toEqual([]);
     // nor attach her upload to his own request (even naming her conversation)

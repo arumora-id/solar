@@ -9,6 +9,8 @@ import { createAgentRunner, type ResponsesStreamer } from './agent/agent.js';
 import { AuthService, type AuthServiceOptions } from './auth/authService.js';
 import { createBuiltinTools } from './agent/builtinTools.js';
 import { createKnowledgeTools } from './agent/knowledgeTools.js';
+import { createImageTools } from './agent/imageTools.js';
+import { ContentProposalStore } from './approvals/contentProposalStore.js';
 import type { AgentTool } from './agent/types.js';
 import { APP_NAME, APP_VERSION, loadConfig, type AppConfig } from './config.js';
 import { errorMessage, langOf, t } from './i18n.js';
@@ -102,6 +104,8 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   await skills.init();
   const knowledge = new KnowledgeStore(config.builtinKnowledgeDir, config.userKnowledgeDir);
   await knowledge.init();
+  const contentProposals = new ContentProposalStore(config.dataDir);
+  await contentProposals.init();
   const plugins = new PluginStore(config.dataDir, config.defaultPluginsFile);
   await plugins.init();
   const mcp = new McpManager(plugins, bus);
@@ -115,7 +119,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
       plugins,
       mcp,
       attachments,
-      builtinTools: [...createBuiltinTools({ config, skills, artifacts, attachments }), ...createKnowledgeTools(knowledge, artifacts), ...(options.extraTools ?? [])],
+      builtinTools: [...createBuiltinTools({ config, skills, artifacts, attachments }), ...createKnowledgeTools(knowledge, artifacts), ...createImageTools(config, artifacts, attachments), ...(options.extraTools ?? [])],
     }),
   );
 
@@ -123,7 +127,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   app.disable('x-powered-by');
   // X-Forwarded-For / -Proto / -Host are believed only from TRUST_PROXY hops (client address, Secure cookies)
   app.set('trust proxy', config.auth.trustProxy > 0 ? config.auth.trustProxy : false);
-  app.use('/api', createApiRouter({ config, repo, objectsKind: objects.kind, tasks, artifacts, attachments, bus, skills, plugins, mcp, knowledge, llm, models, auth, activity }));
+  app.use('/api', createApiRouter({ config, repo, objectsKind: objects.kind, tasks, artifacts, attachments, bus, skills, plugins, mcp, knowledge, llm, models, auth, activity, contentProposals }));
 
   if (existsSync(join(config.webDistDir, 'index.html'))) {
     app.use(

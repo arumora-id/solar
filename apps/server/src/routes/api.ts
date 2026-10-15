@@ -1,12 +1,14 @@
 import express, { type NextFunction, type Request, type Response, type Router } from 'express';
 import { zipSync, strToU8 } from 'fflate';
 import { z } from 'zod';
+import { slugify } from '../util/ids.js';
 import {
   ATTACHMENT_EXTENSIONS,
   can,
   LANGUAGES,
   type ActivityAction,
   type Artifact,
+  type ContentProposal,
   type Attachment,
   type KnowledgeType,
   type PluginView,
@@ -18,6 +20,7 @@ import {
 } from '@solar/shared';
 import type { ActivityInput, ActivityLog, ActivityTarget } from '../activity/activityLog.js';
 import type { AuthService, Principal } from '../auth/authService.js';
+import type { ContentProposalStore } from '../approvals/contentProposalStore.js';
 import { authenticate, principalOf, requestMeta, requirePermission, requireUser, sameOriginGuard } from '../auth/http.js';
 import { APP_NAME, APP_VERSION, type AppConfig } from '../config.js';
 import { errorMessage, langOf, t, taskLang, type Lang } from '../i18n.js';
@@ -61,6 +64,7 @@ export interface ApiDeps {
   models: ModelRouter;
   auth: AuthService;
   activity: ActivityLog;
+  contentProposals: ContentProposalStore;
 }
 
 declare global {
@@ -165,7 +169,7 @@ export function streamVisible(principal: Principal, scope: MessageScope | undefi
 }
 
 export function createApiRouter(deps: ApiDeps): Router {
-  const { config, tasks, artifacts, attachments, skills, plugins, mcp, bus, knowledge, llm, models, auth, activity } = deps;
+  const { config, tasks, artifacts, attachments, skills, plugins, mcp, bus, knowledge, llm, models, auth, activity, contentProposals } = deps;
   const r = express.Router();
   r.use(languageMiddleware);
   const jsonBody = express.json({ limit: '4mb' });
@@ -539,6 +543,9 @@ export function createApiRouter(deps: ApiDeps): Router {
   r.post('/attachments', requirePermission('agent.use'), uploadBody, async (req, res) => {
     const q = parse(z.object({ sessionId: z.string().trim().min(1).max(100), name: z.string().trim().min(1).max(300) }), req.query, req.lang);
     if (!Buffer.isBuffer(req.body) || req.body.length === 0) throw new HttpError(400, t(req.lang, 'api.fileEmpty'));
+    if (/\.(png|jpe?g|webp)$/i.test(q.name) && !can(principalOf(req).role, 'image.use')) {
+      throw new HttpError(403, 'Only Superadmin can attach images for editing');
+    }
     // the client may give up while the document is being read (chip removed, page left): then do not keep it
     let clientGone = false;
     res.on('close', () => {
@@ -597,6 +604,89 @@ export function createApiRouter(deps: ApiDeps): Router {
     res.status(204).end();
   });
 
+
+  // ---- Draft → Submitted → Approved / Rejected → Published -----------------------------
+  const proposeBody = z.discriminatedUnion('kind', [
+    z.object({
+      kind: z.literal('skill'), title: z.string().trim().min(1).max(80),
+      description: z.string().trim().max(1000).optional(),
+      content: z.string().trim().min(1).max(100_000),
+    }),
+    z.object({
+      kind: z.literal('knowledge'), title: z.string().trim().min(1).max(120),
+      path: z.string().trim().min(1).max(300),
+      content: z.string().trim().min(1).max(100_000),
+    }),
+  ]);
+
+  r.get('/content-proposals', (req, res) => {
+    const p = principalOf(req);
+    res.json(contentProposals.list(p.role, p.id));
+  });
+  r.post('/content-proposals', requirePermission('content.propose'), async (req, res) => {
+    const input = parse(proposeBody, req.body, req.lang);
+    const proposal = await contentProposals.create(input, principalOf(req).id);
+    res.status(201).json(proposal);
+  });
+  r.put('/content-proposals/:id', requirePermission('content.propose'), async (req, res) => {
+    const input = parse(proposeBody, req.body, req.lang);
+    try {
+      res.json(await contentProposals.update(req.params.id, principalOf(req).id, input));
+    } catch (err) { throw new HttpError(409, err instanceof Error ? err.message : String(err)); }
+  });
+  r.post('/content-proposals/:id/submit', requirePermission('content.propose'), async (req, res) => {
+    try {
+      res.json(await contentProposals.submit(req.params.id, principalOf(req).id));
+    } catch (err) { throw new HttpError(409, err instanceof Error ? err.message : String(err)); }
+  });
+  r.post('/content-proposals/:id/review', requirePermission('content.review'), async (req, res) => {
+    const p = principalOf(req);
+    if (p.role !== 'superadmin' && p.role !== 'head_of_it') throw new HttpError(403, 'Reviewer role required');
+    const input = parse(z.object({ approved: z.boolean(), reason: z.string().trim().max(2000).default('') }), req.body, req.lang);
+    try {
+      res.json(await contentProposals.review(req.params.id, p.role, p.id, input.approved, input.reason));
+    } catch (err) { throw new HttpError(409, err instanceof Error ? err.message : String(err)); }
+  });
+  r.post('/content-proposals/:id/publish', requirePermission('content.review'), async (req, res) => {
+    const p = principalOf(req);
+    if (p.role !== 'superadmin' && p.role !== 'head_of_it') throw new HttpError(403, 'Reviewer role required');
+    try {
+      res.json(await contentProposals.publish(req.params.id, p.role, p.id, async (entry: ContentProposal) => {
+        // Deterministic ownership marker permits safe retry after the destination was
+        // created but the staging store could not persist Published (power loss/disk error).
+        // A pre-existing admin file without this marker is never adopted or overwritten.
+        const body = `${entry.content.trimEnd()}\n\n<!-- solar-content-proposal:${entry.id} -->\n`;
+        if (entry.kind === 'skill') {
+          const id = slugify(entry.title, 'skill');
+          const existing = await skills.get(id);
+          if (existing) {
+            if (existing.source === 'user' && existing.name === entry.title
+              && existing.description === (entry.description ?? '')
+              && existing.content.trim() === body.trim()) {
+              // If the previous attempt stopped after writing SKILL.md but before
+              // updating its disabled state, retry must still keep it inactive.
+              if (existing.enabled) await skills.update(id, { enabled: false });
+              return id;
+            }
+            throw new Error('A Skill with that identifier already exists');
+          }
+          const created = await skills.create({
+            name: entry.title, description: entry.description ?? '', content: body, enabled: false,
+          });
+          return created.id;
+        }
+        if (!entry.path) throw new Error('Knowledge path is required');
+        const existing = await knowledge.locate(entry.path);
+        if (existing) {
+          const stored = await knowledge.read(existing.path);
+          if (existing.source === 'user' && stored?.content === body) return existing.path;
+          throw new Error('Knowledge path already exists');
+        }
+        return (await knowledge.write(entry.path, body)).path;
+      }));
+    } catch (err) { throw new HttpError(409, err instanceof Error ? err.message : String(err)); }
+  });
+
   // ---- skills ---------------------------------------------------------------
   const skillBody = z.object({
     name: z.string().trim().min(1).max(80),
@@ -642,6 +732,7 @@ export function createApiRouter(deps: ApiDeps): Router {
   });
 
   r.put('/skills/:id', manageSkills, async (req, res) => {
+    if (req.params.id === 'image-creation' && principalOf(req).role !== 'superadmin') throw new HttpError(403, 'Superadmin only');
     const body = onlySent(parse(skillBody.partial(), req.body, req.lang), req.body);
     const before = await skills.get(req.params.id);
     let updated;
@@ -659,6 +750,7 @@ export function createApiRouter(deps: ApiDeps): Router {
   });
 
   r.delete('/skills/:id', manageSkills, async (req, res) => {
+    if (req.params.id === 'image-creation') throw new HttpError(403, 'Built-in image skill cannot be removed');
     const before = await skills.get(req.params.id);
     let result;
     try {

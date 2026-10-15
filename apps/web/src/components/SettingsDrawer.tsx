@@ -9,6 +9,7 @@ import { reducedMotion } from '../lib/motion';
 import { CharacterCards } from './CharacterPicker';
 import { XIcon } from './Icons';
 import { ActivityPanel } from './settings/ActivityPanel';
+import { ContentProposalsPanel } from './settings/ContentProposalsPanel';
 import { KnowledgePanel } from './settings/KnowledgePanel';
 import { ModelsPanel } from './settings/ModelsPanel';
 import { PluginsPanel } from './settings/PluginsPanel';
@@ -17,7 +18,7 @@ import { SystemPanel } from './settings/SystemPanel';
 import { UsersPanel } from './settings/UsersPanel';
 import { VoicePanel } from './settings/VoicePanel';
 
-export type SettingsTab = 'character' | 'models' | 'knowledge' | 'skills' | 'plugins' | 'voice' | 'users' | 'activity' | 'system';
+export type SettingsTab = 'character' | 'models' | 'knowledge' | 'skills' | 'proposals' | 'plugins' | 'voice' | 'users' | 'activity' | 'system';
 
 /**
  * The tabs in order, with the permission each needs (the server refuses the rest anyway; a tab the role cannot use
@@ -29,6 +30,7 @@ const TABS: Array<{ id: SettingsTab; needs?: Permission }> = [
   { id: 'models', needs: 'settings.manage' },
   { id: 'knowledge', needs: 'knowledge.read' },
   { id: 'skills', needs: 'skills.read' },
+  { id: 'proposals' },
   { id: 'plugins', needs: 'settings.manage' },
   { id: 'voice' },
   { id: 'users', needs: 'users.view' },
@@ -125,6 +127,7 @@ export function SettingsDrawer({ request, onClose }: { request: SettingsRequest;
           {tab === 'models' && <ModelsPanel />}
           {tab === 'knowledge' && <KnowledgePanel />}
           {tab === 'skills' && <SkillsPanel />}
+          {tab === 'proposals' && <ContentProposalsPanel />}
           {tab === 'plugins' && <PluginsPanel />}
           {tab === 'voice' && <VoicePanel />}
           {tab === 'users' && <UsersPanel initialFilter={request.usersFilter} key={request.nonce} />}

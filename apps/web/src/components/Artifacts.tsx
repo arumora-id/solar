@@ -25,7 +25,7 @@ function groupTitle(a: Artifact, t: Dict): string {
 const isMarkdown = (a: Artifact) => a.kind === 'tsd-markdown' || a.mimeType.startsWith('text/markdown') || /\.md$/i.test(a.name);
 const isWord = (a: Artifact) => a.kind === 'tsd-docx' || /\.docx$/i.test(a.name);
 /** Files the browser can show as text or image; anything else (e.g. .docx) is offered as a download only. */
-const isViewable = (a: Artifact) => /^(text\/|image\/svg)|[/+](json|xml)\b/.test(a.mimeType);
+const isViewable = (a: Artifact) => /^(text\/|image\/)|[/+](json|xml)\b/.test(a.mimeType);
 
 /** Splits "order-platform-tsd.tsd.json" into "order-platform-tsd" and ".tsd.json": a long name wraps before the extension. */
 function splitName(name: string): [string, string] {
@@ -525,7 +525,7 @@ export function ArtifactPreview({
   const [text, setText] = useState<string | null>(null);
   const [error, setError] = useState<Failure | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
-  const isSvg = artifact.mimeType.startsWith('image/svg');
+  const isSvg = artifact.mimeType.startsWith('image/');
   const isHtml = artifact.mimeType.startsWith('text/html');
   const isMarkdown = artifact.kind === 'tsd-markdown';
   // binary files (Word) are never fetched as text: the dialog offers the download instead
