@@ -9,6 +9,8 @@ const builtins = [
   tool('load_skill'), tool('read_skill_file'), tool('publish_artifacts_to_github'),
   tool('plane_list_projects'), tool('plane_create_backlog_items'),
   tool('create_or_edit_image'),
+  tool('list_my_content_proposals'), tool('read_my_content_proposal'),
+  tool('create_content_proposal_draft'), tool('update_content_proposal_draft'), tool('submit_content_proposal'),
 ];
 const integrations = [tool('mcp__private__read_secrets', 'mcp'), tool('mcp__private__publish', 'mcp')];
 const names = (items: AgentTool[]) => items.map((x) => x.name);
@@ -16,7 +18,11 @@ const names = (items: AgentTool[]) => items.map((x) => x.name);
 describe('agent role tool isolation', () => {
   it('keeps admin Knowledge, Skill, integration and image tools out of Staff model tool specs', () => {
     const staff = selectAgentTools('staff', true, builtins, integrations);
-    expect(names(staff)).toEqual(['create_sequence_diagram', 'update_progress', 'read_artifact']);
+    expect(names(staff)).toEqual([
+      'create_sequence_diagram', 'update_progress', 'read_artifact',
+      'list_my_content_proposals', 'read_my_content_proposal', 'create_content_proposal_draft',
+      'update_content_proposal_draft', 'submit_content_proposal',
+    ]);
     expect(staff.some((x) => x.source === 'mcp')).toBe(false);
     const injected = selectAgentTools('staff', false, [tool('mcp__injected', 'mcp')], integrations);
     expect(injected).toHaveLength(0);
