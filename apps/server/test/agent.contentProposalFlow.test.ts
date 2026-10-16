@@ -3,7 +3,7 @@ import type { Confirmation, ContentProposal, Task, TaskDetail } from '@solar/sha
 import type { RunningServer } from '../src/server.js';
 import {
   authTestConfig, fnCall, message, startAuthServer, StatelessModel,
-  tokenClient, userClient, waitFor, type Client,
+  tokenClient, userClient, waitFor, TEST_ACCESS_TOKEN, type Client,
 } from './helpers/authServer.js';
 
 const model = new StatelessModel((input, text) => {
@@ -47,7 +47,7 @@ async function completed(client: Client, id: string): Promise<TaskDetail> {
 }
 
 beforeAll(async () => {
-  server = await startAuthServer({ config: authTestConfig(), responses: model });
+  server = await startAuthServer({ config: authTestConfig({ SOLAR_ACCESS_TOKEN: TEST_ACCESS_TOKEN }), responses: model });
   const admin = tokenClient(server.url);
   staff = (await userClient(server.url, admin, 'proposer', 'staff', 'Staff Proposer')).client;
   stranger = (await userClient(server.url, admin, 'unrelated', 'staff', 'Other Staff')).client;
