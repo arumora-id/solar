@@ -10,6 +10,7 @@ import { AuthService, type AuthServiceOptions } from './auth/authService.js';
 import { createBuiltinTools } from './agent/builtinTools.js';
 import { createKnowledgeTools } from './agent/knowledgeTools.js';
 import { createImageTools } from './agent/imageTools.js';
+import { createContentProposalTools } from './agent/contentProposalTools.js';
 import { ContentProposalStore } from './approvals/contentProposalStore.js';
 import type { AgentTool } from './agent/types.js';
 import { APP_NAME, APP_VERSION, loadConfig, type AppConfig } from './config.js';
@@ -119,7 +120,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
       plugins,
       mcp,
       attachments,
-      builtinTools: [...createBuiltinTools({ config, skills, artifacts, attachments }), ...createKnowledgeTools(knowledge, artifacts), ...createImageTools(llm, artifacts, attachments), ...(options.extraTools ?? [])],
+      builtinTools: [...createBuiltinTools({ config, skills, artifacts, attachments }), ...createKnowledgeTools(knowledge, artifacts), ...createImageTools(llm, artifacts, attachments), ...createContentProposalTools(contentProposals), ...(options.extraTools ?? [])],
     }),
   );
 
