@@ -56,6 +56,28 @@ export function createContentProposalTools(store: ContentProposalStore): AgentTo
       },
     }),
     zodTool({
+      name: 'read_my_content_proposal',
+      displayName: { id: 'Pratinjau usulan saya', en: 'Previewing my proposal' },
+      description: 'Read the content of ONLY the requester’s own proposal so they can preview and revise it before submission. No administrator Skill or Knowledge access.',
+      schema: z.object({ proposal_id: z.string().trim().min(1).max(100) }),
+      authorize: async (input, ctx) => {
+        const author = requester(ctx);
+        return author && ownDrafts(store, author).some((p) => p.id === input.proposal_id && p.authorId === author)
+          ? null : deny();
+      },
+      async execute(input, ctx) {
+        const author = requester(ctx);
+        if (!author) return deny();
+        const own = ownDrafts(store, author).find((p) => p.id === input.proposal_id && p.authorId === author);
+        if (!own) return deny();
+        return {
+          content: json({ id: own.id, kind: own.kind, title: own.title, path: own.path,
+            description: own.description, status: own.status, content: own.content }),
+          summary: 'Preview proposal: ' + own.title,
+        };
+      },
+    }),
+    zodTool({
       name: 'create_content_proposal_draft',
       displayName: { id: 'Simpan draft usulan', en: 'Saving a proposed draft' },
       description: 'Create a PRIVATE draft Skill or Knowledge proposal for the requester. For attached documents, read them first with read_document and identify any unverified facts/formulas in the draft. Never claim that this tool publishes or enables a Skill/Knowledge. The user must confirm saving the draft.',
@@ -102,7 +124,7 @@ export function createContentProposalTools(store: ContentProposalStore): AgentTo
     zodTool({
       name: 'submit_content_proposal',
       displayName: { id: 'Ajukan draft untuk review', en: 'Submitting proposal for review' },
-      description: 'Submit the requester’s own saved Draft for review by BOTH Superadmin and Head of IT SOLAR. Submission locks the draft. Never submit without an explicit confirmation from the user. Does not approve, publish or enable the content.',
+      description: 'Submit the requester’s own saved Draft for review by BOTH Superadmin and Head of IT SOLAR. Submission locks the draft. Read and preview the draft using read_my_content_proposal before submission. Never submit without an explicit confirmation from the user. Does not approve, publish or enable the content.',
       schema: z.object({ proposal_id: z.string().trim().min(1).max(100) }),
       authorize: async (input, ctx) => {
         const author = requester(ctx);
@@ -113,11 +135,7 @@ export function createContentProposalTools(store: ContentProposalStore): AgentTo
       confirmation: (input, lang) => lang === 'id'
         ? 'Ajukan draft ' + input.proposal_id + ' untuk review Superadmin dan Head of IT SOLAR? Draft tidak bisa diedit setelah Submit.'
         : 'Submit draft ' + input.proposal_id + ' for both Superadmin and Head of IT review? It cannot be edited after submission.',
-      confirmationPreview: async (input) => {
-        const own = store.list('staff', '').find((p) => p.id === input.proposal_id);
-        // The draft body is intentionally not fetched through an administrator view here.
-        return own ? { proposal_id: own.id, title: own.title, content: own.content } : input;
-      },
+      confirmationPreview: async (input) => input,
       async execute(input, ctx) {
         const author = requester(ctx);
         if (!author) return deny();
