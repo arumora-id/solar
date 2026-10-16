@@ -8,7 +8,7 @@ import {
 
 const model = new StatelessModel((input, text) => {
   if (input.some((i) => i.type === 'function_call_output')) return [message('Request processed')];
-  const request = /<request>\n([\s\S]*?)\n<\/request>/.exec(text)?.[1] ?? '';
+  const request = /<request>\\n([\s\S]*?)\\n<\/request>/.exec(text)?.[1] ?? '';
   if (request.includes('[draft]')) {
     return [fnCall('new_draft', 'create_content_proposal_draft', {
       proposal: { kind: 'knowledge', title: 'Incident response', path: 'standards/incident-response.md',
