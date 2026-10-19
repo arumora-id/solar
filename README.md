@@ -1,12 +1,16 @@
 # SOLAR AI AGENT 🍡
 
+> **Untuk provider LLM lain / AI coding assistants:** baca [`SOLAR_SYSTEM_CONTEXT.md`](SOLAR_SYSTEM_CONTEXT.md), ringkasan sistem netral-provider yang diperbarui untuk release **v1.0.8**. Ini konteks proyek, bukan prompt system otomatis. Dokumen bisa ditautkan dari GitHub publik atau diunggah ke knowledge provider pilihan.
+
 **SOLAR AI AGENT** (*SOLution ARchitect*, singkatnya SOLAR) adalah AI agent dengan **karakter 3D beranimasi yang bisa
 dipilih** - **Robo** si robot (default), **Mochi**, **Cocoa Kelapa**, atau **Kelinci** klasik - yang membantu seorang
 Solution Architect men-deliver pekerjaan lebih cepat dan konsisten:
 
 - **Diagram ArchiMate 3.2** - divalidasi terhadap tabel relasi resmi ArchiMate, diekspor ke
-  *Open Group ArchiMate Exchange Format* (bisa di-import ke Archi, Visual Paradigm, BiZZdesign, Sparx EA) + SVG per view.
-- **Sequence diagram UML** - SVG siap pakai + sumber **Mermaid** (langsung tampil di GitHub) + **PlantUML**.
+  *Open Group ArchiMate Exchange Format* (bisa di-import ke Archi, Visual Paradigm desktop, BiZZdesign, Sparx EA),
+  SVG per view, serta file **draw.io / Visual Paradigm Online XML** dengan shape yang dapat diedit (v1.0.8).
+- **Sequence diagram UML** - SVG siap pakai + sumber **Mermaid** (langsung tampil di GitHub) + **PlantUML**,
+  serta ekspor editable **draw.io / Visual Paradigm Online XML** (v1.0.8).
 - **Technical Specification Document (TSD)** - dokumen **Word (.docx)** siap diserahkan ke klien (sampul, lembar
   persetujuan, daftar isi, nomor halaman), Markdown (GitHub-ready) dan HTML siap cetak/PDF, lengkap dengan diagram
   tertanam, requirement, NFR, integrasi, API, data model, risiko.
@@ -64,7 +68,7 @@ konfirmasi wajib), dan setiap pekerjaan bisa dipantau di **web monitoring task**
 | Output suara | Karakter membacakan ringkasan hasil (text-to-speech suara sistem, mengikuti bahasa antarmuka atau bahasa yang dipilih di *Pengaturan → Suara*). |
 | Agent | **Multi-provider**: OpenAI Responses API (default **GPT-6.1 Sol**, `gpt-6.1-sol`) atau API **Chat Completions** yang kompatibel OpenAI - OmniRoute, OpenRouter, LiteLLM, Claude, Gemini, Ollama/vLLM lokal. **Rute model** utama → cadangan dengan fallback otomatis bila provider gagal; diatur di *Pengaturan → Model AI* tanpa restart. Streaming, tool call paralel; satu task = satu proses end-to-end ("sekali proses"). |
 | Knowledge base | Aturan & fakta Anda sebagai file Markdown (sistem, integrasi, standar ArchiMate/PlantUML/API, prinsip, status lifecycle). Agent membacanya sebelum mendesain dan mengutamakannya di atas aturan bawaan. Impor registry **Excel/CSV** (satu file per baris) dan dokumen **Word/PDF/PowerPoint** (dipecah per bab). |
-| Deliverable | ArchiMate (Exchange XML + SVG + JSON), sequence diagram (SVG + Mermaid + PlantUML + JSON), TSD (Word .docx + Markdown + HTML + JSON), unduh semua sebagai ZIP. |
+| Deliverable | ArchiMate (Exchange XML + SVG + JSON + `.drawio` + VP Online XML), sequence diagram (SVG + Mermaid + PlantUML + JSON + `.drawio` + VP Online XML), TSD (Word .docx + Markdown + HTML + JSON), unduh semua sebagai ZIP. Format editable adalah drawing, bukan model exchange semantik yang dijamin lossless. |
 | Skills | 6 skill bawaan (delivery package, ArchiMate, sequence, TSD, backlog Plane, publish GitHub); tambah/impor/edit/nonaktifkan dari UI. |
 | Plugin MCP | GitHub (remote MCP resmi), Plane `plane.mesthi.com` (MCP resmi Plane), Visual Paradigm (selalu konfirmasi), plugin custom (HTTP/SSE/stdio). |
 | Integrasi bawaan | Publish artefak ke GitHub dalam **satu commit**; buat backlog Plane secara **bulk** (epic → story, label, prioritas, anti-duplikat). |
