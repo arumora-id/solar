@@ -204,6 +204,7 @@ function ArtifactGroup({
   const first = items[0]!;
   const svgs = items.filter((a) => a.mimeType.startsWith('image/svg'));
   const word = items.find((a) => a.kind === 'tsd-docx');
+  const drawio = items.find((a) => a.kind === 'archimate-drawio' || a.kind === 'sequence-drawio');
   const model = items.find((a) => a.kind === 'tsd-model');
   const rows = word ? [word, ...items.filter((a) => a !== word)] : items;
   const anyMarkdown = items.some(isMarkdown);
@@ -294,6 +295,14 @@ function ArtifactGroup({
           ) : (
             ready && <span className="sr-only">{t.artifacts.word.ready}</span>
           )}
+        </div>
+      )}
+      {drawio && (
+        <div className="hint artifact-note">
+          <a className="btn small" href={api.artifactUrl(drawio.id, true)}>
+            <DownloadIcon /> {t.artifacts.diagramExport.download}
+          </a>
+          <span>{t.artifacts.diagramExport.instructions}</span>
         </div>
       )}
       {svgs.length > 0 && (

@@ -50,6 +50,8 @@ const fileName = z
 
 const TEXT_KINDS = new Set<Artifact['kind']>([
   'archimate-exchange',
+  'archimate-drawio',
+  'sequence-drawio',
   'archimate-model',
   'sequence-mermaid',
   'sequence-plantuml',
@@ -149,7 +151,7 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
         'Create an ArchiMate 3.2 model with one or more views. The input is validated against the official ArchiMate relationship table,',
         'referential integrity, junction rules and view consistency; on errors nothing is saved and every error is listed so you can fix it.',
         'On success it stores: an Open Group Exchange Format XML (importable in Archi, Visual Paradigm, BiZZdesign, Sparx EA),',
-        'one SVG per view (layered auto-layout) and the model JSON. Element types use exchange-format names, e.g.',
+        'one SVG per view (layered auto-layout), an editable .drawio file for draw.io / VP Online, and the model JSON. Element types use exchange-format names, e.g.',
         'BusinessActor, ApplicationComponent, ApplicationService, DataObject, Node, SystemSoftware, TechnologyService, Requirement, WorkPackage.',
       ].join(' '),
       schema: ArchimateModelSchema.extend({ fileName }),
@@ -170,6 +172,14 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
           bundle,
           description: t(lang, 'artifact.archimate.summary', counts),
           content: out.exchangeXml,
+        });
+        const drawio = await ctx.createArtifact({
+          name: stem + '.archimate.drawio',
+          title: model.name + ' (draw.io / VP Online)',
+          kind: 'archimate-drawio',
+          mimeType: 'application/xml',
+          bundle,
+          content: out.drawio,
         });
         const views: Array<{ view: string; svgArtifactId: string; file: string; elements: number; relationships: number }> = [];
         for (const v of out.views) {
@@ -198,6 +208,7 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
             status: 'saved',
             bundle,
             exchangeXml: { artifactId: xml.id, file: xml.name },
+            drawio: { artifactId: drawio.id, file: drawio.name },
             modelJson: { artifactId: modelJson.id, file: modelJson.name },
             views,
             warnings: out.warnings.map((w) => `[${w.path}] ${w.message}`),
@@ -216,7 +227,7 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
         'Create a UML sequence diagram. Steps are a flat ordered list: messages (sync/async/reply with optional activation),',
         'notes, dividers and combined fragments opened with fragment_start (alt/opt/loop/par/critical/break/group),',
         'separated with fragment_else (alt/par/critical only) and closed with fragment_end. Input is validated (participants, activation balance,',
-        'fragment nesting, Mermaid/PlantUML reserved words); on success it stores an SVG, Mermaid source (renders on GitHub), PlantUML source and the JSON.',
+        'fragment nesting, Mermaid/PlantUML reserved words); on success it stores an SVG, editable .drawio for draw.io / VP Online, Mermaid, PlantUML and JSON.',
       ].join(' '),
       schema: SequenceDiagramSchema.extend({ fileName }),
       async execute(input, ctx) {
@@ -236,6 +247,14 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
           bundle,
           description: t(lang, 'artifact.sequence.summary', counts),
           content: out.svg,
+        });
+        const drawio = await ctx.createArtifact({
+          name: stem + '.sequence.drawio',
+          title: diagram.title + ' (draw.io / VP Online)',
+          kind: 'sequence-drawio',
+          mimeType: 'application/xml',
+          bundle,
+          content: out.drawio,
         });
         const mmd = await ctx.createArtifact({
           name: `${stem}.mmd`,
@@ -267,7 +286,8 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
             status: 'saved',
             bundle,
             svgArtifactId: svg.id,
-            files: [svg.name, mmd.name, puml.name],
+            drawio: { artifactId: drawio.id, file: drawio.name },
+            files: [svg.name, drawio.name, mmd.name, puml.name],
             warnings: out.warnings.map((w) => `[${w.path}] ${w.message}`),
             note: 'Use svgArtifactId when referencing this diagram in the technical specification.',
           }),
