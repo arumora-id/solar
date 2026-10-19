@@ -8,7 +8,7 @@
 
 Berikan tautan file ini kepada LLM yang dapat mengakses GitHub publik, **atau** unggah/salin Markdown ini ke context/knowledge/Project instruction provider terkait. Tidak semua provider otomatis membuka URL, membaca repository, atau memperoleh pembaruan file ini. Periksa versi tag dan waktu dokumen jika informasi harus mutakhir.
 
-URL permanen per release: `https://github.com/arumora-id/solar/blob/v1.0.8/SOLAR_SYSTEM_CONTEXT.md` **tidak berlaku untuk rilis v1.0.8 yang sudah terbit**, karena dokumen ini ditambahkan setelah tag; gunakan tautan branch `main` setelah PR dokumentasi di-merge, atau unduh dan lampirkan file secara manual.
+Gunakan tautan [`SOLAR_SYSTEM_CONTEXT.md` di branch `main`](https://github.com/arumora-id/solar/blob/main/SOLAR_SYSTEM_CONTEXT.md) **setelah PR dokumentasi ini di-merge**. Dokumen baru ini belum menjadi bagian dari commit immutable tag `v1.0.8`; bila perlu konteks yang persis sesuai tag, bandingkan sumber pada tag tersebut.
 
 Prioritas sumber jika ada ketidaksesuaian: **kode pada tag/commit yang relevan** → tes/kontrak API → `docs/ARCHITECTURE.md` dan `docs/API.md` → release notes → dokumen ini → riwayat percakapan. Jangan mengasumsikan fitur atau integrasi tersedia hanya dari ide/roadmap. Jangan menampilkan, menyalin atau meminta isi `.env`, credential, token, backup maupun data percakapan pengguna.
 
