@@ -1,4 +1,5 @@
 import type { ValidationIssue } from '../validation.js';
+import { toDrawioSequence } from '../drawio.js';
 import { toMermaid } from './mermaid.js';
 import { SequenceDiagramSchema, type SequenceDiagram } from './model.js';
 import { toPlantUml } from './plantuml.js';
@@ -8,6 +9,7 @@ import { validateSequence } from './validate.js';
 export interface SequenceBuildOutput {
   diagram: SequenceDiagram;
   mermaid: string;
+  drawio: string;
   plantuml: string;
   svg: string;
   warnings: ValidationIssue[];
@@ -35,6 +37,7 @@ export function buildSequence(input: unknown): SequenceBuildResult {
     output: {
       diagram,
       mermaid: toMermaid(diagram),
+      drawio: toDrawioSequence(diagram),
       plantuml: toPlantUml(diagram),
       svg: toSequenceSvg(diagram),
       warnings: validation.warnings,

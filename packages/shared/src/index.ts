@@ -152,9 +152,13 @@ export type TaskEvent = TaskEventPayload & {
 
 export type ArtifactKind =
   | 'archimate-exchange'
+  | 'archimate-drawio'
+  | 'archimate-vponline'
   | 'archimate-svg'
   | 'archimate-model'
   | 'sequence-svg'
+  | 'sequence-drawio'
+  | 'sequence-vponline'
   | 'sequence-mermaid'
   | 'sequence-plantuml'
   | 'sequence-model'

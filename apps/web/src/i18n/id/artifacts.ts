@@ -29,6 +29,11 @@ export const artifacts = {
   groupFallback: 'Artefak',
 
   downloadAll: 'Unduh semua (ZIP)',
+  diagramExport: {
+    drawio: 'Unduh untuk draw.io',
+    vpOnline: 'Unduh untuk VP Online',
+    instructions: 'Unduh .drawio untuk draw.io, atau XML untuk VP Online. Buka melalui File → Open From → Device pada draw.io, atau Diagram → Open From Device pada VP Online. Bentuk dan konektor dapat diedit; metadata ArchiMate tetap tersedia di file Exchange XML terpisah.',
+  },
   /** The request did not reach the server (no HTTP answer). */
   offline: 'Server tidak bisa dihubungi, coba lagi.',
 

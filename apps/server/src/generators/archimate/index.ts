@@ -1,4 +1,5 @@
 import type { ValidationIssue } from '../validation.js';
+import { toDrawioArchimate } from '../drawio.js';
 import { toExchangeXml } from './exchange.js';
 import { layoutView, type ViewLayout } from './layout.js';
 import { ArchimateModelSchema, type ArchimateModelInput, type NormalizedArchimateModel } from './model.js';
@@ -8,6 +9,7 @@ import { validateArchimateModel } from './validate.js';
 export interface ArchimateBuildOutput {
   model: NormalizedArchimateModel;
   exchangeXml: string;
+  drawio: string;
   views: Array<{ id: string; name: string; svg: string; elementCount: number; relationshipCount: number }>;
   warnings: ValidationIssue[];
 }
@@ -47,7 +49,7 @@ export function buildArchimate(input: ArchimateModelInput | unknown): ArchimateB
       relationshipCount: relationships.length,
     });
   }
-  return { ok: true, output: { model, exchangeXml: toExchangeXml(model, layouts), views, warnings: validation.warnings } };
+  return { ok: true, output: { model, exchangeXml: toExchangeXml(model, layouts), drawio: toDrawioArchimate(model, layouts), views, warnings: validation.warnings } };
 }
 
 export { ArchimateModelSchema } from './model.js';
