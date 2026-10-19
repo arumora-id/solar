@@ -6,7 +6,7 @@ import { z } from 'zod';
 export const APP_NAME = 'SOLAR AI AGENT';
 /** APP_NAME without spaces, for User-Agent headers and protocol client names. */
 export const APP_SLUG = 'solar-ai-agent';
-export const APP_VERSION = '1.0.7';
+export const APP_VERSION = '1.0.8';
 
 /** Walks up from `start` looking for the SOLAR monorepo root (package.json with name "solar"). */
 function findProjectRoot(start: string): string | null {
