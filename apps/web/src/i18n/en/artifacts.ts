@@ -26,8 +26,9 @@ export const artifacts: Dict['artifacts'] = {
 
   downloadAll: 'Download all (ZIP)',
   diagramExport: {
-    download: 'Export for draw.io / VP Online',
-    instructions: 'Download the .drawio file. In draw.io use File → Open From → Device; in Visual Paradigm Online use Diagram → Open From Device. Shapes and connectors are editable; for ArchiMate model exchange use the separate Exchange XML artifact.',
+    drawio: 'Download for draw.io',
+    vpOnline: 'Download for VP Online',
+    instructions: 'Download .drawio for draw.io, or XML for VP Online. In draw.io use File → Open From → Device; in VP Online use Diagram → Open From Device. Shapes and connectors are editable; for ArchiMate model exchange use the separate Exchange XML artifact.',
   },
   offline: 'The server cannot be reached. Try again.',
 

@@ -205,6 +205,7 @@ function ArtifactGroup({
   const svgs = items.filter((a) => a.mimeType.startsWith('image/svg'));
   const word = items.find((a) => a.kind === 'tsd-docx');
   const drawio = items.find((a) => a.kind === 'archimate-drawio' || a.kind === 'sequence-drawio');
+  const vpOnline = items.find((a) => a.kind === 'archimate-vponline' || a.kind === 'sequence-vponline');
   const model = items.find((a) => a.kind === 'tsd-model');
   const rows = word ? [word, ...items.filter((a) => a !== word)] : items;
   const anyMarkdown = items.some(isMarkdown);
@@ -300,8 +301,13 @@ function ArtifactGroup({
       {drawio && (
         <div className="hint artifact-note">
           <a className="btn small" href={api.artifactUrl(drawio.id, true)}>
-            <DownloadIcon /> {t.artifacts.diagramExport.download}
+            <DownloadIcon /> {t.artifacts.diagramExport.drawio}
           </a>
+          {vpOnline && (
+            <a className="btn small" href={api.artifactUrl(vpOnline.id, true)}>
+              <DownloadIcon /> {t.artifacts.diagramExport.vpOnline}
+            </a>
+          )}
           <span>{t.artifacts.diagramExport.instructions}</span>
         </div>
       )}

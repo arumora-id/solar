@@ -52,6 +52,8 @@ const TEXT_KINDS = new Set<Artifact['kind']>([
   'archimate-exchange',
   'archimate-drawio',
   'sequence-drawio',
+  'archimate-vponline',
+  'sequence-vponline',
   'archimate-model',
   'sequence-mermaid',
   'sequence-plantuml',
@@ -181,6 +183,14 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
           bundle,
           content: out.drawio,
         });
+        const vpOnline = await ctx.createArtifact({
+          name: stem + '.archimate.vp-online.xml',
+          title: model.name + ' (VP Online import XML)',
+          kind: 'archimate-vponline',
+          mimeType: 'application/xml',
+          bundle,
+          content: out.drawio,
+        });
         const views: Array<{ view: string; svgArtifactId: string; file: string; elements: number; relationships: number }> = [];
         for (const v of out.views) {
           const svg = await ctx.createArtifact({
@@ -209,6 +219,7 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
             bundle,
             exchangeXml: { artifactId: xml.id, file: xml.name },
             drawio: { artifactId: drawio.id, file: drawio.name },
+            vpOnlineXml: { artifactId: vpOnline.id, file: vpOnline.name },
             modelJson: { artifactId: modelJson.id, file: modelJson.name },
             views,
             warnings: out.warnings.map((w) => `[${w.path}] ${w.message}`),
@@ -256,6 +267,14 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
           bundle,
           content: out.drawio,
         });
+        const vpOnline = await ctx.createArtifact({
+          name: stem + '.sequence.vp-online.xml',
+          title: diagram.title + ' (VP Online import XML)',
+          kind: 'sequence-vponline',
+          mimeType: 'application/xml',
+          bundle,
+          content: out.drawio,
+        });
         const mmd = await ctx.createArtifact({
           name: `${stem}.mmd`,
           title: `${diagram.title} (Mermaid)`,
@@ -287,7 +306,8 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
             bundle,
             svgArtifactId: svg.id,
             drawio: { artifactId: drawio.id, file: drawio.name },
-            files: [svg.name, drawio.name, mmd.name, puml.name],
+            vpOnlineXml: { artifactId: vpOnline.id, file: vpOnline.name },
+            files: [svg.name, drawio.name, vpOnline.name, mmd.name, puml.name],
             warnings: out.warnings.map((w) => `[${w.path}] ${w.message}`),
             note: 'Use svgArtifactId when referencing this diagram in the technical specification.',
           }),
