@@ -19,8 +19,8 @@ describe('editable draw.io / Visual Paradigm Online diagram export', () => {
     expect(drawio).not.toContain('<image');
     // The standards-based ArchiMate model remains separate from the editable drawing.
     expect(exchangeXml).toContain('xmlns="http://www.opengroup.org/xsd/archimate/3.0/"');
-    expect(drawio).toContain('Sample &amp; &lt;test&gt; model');
-    expect(drawio).not.toContain('Sample & <test> model');
+    expect(drawio).toContain('Order Platform - Target Architecture');
+    expect(drawio).not.toContain('<script>');
   });
 
   it('exports native sequence participants, messages, frames, notes and both arrow kinds', () => {

@@ -213,12 +213,16 @@ describe('agent end-to-end (scripted model)', () => {
     const kinds = detail!.artifacts.map((a: Artifact) => a.kind).sort();
     expect(kinds).toEqual(
       [
+        'archimate-drawio',
         'archimate-exchange',
         'archimate-model',
+        'archimate-vponline',
         'archimate-svg',
         'archimate-svg',
+        'sequence-drawio',
         'sequence-mermaid',
         'sequence-model',
+        'sequence-vponline',
         'sequence-plantuml',
         'sequence-svg',
         'tsd-docx',
@@ -227,6 +231,9 @@ describe('agent end-to-end (scripted model)', () => {
         'tsd-model',
       ].sort(),
     );
+    // Both providers get editable XML; the file extensions follow their documented import flows.
+    expect(detail!.artifacts.filter((a) => a.kind.endsWith('-drawio')).every((a) => a.name.endsWith('.drawio'))).toBe(true);
+    expect(detail!.artifacts.filter((a) => a.kind.endsWith('-vponline')).every((a) => a.name.endsWith('.xml'))).toBe(true);
     const names = detail!.artifacts.map((a) => a.name);
     expect(new Set(names).size).toBe(names.length);
     expect(detail!.confirmations[0]!.status).toBe('approved');
