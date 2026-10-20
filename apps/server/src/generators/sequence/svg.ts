@@ -127,6 +127,9 @@ export function toSequenceSvg(d: SequenceDiagram): string {
           const x0 = edgeX(step.from, true);
           const textX = x0 + 46;
           const top = y;
+          const selfTextWidth = Math.max(...label.map((line) => textWidth(line, MSG_FONT)));
+          // Cover the lifelines behind the multiline label without covering the arrow.
+          body.push(`<rect class="message-label-bg" x="${f(textX - 5)}" y="${f(top - 2)}" width="${f(selfTextWidth + 10)}" height="${label.length * 15 + 7}" rx="3" fill="#ffffff" fill-opacity="0.95"/>`);
           label.forEach((l, i) =>
             body.push(`<text x="${f(textX)}" y="${f(top + 12 + i * 15)}" font-size="${MSG_FONT}" fill="${INK}">${escapeXml(l)}</text>`),
           );
@@ -145,6 +148,8 @@ export function toSequenceSvg(d: SequenceDiagram): string {
           const right = toC.x > fromC.x;
           const textTop = y;
           const midX = (fromC.x + toC.x) / 2;
+          const msgLabelWidth = Math.max(...label.map((line) => textWidth(line, MSG_FONT)));
+          body.push(`<rect class="message-label-bg" x="${f(midX - msgLabelWidth / 2 - 5)}" y="${f(textTop - 2)}" width="${f(msgLabelWidth + 10)}" height="${label.length * 15 + 7}" rx="3" fill="#ffffff" fill-opacity="0.95"/>`);
           label.forEach((l, i) =>
             body.push(`<text x="${f(midX)}" y="${f(textTop + 12 + i * 15)}" text-anchor="middle" font-size="${MSG_FONT}" fill="${INK}">${escapeXml(l)}</text>`),
           );
@@ -191,13 +196,14 @@ export function toSequenceSvg(d: SequenceDiagram): string {
       case 'fragment_start': {
         const box = { kind: step.kind, label: step.label, y0: y, y1: y, x0: 0, x1: 0, elses: [], depth: open.length, touched: new Set<string>(), extraRight: 0 };
         open.push(box);
-        y += 34;
+        // Long conditions are wrapped into a taller header rather than clipped.
+        y += Math.max(34, wrapText(step.label, 260, 11.5).length * 15 + 18);
         break;
       }
       case 'fragment_else': {
         const top = open[open.length - 1];
         if (top) top.elses.push({ y: y + 2, label: step.label });
-        y += 30;
+        y += Math.max(30, wrapText(step.label, 260, 11.5).length * 15 + 18);
         break;
       }
       case 'fragment_end': {
@@ -214,7 +220,9 @@ export function toSequenceSvg(d: SequenceDiagram): string {
           x1 = Math.max(x1, fr.x1 + 10);
         }
         const tagW = textWidth(FRAGMENT_TITLE[box.kind], 11) + 22;
-        x1 = Math.max(x1, x0 + tagW + textWidth(box.label, 11.5) + 40);
+        const frameLabelWidth = Math.max(0, ...[box.label, ...box.elses.map((e) => e.label)]
+          .flatMap((label) => wrapText(label, 260, 11.5).map((line) => textWidth(line, 11.5))));
+        x1 = Math.max(x1, x0 + tagW + frameLabelWidth + 40);
         box.x0 = Math.max(6, x0);
         box.x1 = x1;
         rightmost = Math.max(rightmost, x1);
@@ -269,10 +277,11 @@ export function toSequenceSvg(d: SequenceDiagram): string {
     })
     .join('');
   const labelChip = (x: number, y: number, text: string) => {
-    const w = textWidth(text, 11.5) + 8;
+    const lines = wrapText(text, 260, 11.5);
+    const w = Math.max(...lines.map((line) => textWidth(line, 11.5))) + 8;
     return (
-      `<rect x="${f(x - 4)}" y="${f(y - 12)}" width="${f(w)}" height="16" rx="3" fill="#ffffff" fill-opacity="0.92"/>` +
-      `<text x="${f(x)}" y="${f(y)}" font-size="11.5" fill="${INK}">${escapeXml(text)}</text>`
+      `<rect x="${f(x - 4)}" y="${f(y - 12)}" width="${f(w)}" height="${lines.length * 15 + 3}" rx="3" fill="#ffffff" fill-opacity="0.92"/>` +
+      lines.map((line, i) => `<text x="${f(x)}" y="${f(y + i * 15)}" font-size="11.5" fill="${INK}">${escapeXml(line)}</text>`).join('')
     );
   };
   const fragmentFg = sortedFragments
