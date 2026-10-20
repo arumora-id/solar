@@ -36,7 +36,7 @@ describe('Diagram layout quality — Phase D geometry and stress', () => {
       ['outside', { text: 'Out', lines: ['Out'], box: { x: -3, y: 4, w: 20, h: 15 } }],
     ]);
     const report = assessArchiMateGeometry(layout, [rel('flow', 'a', 'b')], routes, labels);
-    const kinds = new Set(report.issues.map((issue) => issue.kind));
+    const kinds = new Set<string>(report.issues.map((issue) => issue.kind));
     for (const kind of ['node-overlap', 'connector-obstacle', 'nonorthogonal-connector',
       'label-obstacle', 'label-overlap', 'canvas-overflow']) expect(kinds.has(kind), kind).toBe(true);
     expect(report.nodeCount).toBe(4);
