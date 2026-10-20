@@ -11,7 +11,7 @@ function rectangle(xml: string, id: string) {
 function edgeSourceY(xml: string, id: string): number {
   const edge = xml.match(new RegExp('<mxCell id="' + id + '"[^>]*>([\\s\\S]*?)</mxCell>'));
   expect(edge, 'missing native mxGraph edge ' + id).not.toBeNull();
-  const p = edge![1].match(/<mxPoint x="[^"]+" y="([^"]+)" as="sourcePoint"/);
+  const p = edge![1]!.match(/<mxPoint x="[^"]+" y="([^"]+)" as="sourcePoint"/);
   expect(p).not.toBeNull();
   return Number(p![1]);
 }
