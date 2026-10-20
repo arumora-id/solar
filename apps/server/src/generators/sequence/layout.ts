@@ -17,17 +17,6 @@ export interface SequenceColumn {
   lines: string[];
 }
 
-interface FragmentBox {
-  kind: FragmentKind;
-  label: string;
-  y0: number;
-  y1: number;
-  x0: number;
-  x1: number;
-  elses: Array<{ y: number; label: string }>;
-  depth: number;
-}
-
 function headLines(p: Participant): string[] {
   return wrapText(p.label, HEAD_LABEL_W - 16, HEAD_FONT, 3);
 }

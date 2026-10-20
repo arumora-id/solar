@@ -16,6 +16,18 @@ const LINE_H = 15;
 
 const f = (n: number) => Math.round(n * 10) / 10;
 
+interface FragmentBox {
+  kind: FragmentKind;
+  label: string;
+  y0: number;
+  y1: number;
+  x0: number;
+  x1: number;
+  elses: Array<{ y: number; label: string }>;
+  depth: number;
+}
+
+
 /** `headH` grows with the longest wrapped participant label so every head has the same height. */
 function participantHead(c: SequenceColumn, y: number, headH: number): string {
   const { p, x, w, lines } = c;
