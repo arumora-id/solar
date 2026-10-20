@@ -32,7 +32,7 @@ describe('ArchiMate export geometry parity — phase C', () => {
           expect(edge![1]).toContain('x="' + Math.round(p.x) + '" y="' + Math.round(p.y) + '"');
         }
         // Each relationship exchange entry uses the same full list, including node attachments.
-        const connection = exchangeXml.match(new RegExp('<connection[^>]*relationshipRef="id-' + r.id + '"[^>]*>([\\s\\S]*?)</connection>'));
+        const connection = exchangeXml.match(new RegExp('<connection identifier="gen-v' + (index + 1) + '-c-' + r.id + '"[^>]*>([\\s\\S]*?)</connection>'));
         expect(connection, 'missing semantic connection with routed geometry ' + r.id).not.toBeNull();
         expect(connection![1]).toContain('<sourceAttachment x="' + Math.max(0, Math.round(points[0]!.x)));
         expect(connection![1]).toContain('<targetAttachment x="' + Math.max(0, Math.round(points[points.length - 1]!.x)));
