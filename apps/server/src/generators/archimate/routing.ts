@@ -146,7 +146,7 @@ function gridSearch(start: Point, goal: Point, boxes: NodeBox[], xs: number[], y
     for (const [xx, yy, nd] of [[x - 1, y, 0], [x + 1, y, 0], [x, y - 1, 1], [x, y + 1, 1]]) {
       if (xx! < 0 || yy! < 0 || xx! >= w || yy! >= h) continue;
       const next = { x: xs[xx!]!, y: ys[yy!]! };
-      if (inside(next, boxes.find((n) => inside(next, n)) ?? { x: -1e9, y: -1e9, w: 0, h: 0 })) continue;
+      if (boxes.some((n) => inside(next, n))) continue;
       if (!clear(here, next, boxes)) continue;
       const nextState = state(xx!, yy!, nd!);
       const d = dist[s]! + metric(here, next) + (dir !== 2 && dir !== nd ? BEND_COST : 0);
