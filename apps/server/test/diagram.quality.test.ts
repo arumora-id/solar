@@ -22,7 +22,7 @@ const layoutOf = (nodes: NodeBox[]): ViewLayout => ({
 describe('Diagram layout quality — Phase D geometry and stress', () => {
   it('detects diagonal fallback, blocked connectors, node overlaps, label collisions and overflow', () => {
     const a = node('a', 25, 110), blocker = node('blocker', 200, 110);
-    const b = node('b', 420, 110), overlapping = node('overlap', 220, 120);
+    const b = node('b', 420, 142), overlapping = node('overlap', 220, 120);
     const layout = layoutOf([a, blocker, b, overlapping]);
     const routes = new Map<string, RoutedRelationship>([
       ['flow', { id: 'flow', points: [
