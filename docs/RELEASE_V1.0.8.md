@@ -1,6 +1,6 @@
 # SOLAR AI AGENT v1.0.8 — Release Preparation
 
-**Status:** candidate. The `v1.0.8` tag and GitHub Release must only be created after this change has been reviewed and merged, and CI succeeds on the final `main` SHA.
+**Status:** published GitHub Release [`v1.0.8`](https://github.com/arumora-id/solar/releases/tag/v1.0.8) on 2026-10-19. Release tag SHA: `1cc0e98093a68381a5df068b945edce2f7dc2936`. This records GitHub publication, **not VPS production deployment**.
 
 **Baseline:** v1.0.7 + merged PR #19 (Conversation ArchiMate / Sequence diagram exports) + version alignment in this PR.
 
@@ -22,9 +22,9 @@
 
 ## Source version
 
-Root/workspace package manifests, `package-lock.json` workspace records and local `@solar/shared` pins, and the server's `APP_VERSION` are aligned to `1.0.8`. Published version is not changed merely by creating this PR.
+Root/workspace package manifests, `package-lock.json` workspace records and local `@solar/shared` pins, and the server's `APP_VERSION` are aligned to `1.0.8`. The manifests were aligned during release preparation; GitHub Release v1.0.8 has since been published.
 
-## Release procedure
+## Release procedure (historical process; already completed for v1.0.8)
 
 1. Complete independent review and merge this release-preparation PR; confirm GitHub CI passes on the final main commit.
 2. Verify manual editor-import QA and other release gates from `docs/VPS_DEPLOYMENT.md` if publishing to production.
