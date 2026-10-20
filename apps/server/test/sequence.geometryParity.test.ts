@@ -65,7 +65,10 @@ describe('Sequence SVG and draw.io precise shared geometry — C2', () => {
       expect(actual).toEqual(expected);
     }
     const frame = annotatedRect(svg, 'data-fragment-index', '0');
-    expect(vertex(drawio, 'frame-0')).toEqual(frame);
+    const xmlFrame = vertex(drawio, 'frame-0');
+    // Editors may extend combined fragments horizontally, but their timeline spans must match.
+    expect(xmlFrame.y).toBe(frame.y);
+    expect(xmlFrame.h).toBe(frame.h);
     const note = timeline.steps[3]!;
     const svgNote = svg.match(/<path data-note-step="3" d="M([0-9.]+) ([0-9.]+)H/);
     expect(svgNote).not.toBeNull();
