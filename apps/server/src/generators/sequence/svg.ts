@@ -1,14 +1,13 @@
 import { escapeXml, textWidth, wrapText } from '../validation.js';
 import type { FragmentKind, SequenceDiagram } from './model.js';
-import { computeSequenceColumns, type SequenceColumn } from './layout.js';
+import type { SequenceColumn } from './layout.js';
+import { computeSequenceTimeline } from './timeline.js';
 
 const FONT = "'Segoe UI', 'Helvetica Neue', Arial, sans-serif";
 const INK = '#24292f';
 const LINE = '#57606a';
 const MARGIN = 24;
-const HEAD_H = 48;
 const MSG_FONT = 12;
-const MAX_MSG_W = 260;
 const NOTE_W = 200;
 const ACT_W = 10;
 const HEAD_FONT = 12.5;
@@ -91,15 +90,16 @@ const FRAGMENT_TITLE: Record<FragmentKind, string> = {
 
 /** Renders a UML-style sequence diagram as a standalone SVG. */
 export function toSequenceSvg(d: SequenceDiagram): string {
-  const cols = computeSequenceColumns(d);
+  const timeline = computeSequenceTimeline(d);
+  const cols = timeline.columns;
   const col = new Map(cols.map((c) => [c.p.id, c]));
   const minX = Math.min(...cols.map((c) => c.x - c.w / 2));
   const maxX = Math.max(...cols.map((c) => c.x + c.w / 2));
 
-  const headH = HEAD_H + (Math.max(...cols.map((c) => c.lines.length)) - 1) * LINE_H;
-  const descLines = d.description ? wrapText(d.description, Math.max(400, maxX - MARGIN), 11.5, 3) : [];
-  const headTop = MARGIN + 30 + descLines.length * 15 + 8;
-  let y = headTop + headH + 26;
+  const headH = timeline.headHeight;
+  const descLines = timeline.descriptionLines;
+  const headTop = timeline.headTop;
+  let y = timeline.startY;
   // text outside the participant columns that the canvas must still fit
   let textRight = MARGIN + textWidth(d.title, 17) * 1.08;
   for (const l of descLines) textRight = Math.max(textRight, MARGIN + textWidth(l, 11.5));
@@ -124,12 +124,14 @@ export function toSequenceSvg(d: SequenceDiagram): string {
     return towardRight ? c.x + half : c.x - half;
   };
 
-  for (const step of d.steps) {
+  for (const placed of timeline.steps) {
+    const step = placed.step;
+    y = placed.top;
     switch (step.type) {
       case 'message': {
         number += 1;
         touch(step.from, step.to);
-        const label = wrapText(step.text, MAX_MSG_W, MSG_FONT);
+        const label = placed.messageLines!;
         const self = step.from === step.to;
         const dashed = step.style === 'reply';
         const marker = step.style === 'sync' ? 'seq-filled' : 'seq-open';
@@ -145,7 +147,7 @@ export function toSequenceSvg(d: SequenceDiagram): string {
           label.forEach((l, i) =>
             body.push(`<text x="${f(textX)}" y="${f(top + 12 + i * 15)}" font-size="${MSG_FONT}" fill="${INK}">${escapeXml(l)}</text>`),
           );
-          const loopY = top + Math.max(8, label.length * 15 - 4);
+          const loopY = placed.arrowY!;
           if (step.deactivate) closeBar(step.from, loopY + 22);
           if (step.activate) openBar(step.to, loopY + 22);
           const x1 = edgeX(step.to, true);
@@ -165,7 +167,7 @@ export function toSequenceSvg(d: SequenceDiagram): string {
           label.forEach((l, i) =>
             body.push(`<text x="${f(midX)}" y="${f(textTop + 12 + i * 15)}" text-anchor="middle" font-size="${MSG_FONT}" fill="${INK}">${escapeXml(l)}</text>`),
           );
-          const arrowY = textTop + label.length * 15 + 4;
+          const arrowY = placed.arrowY!;
           const x0 = edgeX(step.from, right);
           if (step.deactivate) closeBar(step.from, arrowY);
           if (step.activate) openBar(step.to, arrowY);
@@ -180,13 +182,7 @@ export function toSequenceSvg(d: SequenceDiagram): string {
       }
       case 'note': {
         touch(...step.over);
-        const xs = step.over.map((id) => col.get(id)!.x);
-        const span = step.over.length === 2;
-        const width = span ? Math.max(Math.abs(xs[1]! - xs[0]!) + 60, Math.min(NOTE_W, textWidth(step.text, 11.5)) + 24) : Math.min(NOTE_W, textWidth(step.text, 11.5)) + 24;
-        const lines = wrapText(step.text, width - 20, 11.5);
-        const h = lines.length * 15 + 12;
-        const cx = span ? (xs[0]! + xs[1]!) / 2 : xs[0]!;
-        const x0 = cx - width / 2;
+        const { x: x0, width, height: h, lines } = placed.note!;
         rightmost = Math.max(rightmost, x0 + width);
         overlays.push(
           `<path d="M${f(x0)} ${f(y)}H${f(x0 + width - 10)}L${f(x0 + width)} ${f(y + 10)}V${f(y + h)}H${f(x0)}Z" fill="#fff8c5" stroke="#d4a72c" stroke-width="1"/>` +
@@ -258,7 +254,7 @@ export function toSequenceSvg(d: SequenceDiagram): string {
     bars.push({ x: col.get(id)!.x, y0: start, y1: at, level: lvl });
   }
 
-  const lifelineEnd = y + 10;
+  const lifelineEnd = timeline.endY + 10;
   for (const [id, stack] of activeStack) {
     while (stack.length) closeBar(id, lifelineEnd - 4);
   }
