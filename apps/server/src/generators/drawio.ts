@@ -2,7 +2,8 @@ import type { NormalizedArchimateModel } from './archimate/model.js';
 import type { ViewLayout } from './archimate/layout.js';
 import { ELEMENT_INFO, isJunction } from './archimate/metamodel.js';
 import type { SequenceDiagram } from './sequence/model.js';
-import { escapeXml } from './validation.js';
+import { escapeXml, textWidth, wrapText } from './validation.js';
+import { computeSequenceColumns } from './sequence/layout.js';
 
 /** Editable native mxGraph shapes/edges; no images or calls to third-party services. */
 const attrs = (values: Record<string, string | number>) =>
@@ -80,76 +81,129 @@ export function toDrawioArchimate(model: NormalizedArchimateModel, layouts: Map<
 const SEQ_STYLE = 'rounded=1;whiteSpace=wrap;html=0;align=center;verticalAlign=middle;strokeColor=#69778A;fillColor=#E7EDF7;fontColor=#15243B;fontSize=12;';
 /** Sequence participants/lifelines, messages, notes, and frames remain editable mxGraph cells. */
 export function toDrawioSequence(diagram: SequenceDiagram): string {
-  const xs = new Map(diagram.participants.map((p, i) => [p.id, 120 + i * 225]));
-  const width = Math.max(490, 240 + (diagram.participants.length - 1) * 225);
+  const cols = computeSequenceColumns(diagram);
+  const xs = new Map(cols.map((c) => [c.p.id, c.x]));
   const position = (id: string) => xs.get(id)!;
-  const left = position(diagram.participants[0]!.id) - 82;
-  const right = position(diagram.participants[diagram.participants.length - 1]!.id) + 82;
-  let y = 142, counter = 0, frameIndex = 0;
-  const body: string[] = [], frames: string[] = [];
+  const first = cols[0]!, last = cols[cols.length - 1]!;
+  const left = Math.max(8, first.x - Math.max(82, first.w / 2 + 16));
+  const labelLines = (value: string) => wrapText(value, 260, 12);
+  const labelWidth = (value: string) => Math.max(88, Math.min(280,
+    Math.max(...labelLines(value).map((line) => textWidth(line, 12))) + 18));
+  // Reserve room for labels on self-messages and notes, not only participant heads.
+  const rightNeed = diagram.steps.reduce((max, step) => {
+    if (step.type === 'message' && step.from === step.to)
+      return Math.max(max, position(step.from) + 46 + labelWidth(step.text) + 12);
+    if (step.type === 'note')
+      return Math.max(max, Math.max(...step.over.map(position)) + 142);
+    return max;
+  }, last.x + Math.max(82, last.w / 2 + 16));
+  const right = rightNeed + 12;
+  const width = Math.max(490, Math.ceil(right + 26), Math.ceil(textWidth(diagram.title, 20) + 85));
+  const headH = 48 + 15 * (Math.max(...cols.map((c) => c.lines.length)) - 1);
+  const headTop = 78;
+  let y = headTop + headH + 24, counter = 0, frameIndex = 0;
+  const body: string[] = [], frames: string[] = [], activations: string[] = [];
   const stack: Array<{ kind: string; label: string; start: number; index: number }> = [];
+  const active = new Map<string, number[]>();
+  const activationX = (id: string, depth: number) => position(id) + (depth - 1) * 5 - 5;
+  const closeActivation = (id: string, at: number) => {
+    const values = active.get(id);
+    if (!values?.length) return; // semantic validation remains in validateSequence
+    const from = values.pop()!;
+    activations.push(vertex('activation-' + id + '-' + activations.length, '',
+      activationX(id, values.length + 1), from, 10, Math.max(8, at - from),
+      'rounded=0;strokeColor=#5B76A1;fillColor=#BDD4F4;'));
+  };
   diagram.steps.forEach((step, i) => {
     const id = 'step-' + i;
     switch (step.type) {
       case 'message': {
         counter++;
+        const lines = labelLines(step.text);
         const label = (diagram.autonumber ? String(counter) + '. ' : '') + step.text;
+        const labelH = lines.length * 17 + 12;
+        const labelW = labelWidth(label);
         const x1 = position(step.from), x2 = position(step.to);
-        const style = 'endArrow=' + (step.style === 'async' ? 'open' : 'block') +
-          ';endFill=' + (step.style === 'reply' ? '0' : '1') +
-          ';' + (step.style === 'reply' ? 'dashed=1;' : '') +
-          'strokeWidth=1.5;strokeColor=#40536B;html=0;labelBackgroundColor=#FFFFFF;fontSize=12;';
+        const color = step.style === 'reply' ? 'dashed=1;' : '';
+        const arrow = step.style === 'async' ? 'open' : 'block';
+        const style = 'endArrow=' + arrow + ';endFill=' + (step.style === 'reply' ? '0' : '1') + ';' +
+          color + 'strokeWidth=1.5;strokeColor=#40536B;html=0;';
+        const labelStyle = 'text;html=0;whiteSpace=wrap;overflow=hidden;align=center;verticalAlign=middle;rounded=1;strokeColor=none;fillColor=#FFFFFF;fontColor=#15243B;fontSize=12;';
+        const arrowY = y + labelH + 3;
         if (x1 === x2) {
-          body.push(vertex(id + '-self', label, x1 + 14, y, 140, 32, SEQ_STYLE));
-          body.push(freeEdge(id, '', x1, y + 16, x1 + 14, y + 16, style));
-        } else body.push(freeEdge(id, label, x1, y, x2, y, style));
-        if (step.activate) body.push(vertex(id + '-active', '', x2 - 5, y + 2, 10, 34,
-          'rounded=0;strokeColor=#5B76A1;fillColor=#BDD4F4;'));
-        y += 68;
+          body.push(vertex(id + '-label', label, x1 + 41, y, labelW, labelH, labelStyle));
+          // A real three-sided loop; the legacy single short segment was not a self-message.
+          body.push(freeEdge(id, '', x1, arrowY, x1 + 42, arrowY,
+            'endArrow=none;strokeColor=#40536B;' + color));
+          body.push(freeEdge(id + '-bend', '', x1 + 42, arrowY, x1 + 42, arrowY + 26,
+            'endArrow=none;strokeColor=#40536B;' + color));
+          body.push(freeEdge(id + '-return', '', x1 + 42, arrowY + 26, x1, arrowY + 26, style));
+          if (step.deactivate) closeActivation(step.from, arrowY + 26);
+          if (step.activate) active.set(step.to, [...(active.get(step.to) ?? []), arrowY + 26]);
+          y = arrowY + 58;
+        } else {
+          body.push(vertex(id + '-label', label, (x1 + x2 - labelW) / 2, y, labelW, labelH, labelStyle));
+          body.push(freeEdge(id, '', x1, arrowY, x2, arrowY, style));
+          if (step.deactivate) closeActivation(step.from, arrowY);
+          if (step.activate) active.set(step.to, [...(active.get(step.to) ?? []), arrowY]);
+          y = arrowY + 35;
+        }
         break;
       }
       case 'note': {
         const coords = step.over.map(position);
         const minX = Math.min(...coords), maxX = Math.max(...coords);
-        body.push(vertex(id, step.text, minX - 78, y, maxX - minX + 156, 55,
-          'shape=note;whiteSpace=wrap;html=0;strokeColor=#BEA446;fillColor=#FFF5C8;fontColor=#3F3724;fontSize=12;'));
-        y += 74;
+        const noteW = step.over.length > 1 ? maxX - minX + 156 : 214;
+        const lines = wrapText(step.text, Math.max(130, noteW - 24), 12);
+        const noteH = Math.max(55, lines.length * 17 + 19);
+        const noteX = step.over.length > 1 ? minX - 78 : minX - noteW / 2;
+        body.push(vertex(id, step.text, Math.max(5, noteX), y, noteW, noteH,
+          'shape=note;whiteSpace=wrap;html=0;overflow=hidden;strokeColor=#BEA446;fillColor=#FFF5C8;fontColor=#3F3724;fontSize=12;'));
+        y += noteH + 21;
         break;
       }
       case 'divider':
-        body.push(vertex(id, step.text, left, y, right - left, 30,
-          'text;html=0;align=center;fontStyle=1;strokeColor=#B2BCCA;fillColor=#F2F5FA;'));
-        y += 48;
+        body.push(vertex(id, step.text, left, y, right - left, 32,
+          'text;html=0;whiteSpace=wrap;align=center;fontStyle=1;strokeColor=#B2BCCA;fillColor=#F2F5FA;'));
+        y += 51;
         break;
-      case 'fragment_start':
+      case 'fragment_start': {
         stack.push({ kind: step.kind, label: step.label, start: y, index: frameIndex++ });
-        y += 43;
+        y += Math.max(47, wrapText(step.label, 260, 12).length * 18 + 26);
         break;
-      case 'fragment_else':
-        body.push(vertex(id, (stack.at(-1)?.kind === 'par' ? 'and' : 'else') +
-          (step.label ? ' ' + step.label : ''), left + 4, y, right - left - 8, 29,
-          'text;html=0;align=left;spacingLeft=10;strokeColor=#9BA8BC;dashed=1;fillColor=#F7F9FD;'));
-        y += 38;
+      }
+      case 'fragment_else': {
+        const branch = (stack.at(-1)?.kind === 'par' ? 'and' : 'else') +
+          (step.label ? ' ' + step.label : '');
+        const branchH = Math.max(31, wrapText(branch, 260, 12).length * 17 + 17);
+        body.push(vertex(id + '-branch', branch, left + 5, y, right - left - 10, branchH,
+          'text;html=0;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=10;strokeColor=#9BA8BC;dashed=1;fillColor=#F7F9FD;'));
+        y += branchH + 12;
         break;
+      }
       case 'fragment_end': {
         const frame = stack.pop();
         if (frame) frames.push(vertex('frame-' + frame.index,
           frame.kind + (frame.label ? ' ' + frame.label : ''),
-          left, frame.start, right - left, Math.max(60, y - frame.start + 13),
-          'swimlane;html=0;startSize=27;horizontal=1;rounded=0;strokeColor=#6F84A5;fillColor=#F4F7FC;fillOpacity=15;fontStyle=1;align=left;spacingLeft=9;'));
-        y += 22;
+          left, frame.start, right - left, Math.max(65, y - frame.start + 17),
+          'swimlane;html=0;whiteSpace=wrap;startSize=35;horizontal=1;rounded=0;strokeColor=#6F84A5;fillColor=#F4F7FC;fillOpacity=15;fontStyle=1;align=left;spacingLeft=10;'));
+        y += 24;
         break;
       }
     }
   });
-  const height = Math.max(350, y + 55);
-  const cells = [vertex('seq-title', diagram.title, 35, 15, width - 70, 48,
-    'text;html=0;fontSize=20;fontStyle=1;align=left;strokeColor=none;fillColor=none;'), ...frames];
-  diagram.participants.forEach((p, i) => {
-    const x = position(p.id);
-    cells.push(vertex('participant-' + i, p.label, x - 83, 78, 166, 48, SEQ_STYLE));
-    cells.push(freeEdge('lifeline-' + i, '', x, 126, x, height - 28,
+  const height = Math.max(350, y + 64);
+  for (const [id, values] of active) while (values.length) closeActivation(id, height - 44);
+  const cells = [
+    vertex('seq-title', diagram.title, 34, 16, width - 68, 47,
+      'text;html=0;whiteSpace=wrap;fontSize=20;fontStyle=1;align=left;strokeColor=none;fillColor=none;'),
+    ...frames,
+  ];
+  cols.forEach((c, i) => {
+    cells.push(vertex('participant-' + i, c.p.label, c.x - c.w / 2, headTop, c.w, headH, SEQ_STYLE));
+    cells.push(freeEdge('lifeline-' + i, '', c.x, headTop + headH, c.x, height - 28,
       'dashed=1;dashPattern=5 5;strokeColor=#9BA8BC;endArrow=none;'));
   });
-  return document([page('solar-sequence', diagram.title, width, height, [...cells, ...body])]);
+  cells.push(...activations, ...body);
+  return document([page('solar-sequence', diagram.title, width, height, cells)]);
 }
