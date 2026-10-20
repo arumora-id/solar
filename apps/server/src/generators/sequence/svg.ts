@@ -24,6 +24,7 @@ interface FragmentBox {
   x1: number;
   elses: Array<{ y: number; label: string }>;
   depth: number;
+  index: number;
 }
 
 
@@ -110,8 +111,9 @@ export function toSequenceSvg(d: SequenceDiagram): string {
   const fragments: FragmentBox[] = [];
   const open: Array<FragmentBox & { touched: Set<string>; extraRight: number }> = [];
   const activeStack = new Map<string, number[]>();
-  const bars: Array<{ x: number; y0: number; y1: number; level: number }> = [];
+  const bars: Array<{ id: string; x: number; y0: number; y1: number; level: number }> = [];
   let number = 0;
+  let fragmentIndex = 0;
   let rightmost = maxX;
 
   const touch = (...ids: string[]) => open.forEach((fr) => ids.forEach((id) => fr.touched.add(id)));
@@ -124,7 +126,7 @@ export function toSequenceSvg(d: SequenceDiagram): string {
     return towardRight ? c.x + half : c.x - half;
   };
 
-  for (const placed of timeline.steps) {
+  for (const [stepIndex, placed] of timeline.steps.entries()) {
     const step = placed.step;
     y = placed.top;
     switch (step.type) {
@@ -152,7 +154,7 @@ export function toSequenceSvg(d: SequenceDiagram): string {
           if (step.activate) openBar(step.to, loopY + 22);
           const x1 = edgeX(step.to, true);
           body.push(
-            `<path d="M${f(x0)} ${f(loopY)}H${f(x0 + 36)}V${f(loopY + 22)}H${f(x1)}" fill="none" stroke="${LINE}" stroke-width="1.3"${dashed ? ' stroke-dasharray="5 4"' : ''} marker-end="url(#${marker})"/>`,
+            `<path data-step="${stepIndex}" d="M${f(x0)} ${f(loopY)}H${f(x0 + 36)}V${f(loopY + 22)}H${f(x1)}" fill="none" stroke="${LINE}" stroke-width="1.3"${dashed ? ' stroke-dasharray="5 4"' : ''} marker-end="url(#${marker})"/>`,
           );
           if (d.autonumber) body.push(numberBadge(x0 + 18, loopY, number));
           rightmost = Math.max(rightmost, textX + Math.max(...label.map((l) => textWidth(l, MSG_FONT))));
@@ -173,7 +175,7 @@ export function toSequenceSvg(d: SequenceDiagram): string {
           if (step.activate) openBar(step.to, arrowY);
           const x1 = edgeX(step.to, !right);
           body.push(
-            `<path d="M${f(x0)} ${f(arrowY)}H${f(x1)}" fill="none" stroke="${LINE}" stroke-width="1.3"${dashed ? ' stroke-dasharray="5 4"' : ''} marker-end="url(#${marker})"/>`,
+            `<path data-step="${stepIndex}" d="M${f(x0)} ${f(arrowY)}H${f(x1)}" fill="none" stroke="${LINE}" stroke-width="1.3"${dashed ? ' stroke-dasharray="5 4"' : ''} marker-end="url(#${marker})"/>`,
           );
           if (d.autonumber) body.push(numberBadge(x0 + (right ? 12 : -12), arrowY, number));
           y = arrowY + 22;
@@ -185,7 +187,7 @@ export function toSequenceSvg(d: SequenceDiagram): string {
         const { x: x0, width, height: h, lines } = placed.note!;
         rightmost = Math.max(rightmost, x0 + width);
         overlays.push(
-          `<path d="M${f(x0)} ${f(y)}H${f(x0 + width - 10)}L${f(x0 + width)} ${f(y + 10)}V${f(y + h)}H${f(x0)}Z" fill="#fff8c5" stroke="#d4a72c" stroke-width="1"/>` +
+          `<path data-note-step="${stepIndex}" d="M${f(x0)} ${f(y)}H${f(x0 + width - 10)}L${f(x0 + width)} ${f(y + 10)}V${f(y + h)}H${f(x0)}Z" fill="#fff8c5" stroke="#d4a72c" stroke-width="1"/>` +
             `<path d="M${f(x0 + width - 10)} ${f(y)}V${f(y + 10)}H${f(x0 + width)}" fill="none" stroke="#d4a72c" stroke-width="1"/>` +
             lines.map((l, i) => `<text x="${f(x0 + 10)}" y="${f(y + 18 + i * 15)}" font-size="11.5" fill="${INK}">${escapeXml(l)}</text>`).join(''),
         );
@@ -202,7 +204,7 @@ export function toSequenceSvg(d: SequenceDiagram): string {
         break;
       }
       case 'fragment_start': {
-        const box = { kind: step.kind, label: step.label, y0: y, y1: y, x0: 0, x1: 0, elses: [], depth: open.length, touched: new Set<string>(), extraRight: 0 };
+        const box = { kind: step.kind, label: step.label, y0: y, y1: y, x0: 0, x1: 0, elses: [], depth: open.length, index: fragmentIndex++, touched: new Set<string>(), extraRight: 0 };
         open.push(box);
         // Long conditions are wrapped into a taller header rather than clipped.
         y += Math.max(34, wrapText(step.label, 260, 11.5).length * 15 + 18);
@@ -217,7 +219,7 @@ export function toSequenceSvg(d: SequenceDiagram): string {
       case 'fragment_end': {
         const box = open.pop();
         if (!box) break;
-        box.y1 = y + 2;
+        box.y1 = Math.max(y + 2, box.y0 + 65);
         const touchedCols = [...box.touched].map((id) => col.get(id)!).filter(Boolean);
         const xs = touchedCols.length ? touchedCols.map((c) => c.x) : cols.map((c) => c.x);
         const inner = fragments.filter((fr) => fr.depth > box.depth && fr.y0 >= box.y0 && fr.y1 <= box.y1);
@@ -251,7 +253,7 @@ export function toSequenceSvg(d: SequenceDiagram): string {
     if (!stack?.length) return;
     const lvl = stack.length;
     const start = stack.pop()!;
-    bars.push({ x: col.get(id)!.x, y0: start, y1: at, level: lvl });
+    bars.push({ id, x: col.get(id)!.x, y0: start, y1: at, level: lvl });
   }
 
   const lifelineEnd = timeline.endY + 10;
@@ -278,7 +280,7 @@ export function toSequenceSvg(d: SequenceDiagram): string {
   const fragmentBg = sortedFragments
     .map((fr) => {
       const parts = [
-        `<rect x="${f(fr.x0)}" y="${f(fr.y0)}" width="${f(fr.x1 - fr.x0)}" height="${f(fr.y1 - fr.y0)}" rx="3" fill="${fr.kind === 'group' ? 'none' : 'rgba(9,105,218,0.035)'}" stroke="#8c959f" stroke-width="1"/>`,
+        `<rect data-fragment-index="${fr.index}" x="${f(fr.x0)}" y="${f(fr.y0)}" width="${f(fr.x1 - fr.x0)}" height="${f(fr.y1 - fr.y0)}" rx="3" fill="${fr.kind === 'group' ? 'none' : 'rgba(9,105,218,0.035)'}" stroke="#8c959f" stroke-width="1"/>`,
       ];
       for (const e of fr.elses) parts.push(`<path d="M${f(fr.x0)} ${f(e.y)}H${f(fr.x1)}" stroke="#8c959f" stroke-width="1" stroke-dasharray="6 4"/>`);
       return parts.join('');
@@ -311,7 +313,7 @@ export function toSequenceSvg(d: SequenceDiagram): string {
     .join('');
   const barSvg = bars
     .sort((a, b) => a.level - b.level)
-    .map((b) => `<rect x="${f(b.x - ACT_W / 2 + (b.level - 1) * 5)}" y="${f(b.y0)}" width="${ACT_W}" height="${f(Math.max(6, b.y1 - b.y0))}" fill="#ddf4ff" stroke="#0969da" stroke-width="1"/>`)
+    .map((b) => `<rect data-activation="${b.id}" x="${f(b.x - ACT_W / 2 + (b.level - 1) * 5)}" y="${f(b.y0)}" width="${ACT_W}" height="${f(Math.max(6, b.y1 - b.y0))}" fill="#ddf4ff" stroke="#0969da" stroke-width="1"/>`)
     .join('');
   const heads = cols.map((c) => participantHead(c, headTop, headH) + participantHead(c, footTop, headH)).join('');
   const overlaySvg = overlays.map((o) => o.replace(/^\{DIVIDER:(\d+)\}$/, (_, i: string) => dividerSvg(Number(i)))).join('');
