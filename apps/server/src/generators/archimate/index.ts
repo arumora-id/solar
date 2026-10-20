@@ -4,7 +4,8 @@ import { toExchangeXml } from './exchange.js';
 import { layoutView, type ViewLayout } from './layout.js';
 import { ArchimateModelSchema, type ArchimateModelInput, type NormalizedArchimateModel } from './model.js';
 import { renderViewSvg } from './svg.js';
-import { routeArchiMateEdges, type RoutedRelationship } from './routing.js';
+import { routeArchiMateEdges, layoutArchiMateLabels, type RoutedRelationship } from './routing.js';
+import { assessArchiMateGeometry } from './quality.js';
 import { validateArchimateModel } from './validate.js';
 
 export interface ArchimateBuildOutput {
@@ -38,6 +39,7 @@ export function buildArchimate(input: ArchimateModelInput | unknown): ArchimateB
   const layouts = new Map<string, ViewLayout>();
   const routesByView = new Map<string, Map<string, RoutedRelationship>>();
   const views: ArchimateBuildOutput['views'] = [];
+  const qualityWarnings: ValidationIssue[] = [];
   for (const view of model.views) {
     const elements = view.elements.map((id) => byId.get(id)!);
     const relationships = view.relationships.map((id) => relById.get(id)!);
@@ -45,6 +47,18 @@ export function buildArchimate(input: ArchimateModelInput | unknown): ArchimateB
     layouts.set(view.id, layout);
     const routes = routeArchiMateEdges(layout, relationships);
     routesByView.set(view.id, routes);
+    const quality = assessArchiMateGeometry(layout, relationships, routes,
+      layoutArchiMateLabels(layout, relationships, routes));
+    if (quality.issues.length) {
+      const counts = new Map<string, number>();
+      for (const issue of quality.issues) counts.set(issue.kind, (counts.get(issue.kind) ?? 0) + 1);
+      qualityWarnings.push({
+        path: 'views[' + view.id + '].layout',
+        message: 'Diagram layout advisory (' + view.name + '): ' +
+          [...counts].map(([kind, count]) => count + ' ' + kind).join(', ') +
+          '. Review the exported drawing or split this view into smaller diagrams.',
+      });
+    }
     views.push({
       id: view.id,
       name: view.name,
@@ -53,7 +67,7 @@ export function buildArchimate(input: ArchimateModelInput | unknown): ArchimateB
       relationshipCount: relationships.length,
     });
   }
-  return { ok: true, output: { model, exchangeXml: toExchangeXml(model, layouts, routesByView), drawio: toDrawioArchimate(model, layouts, routesByView), views, warnings: validation.warnings } };
+  return { ok: true, output: { model, exchangeXml: toExchangeXml(model, layouts, routesByView), drawio: toDrawioArchimate(model, layouts, routesByView), views, warnings: [...validation.warnings, ...qualityWarnings] } };
 }
 
 export { ArchimateModelSchema } from './model.js';
