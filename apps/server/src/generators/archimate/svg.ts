@@ -2,16 +2,12 @@ import { escapeXml, textWidth, wrapText } from '../validation.js';
 import { BAND_LABEL_W, MARGIN, type NodeBox, type ViewLayout } from './layout.js';
 import { ELEMENT_INFO, LAYER_BAND_FILL, LAYER_LABEL, elementFill, type Glyph, type RelationshipType } from './metamodel.js';
 import type { ArchimateRelationship } from './model.js';
+import { layoutArchiMateLabels, routeArchiMateEdges, type RoutedRelationship } from './routing.js';
 
 const MAX_TITLE_CANVAS = 1400;
 
 const FONT = "'Segoe UI', 'Helvetica Neue', Arial, sans-serif";
 const STROKE = '#4a4a4a';
-
-interface Point {
-  x: number;
-  y: number;
-}
 
 const f = (n: number) => Math.round(n * 10) / 10;
 
@@ -219,135 +215,6 @@ const MARKER_DEFS = `
 <marker id="diamond-hollow" viewBox="0 0 16 10" refX="15.5" refY="5" markerWidth="16" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 5L8 0L16 5L8 10Z" fill="#ffffff" stroke="${STROKE}" stroke-width="1.1"/></marker>
 <marker id="dot" viewBox="0 0 8 8" refX="4" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><circle cx="4" cy="4" r="3.2" fill="${STROKE}"/></marker>`;
 
-/** Point where the segment from the box centre towards `toward` leaves the box. */
-function clipToBox(box: NodeBox, toward: Point): Point {
-  const cx = box.x + box.w / 2;
-  const cy = box.y + box.h / 2;
-  const dx = toward.x - cx;
-  const dy = toward.y - cy;
-  if (dx === 0 && dy === 0) return { x: cx, y: cy };
-  if (box.w === box.h && box.w <= 20) {
-    const len = Math.hypot(dx, dy);
-    return { x: cx + (dx / len) * (box.w / 2), y: cy + (dy / len) * (box.h / 2) };
-  }
-  const sx = dx === 0 ? Infinity : box.w / 2 / Math.abs(dx);
-  const sy = dy === 0 ? Infinity : box.h / 2 / Math.abs(dy);
-  const s = Math.min(sx, sy);
-  return { x: cx + dx * s, y: cy + dy * s };
-}
-
-interface EdgeGeometry {
-  d: string;
-  label: Point;
-}
-
-const PAD = 5;
-
-function insideAny(pt: Point, boxes: NodeBox[]): boolean {
-  return boxes.some((b) => pt.x > b.x - PAD && pt.x < b.x + b.w + PAD && pt.y > b.y - PAD && pt.y < b.y + b.h + PAD);
-}
-
-function segmentHits(a: Point, b: Point, boxes: NodeBox[]): boolean {
-  const steps = Math.max(2, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 5));
-  for (let i = 1; i < steps; i++) {
-    const t = i / steps;
-    if (insideAny({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }, boxes)) return true;
-  }
-  return false;
-}
-
-function quadPoint(a: Point, c: Point, b: Point, t: number): Point {
-  const u = 1 - t;
-  return { x: u * u * a.x + 2 * u * t * c.x + t * t * b.x, y: u * u * a.y + 2 * u * t * c.y + t * t * b.y };
-}
-
-function curveHits(a: Point, c: Point, b: Point, boxes: NodeBox[], bounds: { minX: number; maxX: number; minY: number }): boolean {
-  for (let i = 1; i < 40; i++) {
-    const pt = quadPoint(a, c, b, i / 40);
-    if (pt.x < bounds.minX || pt.x > bounds.maxX || pt.y < bounds.minY) return true;
-    if (insideAny(pt, boxes)) return true;
-  }
-  return false;
-}
-
-/**
- * Straight connection when nothing is in the way; otherwise the first quadratic curve (bending
- * left or right, progressively further) that clears every other element of the view.
- */
-function edgeGeometry(
-  src: NodeBox,
-  dst: NodeBox,
-  offset: number,
-  all: NodeBox[],
-  bounds: { minX: number; maxX: number; minY: number },
-): EdgeGeometry {
-  const c1 = { x: src.x + src.w / 2, y: src.y + src.h / 2 };
-  const c2 = { x: dst.x + dst.w / 2, y: dst.y + dst.h / 2 };
-
-  if (src.id === dst.id) {
-    const sx = src.x + src.w - 20;
-    const sy = src.y;
-    const ex = src.x + src.w;
-    const ey = src.y + 20;
-    return {
-      d: `M${sx} ${sy}C${sx + 10} ${sy - 36} ${ex + 36} ${ey - 10} ${ex} ${ey}`,
-      label: { x: ex + 18, y: sy - 14 },
-    };
-  }
-
-  const obstacles = all.filter((o) => o.id !== src.id && o.id !== dst.id);
-  const len = Math.hypot(c2.x - c1.x, c2.y - c1.y) || 1;
-  const nx = -(c2.y - c1.y) / len;
-  const ny = (c2.x - c1.x) / len;
-
-  if (offset === 0) {
-    const p1 = clipToBox(src, c2);
-    const p2 = clipToBox(dst, c1);
-    if (!segmentHits(p1, p2, obstacles)) {
-      return { d: `M${f(p1.x)} ${f(p1.y)}L${f(p2.x)} ${f(p2.y)}`, label: { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 } };
-    }
-  }
-
-  // Curved candidates; same-row connections prefer bending upwards, parallel ones keep their side.
-  const mid = { x: (c1.x + c2.x) / 2, y: (c1.y + c2.y) / 2 };
-  const upFirst = ny < 0 ? 1 : -1;
-  const preferred = offset !== 0 ? Math.sign(offset) : upFirst;
-  const magnitudes = [40, 80, 130, 190, 260, 340];
-  const base = offset !== 0 ? Math.abs(offset) * 2.2 : 0;
-  for (const m of magnitudes) {
-    for (const side of [preferred, -preferred]) {
-      const k = side * (m + base);
-      const ctrl = { x: mid.x + nx * k, y: mid.y + ny * k };
-      const p1 = clipToBox(src, ctrl);
-      const p2 = clipToBox(dst, ctrl);
-      if (!curveHits(p1, ctrl, p2, obstacles, bounds)) {
-        return {
-          d: `M${f(p1.x)} ${f(p1.y)}Q${f(ctrl.x)} ${f(ctrl.y)} ${f(p2.x)} ${f(p2.y)}`,
-          label: quadPoint(p1, ctrl, p2, 0.5),
-        };
-      }
-    }
-  }
-
-  // Nothing clears every element: keep a gentle curve (parallel) or a straight line.
-  if (offset !== 0) {
-    const ctrl = { x: mid.x + nx * offset * 2.2, y: mid.y + ny * offset * 2.2 };
-    const p1 = clipToBox(src, ctrl);
-    const p2 = clipToBox(dst, ctrl);
-    return { d: `M${f(p1.x)} ${f(p1.y)}Q${f(ctrl.x)} ${f(ctrl.y)} ${f(p2.x)} ${f(p2.y)}`, label: quadPoint(p1, ctrl, p2, 0.5) };
-  }
-  const p1 = clipToBox(src, c2);
-  const p2 = clipToBox(dst, c1);
-  return { d: `M${f(p1.x)} ${f(p1.y)}L${f(p2.x)} ${f(p2.y)}`, label: { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 } };
-}
-
-function relationshipLabel(r: ArchimateRelationship): string {
-  const parts: string[] = [];
-  if (r.name) parts.push(r.name);
-  if (r.type === 'Influence' && r.influenceModifier) parts.push(r.influenceModifier);
-  return parts.join(' ');
-}
-
 function legend(types: RelationshipType[], x: number, y: number, maxWidth: number): { svg: string; height: number } {
   if (types.length === 0) return { svg: '', height: 0 };
   const itemW = 170;
@@ -379,48 +246,42 @@ export interface RenderViewOptions {
   viewName: string;
   viewpoint?: string;
   relationships: ArchimateRelationship[];
+  routes?: Map<string, RoutedRelationship>;
 }
 
 export function renderViewSvg(layout: ViewLayout, opts: RenderViewOptions): string {
   const nodes = [...layout.nodes.values()];
   const rels = opts.relationships.filter((r) => layout.nodes.has(r.source) && layout.nodes.has(r.target));
 
-  const pairCount = new Map<string, number>();
-  const pairIndex = new Map<string, number>();
-  const pairKey = (r: ArchimateRelationship) => [r.source, r.target].sort().join('|');
-  for (const r of rels) pairCount.set(pairKey(r), (pairCount.get(pairKey(r)) ?? 0) + 1);
-
+  const routes = opts.routes ?? routeArchiMateEdges(layout, rels);
+  const routedLabels = layoutArchiMateLabels(layout, rels, routes);
   const edges: string[] = [];
   const labels: string[] = [];
-  const bounds = { minX: MARGIN + BAND_LABEL_W, maxX: layout.width - MARGIN, minY: MARGIN + 44 };
   for (const r of rels) {
-    const key = pairKey(r);
-    const n = pairCount.get(key)!;
-    const k = pairIndex.get(key) ?? 0;
-    pairIndex.set(key, k + 1);
-    // keep the offset direction stable regardless of edge direction
-    const sign = r.source < r.target ? 1 : -1;
-    const offset = n > 1 ? (k - (n - 1) / 2) * 14 * sign : 0;
-    const geo = edgeGeometry(layout.nodes.get(r.source)!, layout.nodes.get(r.target)!, offset, nodes, bounds);
-    const m = markersFor(r);
+    const points = routes.get(r.id)?.points;
+    if (!points || points.length < 2) continue;
+    const path = points.map((p, i) => (i === 0 ? 'M' : 'L') + f(p.x) + ' ' + f(p.y)).join('');
+    const markers = markersFor(r);
     edges.push(
-      `<path class="rel" data-id="${escapeXml(r.id)}" d="${geo.d}" fill="none" stroke="${STROKE}" stroke-width="1.2"` +
-        (DASH[r.type] ? ` stroke-dasharray="${DASH[r.type]}"` : '') +
-        (m.start ? ` marker-start="url(#${m.start})"` : '') +
-        (m.end ? ` marker-end="url(#${m.end})"` : '') +
-        `><title>${escapeXml(`${r.type}${r.name ? `: ${r.name}` : ''}`)}</title></path>`,
+      '<path class="rel" data-id="' + escapeXml(r.id) + '" d="' + path +
+      '" fill="none" stroke="' + STROKE + '" stroke-width="1.2"' +
+      (DASH[r.type] ? ' stroke-dasharray="' + DASH[r.type] + '"' : '') +
+      (markers.start ? ' marker-start="url(#' + markers.start + ')"' : '') +
+      (markers.end ? ' marker-end="url(#' + markers.end + ')"' : '') +
+      '><title>' + escapeXml(r.type + (r.name ? ': ' + r.name : '')) + '</title></path>',
     );
-    const text = relationshipLabel(r);
-    if (text) {
-      const lines = wrapText(text, 150, 10.5, 2);
-      const w = Math.max(...lines.map((l) => l.length)) * 5.9 + 8;
-      const h = lines.length * 13 + 4;
+    const label = routedLabels.get(r.id);
+    if (label) {
+      const { lines, box } = label;
       labels.push(
-        `<g class="rel-label"><rect x="${f(geo.label.x - w / 2)}" y="${f(geo.label.y - h / 2)}" width="${f(w)}" height="${h}" rx="3" fill="#ffffff" fill-opacity="0.9"/>` +
-          lines
-            .map((l, i) => `<text x="${f(geo.label.x)}" y="${f(geo.label.y - h / 2 + 12 + i * 13)}" text-anchor="middle" font-size="10.5" fill="#24292f">${escapeXml(l)}</text>`)
-            .join('') +
-          '</g>',
+        '<g class="rel-label"><rect x="' + f(box.x) + '" y="' + f(box.y) +
+        '" width="' + f(box.w) + '" height="' + f(box.h) +
+        '" rx="3" fill="#ffffff" fill-opacity="0.95"/>' +
+        lines.map((line, i) => '<text x="' + f(box.x + box.w / 2) +
+          '" y="' + f(box.y + 13 + i * 13) +
+          '" text-anchor="middle" font-size="10.5" fill="#24292f">' +
+          escapeXml(line) + '</text>').join('') +
+        '</g>',
       );
     }
   }

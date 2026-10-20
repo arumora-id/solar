@@ -1,6 +1,7 @@
 import { escapeXml } from '../validation.js';
 import type { ViewLayout } from './layout.js';
 import type { NormalizedArchimateModel } from './model.js';
+import { routeArchiMateEdges, type RoutedRelationship } from './routing.js';
 
 /** Prefix that turns user ids into valid xs:ID values (NCName must not start with a digit). */
 export const xmlId = (id: string) => `id-${id}`;
@@ -12,7 +13,11 @@ const genId = (id: string) => `gen-${id}`;
  * (namespace http://www.opengroup.org/xsd/archimate/3.0/), importable by Archi, Visual Paradigm,
  * BiZZdesign, Sparx EA and other tools that support the standard.
  */
-export function toExchangeXml(model: NormalizedArchimateModel, layouts: Map<string, ViewLayout>): string {
+export function toExchangeXml(
+  model: NormalizedArchimateModel,
+  layouts: Map<string, ViewLayout>,
+  routesByView?: Map<string, Map<string, RoutedRelationship>>,
+): string {
   const lang = escapeXml(model.language);
   const text = (tag: string, value: string | undefined, indent: string) =>
     value === undefined || value.trim() === '' ? '' : `${indent}<${tag} xml:lang="${lang}">${escapeXml(value)}</${tag}>\n`;
@@ -84,10 +89,28 @@ export function toExchangeXml(model: NormalizedArchimateModel, layouts: Map<stri
       if (!n) continue;
       xml += `        <node identifier="${escapeXml(genId(`v${vi + 1}-n-${eid}`))}" elementRef="${escapeXml(xmlId(eid))}" xsi:type="Element" x="${n.x}" y="${n.y}" w="${n.w}" h="${n.h}"/>\n`;
     }
+    const routedRelationships = view.relationships.map((id) => model.relationships.find((r) => r.id === id)!).filter(Boolean);
+    const routes = routesByView?.get(view.id) ?? routeArchiMateEdges(layout, routedRelationships);
     for (const rid of view.relationships) {
       const r = model.relationships.find((x) => x.id === rid);
       if (!r || !layout.nodes.has(r.source) || !layout.nodes.has(r.target)) continue;
-      xml += `        <connection identifier="${escapeXml(genId(`v${vi + 1}-c-${rid}`))}" relationshipRef="${escapeXml(xmlId(rid))}" xsi:type="Relationship" source="${escapeXml(genId(`v${vi + 1}-n-${r.source}`))}" target="${escapeXml(genId(`v${vi + 1}-n-${r.target}`))}"/>\n`;
+      const attrs = 'identifier="' + escapeXml(genId('v' + (vi + 1) + '-c-' + rid)) +
+        '" relationshipRef="' + escapeXml(xmlId(rid)) + '" xsi:type="Relationship" source="' +
+        escapeXml(genId('v' + (vi + 1) + '-n-' + r.source)) + '" target="' +
+        escapeXml(genId('v' + (vi + 1) + '-n-' + r.target)) + '"';
+      const points = routes.get(r.id)?.points ?? [];
+      const pointXml = (tag: string, x: number, y: number) =>
+        '          <' + tag + ' x="' + Math.max(0, Math.round(x)) +
+        '" y="' + Math.max(0, Math.round(y)) + '"/>\n';
+      if (points.length >= 2) {
+        xml += '        <connection ' + attrs + '>\n';
+        xml += pointXml('sourceAttachment', points[0]!.x, points[0]!.y);
+        for (const point of points.slice(1, -1)) xml += pointXml('bendpoint', point.x, point.y);
+        xml += pointXml('targetAttachment', points[points.length - 1]!.x, points[points.length - 1]!.y);
+        xml += '        </connection>\n';
+      } else {
+        xml += '        <connection ' + attrs + '/>\n';
+      }
     }
     xml += '      </view>\n';
   });

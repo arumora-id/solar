@@ -38,6 +38,14 @@ jobs:
         run: node scripts/ui-layout-smoke.mjs
       - name: Role governance, content workflow and image permissions QA (Chromium)
         run: node scripts/content-governance-qa.mjs
+      - name: Diagram visual QA (Chromium SVG) and editable export fixtures
+        run: node --import tsx scripts/diagram-visual-qa.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: solar-diagram-visual-qa
+          path: ${{ runner.temp }}/solar-diagram-qa/*
+          if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         if: always()
         with:
