@@ -38,6 +38,12 @@ describe('Sequence SVG and editable XML use identical timeline coordinates — p
     const first = rectangle(drawio, 'participant-0');
     expect(first.y).toBe(Math.round(timeline.headTop));
     expect(first.h).toBe(Math.round(timeline.headHeight));
+    const footer = rectangle(drawio, 'participant-footer-0');
+    expect(footer.y).toBe(Math.round(timeline.endY + 16));
+    expect(footer.h).toBe(Math.round(timeline.headHeight));
+    expect(edgeSourceY(drawio, 'lifeline-0')).toBe(Math.round(timeline.headTop + timeline.headHeight));
+    const lifeline = drawio.match(/<mxCell id="lifeline-0"[^>]*>([\s\S]*?)<\/mxCell>/);
+    expect(lifeline?.[1]).toContain('y="' + Math.round(timeline.endY + 16) + '" as="targetPoint"');
     for (const [i, placement] of timeline.steps.entries()) {
       if (placement.step.type === 'message') {
         expect(edgeSourceY(drawio, 'step-' + i)).toBe(Math.round(placement.arrowY!));
