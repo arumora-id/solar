@@ -1,5 +1,6 @@
 import type { NodeBox, ViewLayout } from './layout.js';
 import type { ArchimateRelationship } from './model.js';
+import { textWidth, wrapText } from '../validation.js';
 
 export interface Point { x: number; y: number }
 export interface RoutedRelationship { id: string; points: Point[] }
@@ -244,4 +245,25 @@ export function placeEdgeLabel(
   const result = fallback ?? { x: points[0]!.x, y: points[0]!.y, w: width, h: height };
   placed.push(result);
   return result;
+}
+
+/** Shared label geometry: SVG and draw.io use the same positions and wrapping. */
+export interface RoutedLabel { text: string; lines: string[]; box: Rect }
+export function layoutArchiMateLabels(
+  layout: ViewLayout, relationships: ArchimateRelationship[],
+  routes: Map<string, RoutedRelationship>,
+): Map<string, RoutedLabel> {
+  const placed: Rect[] = [], labels = new Map<string, RoutedLabel>();
+  const nodes = [...layout.nodes.values()];
+  for (const rel of relationships) {
+    const text = [rel.name, rel.type === 'Influence' ? rel.influenceModifier : undefined].filter(Boolean).join(' ');
+    const points = routes.get(rel.id)?.points;
+    if (!text || !points || points.length < 2) continue;
+    const lines = wrapText(text, 150, 10.5, 2);
+    const width = Math.max(...lines.map((line) => textWidth(line, 10.5))) + 12;
+    const height = lines.length * 13 + 6;
+    const box = placeEdgeLabel(points, width, height, nodes, placed, layout.width, layout.height);
+    labels.set(rel.id, { text, lines, box });
+  }
+  return labels;
 }

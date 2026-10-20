@@ -1,6 +1,7 @@
 import type { NormalizedArchimateModel } from './archimate/model.js';
 import type { ViewLayout } from './archimate/layout.js';
 import { ELEMENT_INFO, isJunction } from './archimate/metamodel.js';
+import { layoutArchiMateLabels, routeArchiMateEdges, type RoutedRelationship } from './archimate/routing.js';
 import type { SequenceDiagram } from './sequence/model.js';
 import { escapeXml, textWidth, wrapText } from './validation.js';
 import { computeSequenceColumns } from './sequence/layout.js';
@@ -37,7 +38,11 @@ const fills: Record<string, string> = {
   motivation: '#F1E4F9', strategy: '#FBE3E7', implementation: '#FDE6D5', other: '#F2F2F2',
 };
 /** Every ArchiMate view becomes a page with independently editable shapes and connectors. */
-export function toDrawioArchimate(model: NormalizedArchimateModel, layouts: Map<string, ViewLayout>): string {
+export function toDrawioArchimate(
+  model: NormalizedArchimateModel,
+  layouts: Map<string, ViewLayout>,
+  routesByView?: Map<string, Map<string, RoutedRelationship>>,
+): string {
   const pages: string[] = [];
   for (const [index, view] of model.views.entries()) {
     const layout = layouts.get(view.id);
@@ -63,16 +68,41 @@ export function toDrawioArchimate(model: NormalizedArchimateModel, layouts: Map<
         (fills[info.layer] ?? fills.other) + ';fontColor=#172333;fontSize=12;';
       cells.push(vertex(id, label, n.x, n.y, n.w, n.h, style));
     });
+    const rels = view.relationships.map((id) => model.relationships.find((r) => r.id === id)!).filter(Boolean);
+    const routes = routesByView?.get(view.id) ?? routeArchiMateEdges(layout, rels);
+    const labels = layoutArchiMateLabels(layout, rels, routes);
     view.relationships.forEach((rid, i) => {
       const r = model.relationships.find((candidate) => candidate.id === rid);
       if (!r) return;
       const source = ids.get(r.source), target = ids.get(r.target);
       if (!source || !target) return;
+      const points = routes.get(r.id)?.points;
+      if (!points || points.length < 2) return;
       const dashed = ['Association', 'Influence', 'Realization'].includes(r.type);
-      const style = 'edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;strokeColor=#56647A;strokeWidth=1.5;' +
+      const src = layout.nodes.get(r.source)!, dst = layout.nodes.get(r.target)!;
+      const start = points[0]!, end = points[points.length - 1]!;
+      const normalized = (n: number) => Math.max(0, Math.min(1, n)).toFixed(4);
+      const style = 'edgeStyle=none;orthogonal=1;rounded=0;html=0;strokeColor=#56647A;strokeWidth=1.5;' +
         (dashed ? 'dashed=1;' : '') + 'endArrow=' + (r.isDirected === false ? 'none' : 'block') +
-        ';endFill=1;labelBackgroundColor=#FFFFFF;fontSize=10;';
-      cells.push(anchoredEdge('rel-' + index + '-' + i, r.name || r.type, source, target, style));
+        ';endFill=1;exitX=' + normalized((start.x - src.x) / src.w) +
+        ';exitY=' + normalized((start.y - src.y) / src.h) +
+        ';entryX=' + normalized((end.x - dst.x) / dst.w) +
+        ';entryY=' + normalized((end.y - dst.y) / dst.h) +
+        ';exitDx=0;exitDy=0;entryDx=0;entryDy=0;exitPerimeter=1;entryPerimeter=1;';
+      // Editable mxGeometry waypoints preserve the bends computed by the shared router.
+      const routePoints = points.slice(1, -1).map((p) =>
+        tag('mxPoint', { x: Math.round(p.x), y: Math.round(p.y) })).join('');
+      cells.push(tag('mxCell', {
+        id: 'rel-' + index + '-' + i, value: '', style, edge: 1, parent: 1, source, target,
+      }, tag('mxGeometry', { relative: 1, as: 'geometry' },
+        tag('Array', { as: 'points' }, routePoints))));
+      const label = labels.get(r.id);
+      if (label) {
+        const box = label.box;
+        cells.push(vertex('rel-label-' + index + '-' + i, label.lines.join('\n'),
+          box.x, box.y, box.w, box.h,
+          'text;html=0;whiteSpace=wrap;align=center;verticalAlign=middle;strokeColor=none;fillColor=#FFFFFF;opacity=95;fontSize=10.5;'));
+      }
     });
     pages.push(page('solar-archimate-' + index, view.name, layout.width + 20, layout.height + 40, cells));
   }

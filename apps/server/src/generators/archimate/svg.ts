@@ -2,7 +2,7 @@ import { escapeXml, textWidth, wrapText } from '../validation.js';
 import { BAND_LABEL_W, MARGIN, type NodeBox, type ViewLayout } from './layout.js';
 import { ELEMENT_INFO, LAYER_BAND_FILL, LAYER_LABEL, elementFill, type Glyph, type RelationshipType } from './metamodel.js';
 import type { ArchimateRelationship } from './model.js';
-import { placeEdgeLabel, routeArchiMateEdges } from './routing.js';
+import { layoutArchiMateLabels, routeArchiMateEdges, type RoutedRelationship } from './routing.js';
 
 const MAX_TITLE_CANVAS = 1400;
 
@@ -215,13 +215,6 @@ const MARKER_DEFS = `
 <marker id="diamond-hollow" viewBox="0 0 16 10" refX="15.5" refY="5" markerWidth="16" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 5L8 0L16 5L8 10Z" fill="#ffffff" stroke="${STROKE}" stroke-width="1.1"/></marker>
 <marker id="dot" viewBox="0 0 8 8" refX="4" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><circle cx="4" cy="4" r="3.2" fill="${STROKE}"/></marker>`;
 
-function relationshipLabel(r: ArchimateRelationship): string {
-  const parts: string[] = [];
-  if (r.name) parts.push(r.name);
-  if (r.type === 'Influence' && r.influenceModifier) parts.push(r.influenceModifier);
-  return parts.join(' ');
-}
-
 function legend(types: RelationshipType[], x: number, y: number, maxWidth: number): { svg: string; height: number } {
   if (types.length === 0) return { svg: '', height: 0 };
   const itemW = 170;
@@ -253,14 +246,15 @@ export interface RenderViewOptions {
   viewName: string;
   viewpoint?: string;
   relationships: ArchimateRelationship[];
+  routes?: Map<string, RoutedRelationship>;
 }
 
 export function renderViewSvg(layout: ViewLayout, opts: RenderViewOptions): string {
   const nodes = [...layout.nodes.values()];
   const rels = opts.relationships.filter((r) => layout.nodes.has(r.source) && layout.nodes.has(r.target));
 
-  const routes = routeArchiMateEdges(layout, rels);
-  const reservedLabels: Array<{ x: number; y: number; w: number; h: number }> = [];
+  const routes = opts.routes ?? routeArchiMateEdges(layout, rels);
+  const routedLabels = layoutArchiMateLabels(layout, rels, routes);
   const edges: string[] = [];
   const labels: string[] = [];
   for (const r of rels) {
@@ -276,15 +270,12 @@ export function renderViewSvg(layout: ViewLayout, opts: RenderViewOptions): stri
       (markers.end ? ' marker-end="url(#' + markers.end + ')"' : '') +
       '><title>' + escapeXml(r.type + (r.name ? ': ' + r.name : '')) + '</title></path>',
     );
-    const label = relationshipLabel(r);
+    const label = routedLabels.get(r.id);
     if (label) {
-      const lines = wrapText(label, 150, 10.5, 2);
-      const w = Math.max(...lines.map((line) => textWidth(line, 10.5))) + 12;
-      const h = lines.length * 13 + 6;
-      const box = placeEdgeLabel(points, w, h, nodes, reservedLabels, layout.width, layout.height);
+      const { lines, box } = label;
       labels.push(
         '<g class="rel-label"><rect x="' + f(box.x) + '" y="' + f(box.y) +
-        '" width="' + f(box.w) + '" height="' + h +
+        '" width="' + f(box.w) + '" height="' + f(box.h) +
         '" rx="3" fill="#ffffff" fill-opacity="0.95"/>' +
         lines.map((line, i) => '<text x="' + f(box.x + box.w / 2) +
           '" y="' + f(box.y + 13 + i * 13) +
