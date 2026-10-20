@@ -73,6 +73,6 @@ describe('ArchiMate collision-aware SVG routing — phase A', () => {
       expect(v.svg).toContain('<g class="labels">');
       expect(v.svg).toContain('<svg');
     }
-    expect(result.output.exchangeXml).toContain('<connections>');
+    expect(result.output.exchangeXml).toContain('<connection ');
   });
 });
