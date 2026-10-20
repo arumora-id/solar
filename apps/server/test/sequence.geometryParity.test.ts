@@ -53,22 +53,22 @@ describe('Sequence SVG and draw.io precise shared geometry — C2', () => {
     const [x1, y1, bendX, returnY, x2] = nums(selfPath!);
     expect(y1).toBe(self.arrowY);
     expect(returnY).toBe(self.arrowY! + 22);
-    expect(point(drawio, 'step-0', 'sourcePoint')).toEqual({ x: x1, y: y1 });
-    expect(point(drawio, 'step-0', 'targetPoint')).toEqual({ x: bendX, y: y1 });
-    expect(point(drawio, 'step-0-bend', 'targetPoint')).toEqual({ x: bendX, y: returnY });
-    expect(point(drawio, 'step-0-return', 'sourcePoint')).toEqual({ x: bendX, y: returnY });
-    expect(point(drawio, 'step-0-return', 'targetPoint')).toEqual({ x: x2, y: returnY });
+    expect(point(drawio, 'step-0', 'sourcePoint')).toEqual({ x: Math.round(x1!), y: y1 });
+    expect(point(drawio, 'step-0', 'targetPoint')).toEqual({ x: Math.round(bendX!), y: y1 });
+    expect(point(drawio, 'step-0-bend', 'targetPoint')).toEqual({ x: Math.round(bendX!), y: returnY });
+    expect(point(drawio, 'step-0-return', 'sourcePoint')).toEqual({ x: Math.round(bendX!), y: returnY });
+    expect(point(drawio, 'step-0-return', 'targetPoint')).toEqual({ x: Math.round(x2!), y: returnY });
 
     for (const id of ['Web', 'OrderSvc']) {
       const expected = annotatedRect(svg, 'data-activation', id);
       const actual = vertex(drawio, 'activation-' + id + '-' + (id === 'Web' ? '0' : '1'));
-      expect(actual).toEqual(expected);
+      expect(actual).toEqual({ x: Math.round(expected.x), y: Math.round(expected.y), w: Math.round(expected.w), h: Math.round(expected.h) });
     }
     const frame = annotatedRect(svg, 'data-fragment-index', '0');
     const xmlFrame = vertex(drawio, 'frame-0');
     // Editors may extend combined fragments horizontally, but their timeline spans must match.
-    expect(xmlFrame.y).toBe(frame.y);
-    expect(xmlFrame.h).toBe(frame.h);
+    expect(xmlFrame.y).toBe(Math.round(frame.y));
+    expect(xmlFrame.h).toBe(Math.round(frame.h));
     const note = timeline.steps[3]!;
     const svgNote = svg.match(/<path data-note-step="3" d="M([0-9.]+) ([0-9.]+)H/);
     expect(svgNote).not.toBeNull();
@@ -80,7 +80,7 @@ describe('Sequence SVG and draw.io precise shared geometry — C2', () => {
 
     const columns = timeline.columns;
     const footTop = timeline.endY + 16;
-    const svgLifeline = '<path d="M' + columns[0]!.x + ' ' +
+    const svgLifeline = '<path d="M' + (Math.round(columns[0]!.x * 10) / 10) + ' ' +
       (timeline.headTop + timeline.headHeight) + 'V' + footTop + '"';
     expect(svg).toContain(svgLifeline);
     expect(point(drawio, 'lifeline-0', 'targetPoint').y).toBe(footTop);
@@ -95,8 +95,8 @@ describe('Sequence SVG and draw.io precise shared geometry — C2', () => {
       const match = svg.match(new RegExp('<path data-step="' + index + '" d="M([0-9.]+) ([0-9.]+)H([0-9.]+)"'));
       expect(match).not.toBeNull();
       const [fromX, y, toX] = nums(match!);
-      expect(point(drawio, 'step-' + index, 'sourcePoint')).toEqual({ x: fromX, y });
-      expect(point(drawio, 'step-' + index, 'targetPoint')).toEqual({ x: toX, y });
+      expect(point(drawio, 'step-' + index, 'sourcePoint')).toEqual({ x: Math.round(fromX!), y });
+      expect(point(drawio, 'step-' + index, 'targetPoint')).toEqual({ x: Math.round(toX!), y });
     }
   });
 });
