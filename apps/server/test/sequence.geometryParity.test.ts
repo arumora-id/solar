@@ -72,7 +72,7 @@ describe('Sequence SVG and draw.io precise shared geometry — C2', () => {
     const note = timeline.steps[3]!;
     const svgNote = svg.match(/<path data-note-step="3" d="M([0-9.]+) ([0-9.]+)H/);
     expect(svgNote).not.toBeNull();
-    expect(Number(svgNote![1])).toBeCloseTo(note.note!.x);
+    expect(Number(svgNote![1])).toBe(Math.round(note.note!.x * 10) / 10);
     expect(Number(svgNote![2])).toBe(note.top);
     const xmlNote = vertex(drawio, 'step-3');
     expect(xmlNote.y).toBe(note.top);
