@@ -4,7 +4,7 @@ import { ELEMENT_INFO, isJunction } from './archimate/metamodel.js';
 import { layoutArchiMateLabels, routeArchiMateEdges, type RoutedRelationship } from './archimate/routing.js';
 import type { SequenceDiagram } from './sequence/model.js';
 import { escapeXml, textWidth, wrapText } from './validation.js';
-import { computeSequenceColumns } from './sequence/layout.js';
+import { computeSequenceTimeline } from './sequence/timeline.js';
 
 /** Editable native mxGraph shapes/edges; no images or calls to third-party services. */
 const attrs = (values: Record<string, string | number>) =>
@@ -111,7 +111,8 @@ export function toDrawioArchimate(
 const SEQ_STYLE = 'rounded=1;whiteSpace=wrap;html=0;align=center;verticalAlign=middle;strokeColor=#69778A;fillColor=#E7EDF7;fontColor=#15243B;fontSize=12;';
 /** Sequence participants/lifelines, messages, notes, and frames remain editable mxGraph cells. */
 export function toDrawioSequence(diagram: SequenceDiagram): string {
-  const cols = computeSequenceColumns(diagram);
+  const timeline = computeSequenceTimeline(diagram);
+  const cols = timeline.columns;
   const xs = new Map(cols.map((c) => [c.p.id, c.x]));
   const position = (id: string) => xs.get(id)!;
   const first = cols[0]!, last = cols[cols.length - 1]!;
@@ -129,9 +130,9 @@ export function toDrawioSequence(diagram: SequenceDiagram): string {
   }, last.x + Math.max(82, last.w / 2 + 16));
   const right = rightNeed + 12;
   const width = Math.max(490, Math.ceil(right + 26), Math.ceil(textWidth(diagram.title, 20) + 85));
-  const headH = 48 + 15 * (Math.max(...cols.map((c) => c.lines.length)) - 1);
-  const headTop = 78;
-  let y = headTop + headH + 24, counter = 0, frameIndex = 0;
+  const headH = timeline.headHeight;
+  const headTop = timeline.headTop;
+  let y = timeline.startY, counter = 0, frameIndex = 0;
   const body: string[] = [], frames: string[] = [], activations: string[] = [];
   const stack: Array<{ kind: string; label: string; start: number; index: number }> = [];
   const active = new Map<string, number[]>();
@@ -144,14 +145,16 @@ export function toDrawioSequence(diagram: SequenceDiagram): string {
       activationX(id, values.length + 1), from, 10, Math.max(8, at - from),
       'rounded=0;strokeColor=#5B76A1;fillColor=#BDD4F4;'));
   };
-  diagram.steps.forEach((step, i) => {
+  timeline.steps.forEach((placement, i) => {
+    const step = placement.step;
+    y = placement.top;
     const id = 'step-' + i;
     switch (step.type) {
       case 'message': {
         counter++;
-        const lines = labelLines(step.text);
+        const lines = placement.messageLines!;
         const label = (diagram.autonumber ? String(counter) + '. ' : '') + step.text;
-        const labelH = lines.length * 17 + 12;
+        const labelH = lines.length * 15 + 1;
         const labelW = labelWidth(label);
         const x1 = position(step.from), x2 = position(step.to);
         const color = step.style === 'reply' ? 'dashed=1;' : '';
@@ -159,7 +162,7 @@ export function toDrawioSequence(diagram: SequenceDiagram): string {
         const style = 'endArrow=' + arrow + ';endFill=' + (step.style === 'reply' ? '0' : '1') + ';' +
           color + 'strokeWidth=1.5;strokeColor=#40536B;html=0;';
         const labelStyle = 'text;html=0;whiteSpace=wrap;overflow=hidden;align=center;verticalAlign=middle;rounded=1;strokeColor=none;fillColor=#FFFFFF;fontColor=#15243B;fontSize=12;';
-        const arrowY = y + labelH + 3;
+        const arrowY = placement.arrowY!;
         if (x1 === x2) {
           body.push(vertex(id + '-label', label, x1 + 41, y, labelW, labelH, labelStyle));
           // A real three-sided loop; the legacy single short segment was not a self-message.
@@ -170,45 +173,40 @@ export function toDrawioSequence(diagram: SequenceDiagram): string {
           body.push(freeEdge(id + '-return', '', x1 + 42, arrowY + 26, x1, arrowY + 26, style));
           if (step.deactivate) closeActivation(step.from, arrowY + 26);
           if (step.activate) active.set(step.to, [...(active.get(step.to) ?? []), arrowY + 26]);
-          y = arrowY + 58;
+          y = placement.bottom;
         } else {
           body.push(vertex(id + '-label', label, (x1 + x2 - labelW) / 2, y, labelW, labelH, labelStyle));
           body.push(freeEdge(id, '', x1, arrowY, x2, arrowY, style));
           if (step.deactivate) closeActivation(step.from, arrowY);
           if (step.activate) active.set(step.to, [...(active.get(step.to) ?? []), arrowY]);
-          y = arrowY + 35;
+          y = placement.bottom;
         }
         break;
       }
       case 'note': {
-        const coords = step.over.map(position);
-        const minX = Math.min(...coords), maxX = Math.max(...coords);
-        const noteW = step.over.length > 1 ? maxX - minX + 156 : 214;
-        const lines = wrapText(step.text, Math.max(130, noteW - 24), 12);
-        const noteH = Math.max(55, lines.length * 17 + 19);
-        const noteX = step.over.length > 1 ? minX - 78 : minX - noteW / 2;
-        body.push(vertex(id, step.text, Math.max(5, noteX), y, noteW, noteH,
-          'shape=note;whiteSpace=wrap;html=0;overflow=hidden;strokeColor=#BEA446;fillColor=#FFF5C8;fontColor=#3F3724;fontSize=12;'));
-        y += noteH + 21;
+        const note = placement.note!;
+        body.push(vertex(id, step.text, Math.max(5, note.x), y, note.width, note.height,
+          'shape=note;whiteSpace=wrap;html=0;overflow=hidden;spacingTop=5;spacingBottom=5;strokeColor=#BEA446;fillColor=#FFF5C8;fontColor=#3F3724;fontSize=11.5;'));
+        y = placement.bottom;
         break;
       }
       case 'divider':
         body.push(vertex(id, step.text, left, y, right - left, 32,
           'text;html=0;whiteSpace=wrap;align=center;fontStyle=1;strokeColor=#B2BCCA;fillColor=#F2F5FA;'));
-        y += 51;
+        y = placement.bottom;
         break;
       case 'fragment_start': {
         stack.push({ kind: step.kind, label: step.label, start: y, index: frameIndex++ });
-        y += Math.max(47, wrapText(step.label, 260, 12).length * 18 + 26);
+        y = placement.bottom;
         break;
       }
       case 'fragment_else': {
         const branch = (stack.at(-1)?.kind === 'par' ? 'and' : 'else') +
           (step.label ? ' ' + step.label : '');
-        const branchH = Math.max(31, wrapText(branch, 260, 12).length * 17 + 17);
+        const branchH = Math.max(27, placement.bottom - placement.top - 6);
         body.push(vertex(id + '-branch', branch, left + 5, y, right - left - 10, branchH,
           'text;html=0;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=10;strokeColor=#9BA8BC;dashed=1;fillColor=#F7F9FD;'));
-        y += branchH + 12;
+        y = placement.bottom;
         break;
       }
       case 'fragment_end': {
@@ -217,16 +215,19 @@ export function toDrawioSequence(diagram: SequenceDiagram): string {
           frame.kind + (frame.label ? ' ' + frame.label : ''),
           left, frame.start, right - left, Math.max(65, y - frame.start + 17),
           'swimlane;html=0;whiteSpace=wrap;startSize=35;horizontal=1;rounded=0;strokeColor=#6F84A5;fillColor=#F4F7FC;fillOpacity=15;fontStyle=1;align=left;spacingLeft=10;'));
-        y += 24;
+        y = placement.bottom;
         break;
       }
     }
   });
-  const height = Math.max(350, y + 64);
+  const height = Math.max(350, timeline.endY + 64);
   for (const [id, values] of active) while (values.length) closeActivation(id, height - 44);
   const cells = [
-    vertex('seq-title', diagram.title, 34, 16, width - 68, 47,
-      'text;html=0;whiteSpace=wrap;fontSize=20;fontStyle=1;align=left;strokeColor=none;fillColor=none;'),
+    vertex('seq-title', diagram.title, 34, 14, width - 68, 33,
+      'text;html=0;whiteSpace=wrap;fontSize=17;fontStyle=1;align=left;strokeColor=none;fillColor=none;'),
+    ...timeline.descriptionLines.map((line, i) =>
+      vertex('seq-description-' + i, line, 34, 43 + i * 15, width - 68, 15,
+        'text;html=0;whiteSpace=wrap;fontSize=11.5;align=left;strokeColor=none;fillColor=none;')),
     ...frames,
   ];
   cols.forEach((c, i) => {
