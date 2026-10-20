@@ -137,6 +137,11 @@ export function toDrawioSequence(diagram: SequenceDiagram): string {
   const stack: Array<{ kind: string; label: string; start: number; index: number }> = [];
   const active = new Map<string, number[]>();
   const activationX = (id: string, depth: number) => position(id) + (depth - 1) * 5 - 5;
+  const edgeX = (id: string, towardRight: boolean) => {
+    const depth = active.get(id)?.length ?? 0;
+    const half = 5 + (depth - 1) * 5;
+    return depth === 0 ? position(id) : position(id) + (towardRight ? half : -half);
+  };
   const closeActivation = (id: string, at: number) => {
     const values = active.get(id);
     if (!values?.length) return; // semantic validation remains in validateSequence
@@ -164,21 +169,26 @@ export function toDrawioSequence(diagram: SequenceDiagram): string {
         const labelStyle = 'text;html=0;whiteSpace=wrap;overflow=hidden;align=center;verticalAlign=middle;rounded=1;strokeColor=none;fillColor=#FFFFFF;fontColor=#15243B;fontSize=12;';
         const arrowY = placement.arrowY!;
         if (x1 === x2) {
-          body.push(vertex(id + '-label', label, x1 + 41, y, labelW, labelH, labelStyle));
+          const startX = edgeX(step.from, true);
+          body.push(vertex(id + '-label', label, startX + 41, y, labelW, labelH,
+            labelStyle + 'align=left;spacingLeft=5;'));
           // A real three-sided loop; the legacy single short segment was not a self-message.
-          body.push(freeEdge(id, '', x1, arrowY, x1 + 42, arrowY,
+          if (step.deactivate) closeActivation(step.from, arrowY + 22);
+          if (step.activate) active.set(step.to, [...(active.get(step.to) ?? []), arrowY + 22]);
+          const returnX = edgeX(step.to, true);
+          body.push(freeEdge(id, '', startX, arrowY, startX + 36, arrowY,
             'endArrow=none;strokeColor=#40536B;' + color));
-          body.push(freeEdge(id + '-bend', '', x1 + 42, arrowY, x1 + 42, arrowY + 26,
+          body.push(freeEdge(id + '-bend', '', startX + 36, arrowY, startX + 36, arrowY + 22,
             'endArrow=none;strokeColor=#40536B;' + color));
-          body.push(freeEdge(id + '-return', '', x1 + 42, arrowY + 26, x1, arrowY + 26, style));
-          if (step.deactivate) closeActivation(step.from, arrowY + 26);
-          if (step.activate) active.set(step.to, [...(active.get(step.to) ?? []), arrowY + 26]);
+          body.push(freeEdge(id + '-return', '', startX + 36, arrowY + 22, returnX, arrowY + 22, style));
           y = placement.bottom;
         } else {
           body.push(vertex(id + '-label', label, (x1 + x2 - labelW) / 2, y, labelW, labelH, labelStyle));
-          body.push(freeEdge(id, '', x1, arrowY, x2, arrowY, style));
+          const towardRight = x2 > x1;
+          const startX = edgeX(step.from, towardRight);
           if (step.deactivate) closeActivation(step.from, arrowY);
           if (step.activate) active.set(step.to, [...(active.get(step.to) ?? []), arrowY]);
+          body.push(freeEdge(id, '', startX, arrowY, edgeX(step.to, !towardRight), arrowY, style));
           y = placement.bottom;
         }
         break;
@@ -213,14 +223,15 @@ export function toDrawioSequence(diagram: SequenceDiagram): string {
         const frame = stack.pop();
         if (frame) frames.push(vertex('frame-' + frame.index,
           frame.kind + (frame.label ? ' ' + frame.label : ''),
-          left, frame.start, right - left, Math.max(65, y - frame.start + 17),
+          left, frame.start, right - left, Math.max(65, y - frame.start + 2),
           'swimlane;html=0;whiteSpace=wrap;startSize=35;horizontal=1;rounded=0;strokeColor=#6F84A5;fillColor=#F4F7FC;fillOpacity=15;fontStyle=1;align=left;spacingLeft=10;'));
         y = placement.bottom;
         break;
       }
     }
   });
-  const height = Math.max(350, timeline.endY + 64);
+  const footTop = timeline.endY + 16;
+  const height = footTop + headH + 24;
   for (const [id, values] of active) while (values.length) closeActivation(id, height - 44);
   const cells = [
     vertex('seq-title', diagram.title, 34, 14, width - 68, 33,
@@ -232,7 +243,7 @@ export function toDrawioSequence(diagram: SequenceDiagram): string {
   ];
   cols.forEach((c, i) => {
     cells.push(vertex('participant-' + i, c.p.label, c.x - c.w / 2, headTop, c.w, headH, SEQ_STYLE));
-    cells.push(freeEdge('lifeline-' + i, '', c.x, headTop + headH, c.x, height - 28,
+    cells.push(freeEdge('lifeline-' + i, '', c.x, headTop + headH, c.x, footTop,
       'dashed=1;dashPattern=5 5;strokeColor=#9BA8BC;endArrow=none;'));
   });
   cells.push(...activations, ...body);
