@@ -232,7 +232,7 @@ export function toDrawioSequence(diagram: SequenceDiagram): string {
   });
   const footTop = timeline.endY + 16;
   const height = footTop + headH + 24;
-  for (const [id, values] of active) while (values.length) closeActivation(id, height - 44);
+  for (const [id, values] of active) while (values.length) closeActivation(id, timeline.endY + 6);
   const cells = [
     vertex('seq-title', diagram.title, 34, 14, width - 68, 33,
       'text;html=0;whiteSpace=wrap;fontSize=17;fontStyle=1;align=left;strokeColor=none;fillColor=none;'),
@@ -243,6 +243,7 @@ export function toDrawioSequence(diagram: SequenceDiagram): string {
   ];
   cols.forEach((c, i) => {
     cells.push(vertex('participant-' + i, c.p.label, c.x - c.w / 2, headTop, c.w, headH, SEQ_STYLE));
+    cells.push(vertex('participant-footer-' + i, c.p.label, c.x - c.w / 2, footTop, c.w, headH, SEQ_STYLE));
     cells.push(freeEdge('lifeline-' + i, '', c.x, headTop + headH, c.x, footTop,
       'dashed=1;dashPattern=5 5;strokeColor=#9BA8BC;endArrow=none;'));
   });
