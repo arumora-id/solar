@@ -162,7 +162,7 @@ wait_health() {
 OLD_VERSION="$(health_version)" || fail 'Current production health check failed.'
 if [[ "$MODE" == --preflight ]]; then
   log "PREFLIGHT OK: published v1.0.10 ($EXPECTED_SHA), Compose source, mounts and current health (v$OLD_VERSION)."
-  log 'No deployment, image build, container restart or data modification was performed.'
+  log 'No image build, application-data update, or container restart was performed.'
   exit 0
 fi
 [[ "$DEPLOY_APPROVED" == YES ]] || fail 'Set DEPLOY_APPROVED=YES after independent change approval.'
