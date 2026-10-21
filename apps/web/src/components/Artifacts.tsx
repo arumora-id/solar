@@ -578,7 +578,7 @@ export function ArtifactPreview({
     // the .html of the same TSD has the same content and can be shown here
     const html = word ? siblings.find((s) => s.bundle === artifact.bundle && s.kind === 'tsd-html') : undefined;
     return (
-      <div className="backdrop" onClick={(e) => e.target === e.currentTarget && onClose()} role="dialog" aria-modal="true" aria-label={artifact.title}>
+      <div className="backdrop artifact-preview-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()} role="dialog" aria-modal="true" aria-label={artifact.title}>
         <div className="modal" ref={modalRef} tabIndex={-1}>
           <div className="row" style={{ marginBottom: 10, flexWrap: 'nowrap' }}>
             <h3 style={{ flex: 1, margin: 0, minWidth: 0 }}>{artifact.title}</h3>
@@ -612,7 +612,7 @@ export function ArtifactPreview({
   }
 
   return (
-    <div className="backdrop" onClick={(e) => e.target === e.currentTarget && onClose()} role="dialog" aria-modal="true" aria-label={artifact.title}>
+    <div className="backdrop artifact-preview-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()} role="dialog" aria-modal="true" aria-label={artifact.title}>
       <div className="modal wide" ref={modalRef} tabIndex={-1}>
         <div className="row" style={{ marginBottom: 10 }}>
           <h3 style={{ flex: 1, margin: 0 }}>{artifact.title}</h3>
