@@ -23,7 +23,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Validate reviewed VPS deployment shell scripts
-        run: bash -n scripts/deploy-conversation-proposals-vps.sh scripts/rollback-conversation-proposals-vps.sh
+        run: bash -n scripts/deploy-conversation-proposals-vps.sh scripts/rollback-conversation-proposals-vps.sh scripts/deploy-v1.0.10-vps.sh
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
