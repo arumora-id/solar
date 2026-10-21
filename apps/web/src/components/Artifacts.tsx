@@ -206,6 +206,7 @@ function ArtifactGroup({
   const word = items.find((a) => a.kind === 'tsd-docx');
   const drawio = items.find((a) => a.kind === 'archimate-drawio' || a.kind === 'sequence-drawio');
   const vpOnline = items.find((a) => a.kind === 'archimate-vponline' || a.kind === 'sequence-vponline');
+  const plantUml = items.find((a) => a.kind === 'archimate-plantuml' || a.kind === 'sequence-plantuml');
   const model = items.find((a) => a.kind === 'tsd-model');
   const rows = word ? [word, ...items.filter((a) => a !== word)] : items;
   const anyMarkdown = items.some(isMarkdown);
@@ -306,6 +307,11 @@ function ArtifactGroup({
           {vpOnline && (
             <a className="btn small" href={api.artifactUrl(vpOnline.id, true)}>
               <DownloadIcon /> {t.artifacts.diagramExport.vpOnline}
+            </a>
+          )}
+          {plantUml && (
+            <a className="btn small" href={api.artifactUrl(plantUml.id, true)}>
+              <DownloadIcon /> {t.artifacts.diagramExport.plantUml}
             </a>
           )}
           <span>{t.artifacts.diagramExport.instructions}</span>
