@@ -216,6 +216,8 @@ describe('agent end-to-end (scripted model)', () => {
         'archimate-drawio',
         'archimate-exchange',
         'archimate-model',
+        'archimate-plantuml',
+        'archimate-plantuml',
         'archimate-vponline',
         'archimate-svg',
         'archimate-svg',
@@ -234,6 +236,7 @@ describe('agent end-to-end (scripted model)', () => {
     // Both providers get editable XML; the file extensions follow their documented import flows.
     expect(detail!.artifacts.filter((a) => a.kind.endsWith('-drawio')).every((a) => a.name.endsWith('.drawio'))).toBe(true);
     expect(detail!.artifacts.filter((a) => a.kind.endsWith('-vponline')).every((a) => a.name.endsWith('.xml'))).toBe(true);
+    expect(detail!.artifacts.filter((a) => a.kind === 'archimate-plantuml').every((a) => a.name.endsWith('.puml'))).toBe(true);
     const names = detail!.artifacts.map((a) => a.name);
     expect(new Set(names).size).toBe(names.length);
     expect(detail!.confirmations[0]!.status).toBe('approved');
