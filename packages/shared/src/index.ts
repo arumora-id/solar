@@ -154,6 +154,7 @@ export type ArtifactKind =
   | 'archimate-exchange'
   | 'archimate-drawio'
   | 'archimate-vponline'
+  | 'archimate-plantuml'
   | 'archimate-svg'
   | 'archimate-model'
   | 'sequence-svg'

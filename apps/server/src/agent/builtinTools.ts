@@ -53,6 +53,7 @@ const TEXT_KINDS = new Set<Artifact['kind']>([
   'archimate-drawio',
   'sequence-drawio',
   'archimate-vponline',
+  'archimate-plantuml',
   'sequence-vponline',
   'archimate-model',
   'sequence-mermaid',
@@ -153,7 +154,7 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
         'Create an ArchiMate 3.2 model with one or more views. The input is validated against the official ArchiMate relationship table,',
         'referential integrity, junction rules and view consistency; on errors nothing is saved and every error is listed so you can fix it.',
         'On success it stores: an Open Group Exchange Format XML (importable in Archi, Visual Paradigm, BiZZdesign, Sparx EA),',
-        'one SVG per view (layered auto-layout), an editable .drawio file for draw.io / VP Online, and the model JSON. Element types use exchange-format names, e.g.',
+        'one SVG and PlantUML source per view, an editable .drawio file for draw.io / VP Online, and the model JSON. Element types use exchange-format names, e.g.',
         'BusinessActor, ApplicationComponent, ApplicationService, DataObject, Node, SystemSoftware, TechnologyService, Requirement, WorkPackage.',
       ].join(' '),
       schema: ArchimateModelSchema.extend({ fileName }),
@@ -191,7 +192,7 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
           bundle,
           content: out.drawio,
         });
-        const views: Array<{ view: string; svgArtifactId: string; file: string; elements: number; relationships: number }> = [];
+        const views: Array<{ view: string; svgArtifactId: string; file: string; elements: number; relationships: number; plantuml: { artifactId: string; file: string } }> = [];
         for (const v of out.views) {
           const svg = await ctx.createArtifact({
             name: `${stem}-${slugify(v.name, 'view')}.svg`,
@@ -202,7 +203,16 @@ export function createBuiltinTools(deps: BuiltinToolDeps): AgentTool[] {
             description: t(lang, 'artifact.archimate.viewSummary', { elements: v.elementCount, relationships: v.relationshipCount }),
             content: v.svg,
           });
-          views.push({ view: v.name, svgArtifactId: svg.id, file: svg.name, elements: v.elementCount, relationships: v.relationshipCount });
+          const puml = await ctx.createArtifact({
+            name: stem + '-' + slugify(v.name, 'view') + '.archimate.puml',
+            title: v.name + ' (ArchiMate PlantUML / VP Online)',
+            kind: 'archimate-plantuml',
+            mimeType: 'text/plain',
+            bundle,
+            content: v.plantuml,
+          });
+          views.push({ view: v.name, svgArtifactId: svg.id, file: svg.name, elements: v.elementCount, relationships: v.relationshipCount,
+            plantuml: { artifactId: puml.id, file: puml.name } });
         }
         const modelJson = await ctx.createArtifact({
           name: `${stem}.archimate.json`,

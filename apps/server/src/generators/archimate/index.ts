@@ -1,5 +1,6 @@
 import type { ValidationIssue } from '../validation.js';
 import { toDrawioArchimate } from '../drawio.js';
+import { toPlantUmlArchimate } from './plantuml.js';
 import { toExchangeXml } from './exchange.js';
 import { layoutView, type ViewLayout } from './layout.js';
 import { ArchimateModelSchema, type ArchimateModelInput, type NormalizedArchimateModel } from './model.js';
@@ -12,7 +13,7 @@ export interface ArchimateBuildOutput {
   model: NormalizedArchimateModel;
   exchangeXml: string;
   drawio: string;
-  views: Array<{ id: string; name: string; svg: string; elementCount: number; relationshipCount: number }>;
+  views: Array<{ id: string; name: string; svg: string; plantuml: string; elementCount: number; relationshipCount: number }>;
   warnings: ValidationIssue[];
 }
 
@@ -63,6 +64,7 @@ export function buildArchimate(input: ArchimateModelInput | unknown): ArchimateB
       id: view.id,
       name: view.name,
       svg: renderViewSvg(layout, { modelName: model.name, viewName: view.name, viewpoint: view.viewpoint, relationships, routes }),
+      plantuml: toPlantUmlArchimate(model, view),
       elementCount: elements.length,
       relationshipCount: relationships.length,
     });

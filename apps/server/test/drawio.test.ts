@@ -23,6 +23,37 @@ describe('editable draw.io / Visual Paradigm Online diagram export', () => {
     expect(drawio).not.toContain('<script>');
   });
 
+  it('keeps full interface, role and component definitions in draw.io and PlantUML exports', () => {
+    const result = buildArchimate({
+      ...sampleArchimate,
+      elements: sampleArchimate.elements.map((element) => element.id === 'ai-order-api'
+        ? { ...element, documentation: 'REST API & authentication contract', properties: { Version: 'v2', Owner: 'Platform Team' } }
+        : element),
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const { drawio, views } = result.output;
+    expect(drawio).toContain('Element &amp; relationship definitions');
+    expect(drawio).toContain('REST API &amp; authentication contract');
+    expect(drawio).toContain('Version: v2');
+    expect(drawio).toContain('Owner: Platform Team');
+    expect(drawio).toContain('Buyer');
+    expect(drawio).toContain('Business Role');
+    expect(drawio).toContain('Application Interface');
+    expect(drawio).toContain('Application Component');
+    expect(drawio).toContain('id="definition-');
+    expect(views).toHaveLength(2);
+    for (const view of views) {
+      expect(view.plantuml).toContain('@startuml');
+      expect(view.plantuml).toContain('@enduml');
+    }
+    const layered = views[0]!.plantuml;
+    expect(layered).toContain('Business Role');
+    expect(layered).toContain('Application Interface');
+    expect(layered).toContain('REST API & authentication contract');
+    expect(layered).toContain('Owner: Platform Team');
+  });
+
   it('exports native sequence participants, messages, frames, notes and both arrow kinds', () => {
     const result = buildSequence(sampleSequence);
     expect(result.ok).toBe(true);

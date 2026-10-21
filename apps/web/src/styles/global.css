@@ -3051,6 +3051,11 @@ button.att-open:hover .att-name {
   }
 }
 
+/* Artifact previews render via a body portal; keep them above the fullscreen conversation (z-index: 80). */
+.artifact-preview-backdrop {
+  z-index: 120;
+}
+
 /* Conversation-only expanded mode: leave the legacy Agent and Monitoring layouts untouched. */
 .chat.chat-fullscreen {
   position: fixed;
