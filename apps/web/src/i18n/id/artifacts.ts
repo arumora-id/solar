@@ -32,7 +32,8 @@ export const artifacts = {
   diagramExport: {
     drawio: 'Unduh untuk draw.io',
     vpOnline: 'Unduh untuk VP Online',
-    instructions: 'Unduh .drawio untuk draw.io, atau XML untuk VP Online. Buka melalui File → Open From → Device pada draw.io, atau Diagram → Open From Device pada VP Online. Bentuk dan konektor dapat diedit; metadata ArchiMate tetap tersedia di file Exchange XML terpisah.',
+    plantUml: 'Unduh PlantUML (.puml)',
+    instructions: 'Gunakan .puml melalui PlantUML Editor / VPasCode di Visual Paradigm Online, atau .drawio / XML di editor diagram. Draw.io berisi kartu definisi elemen dan relasi. Untuk metadata ArchiMate penuh gunakan file Exchange XML.',
   },
   /** The request did not reach the server (no HTTP answer). */
   offline: 'Server tidak bisa dihubungi, coba lagi.',
