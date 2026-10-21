@@ -1,6 +1,6 @@
 {
   "name": "@solar/web",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,7 +10,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@solar/shared": "1.0.9",
+    "@solar/shared": "1.0.10",
     "dompurify": "^3.4.16",
     "gsap": "^3.15.0",
     "marked": "^18.1.0",
