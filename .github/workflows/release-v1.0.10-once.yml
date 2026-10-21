@@ -1,0 +1,50 @@
+name: Release SOLAR v1.0.10 (one-time dispatch)
+
+# GitHub Actions cannot create a new tag via its standard repository connector.
+# Dispatch the existing reviewed release workflow exactly once after green main CI.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: solar-v1.0.10-release-dispatch
+  cancel-in-progress: false
+
+jobs:
+  dispatch-release:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - name: Dispatch tagged release from fully checked main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          MAIN_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          if [ "$MAIN_SHA" != "$CI_SHA" ]; then
+            echo "CI commit $CI_SHA is not current main $MAIN_SHA; skipping stale run."
+            exit 0
+          fi
+          VERSION="$(node -p "require('./package.json').version")"
+          if [ "$VERSION" != "1.0.10" ]; then
+            echo "Not release v1.0.10 (found $VERSION); skipping."
+            exit 0
+          fi
+          grep -Fx "export const APP_VERSION = '1.0.10';" apps/server/src/config.ts
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/v1.0.10" >/dev/null 2>&1; then
+            echo "Tag v1.0.10 already exists; skipping."
+            exit 0
+          fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/workflows/desktop-windows.yml/dispatches" \
+            -f ref=main -F 'inputs[release]=true'
+          echo "Dispatched desktop-windows.yml to publish v1.0.10 using its existing release process."
