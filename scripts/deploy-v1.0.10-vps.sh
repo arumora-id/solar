@@ -12,11 +12,11 @@ need() { command -v "$1" >/dev/null 2>&1 || fail "Missing required executable: $
 usage() {
   cat <<'HELP'
 Usage:
-  SOURCE_DIR=/absolute/path/to/solar-at-v1.0.10 PROD_DIR=/absolute/path/to/production \\
+  SOURCE_DIR=/absolute/path/to/solar-at-v1.0.10 PROD_DIR=/absolute/path/to/production \
     bash scripts/deploy-v1.0.10-vps.sh --preflight
 
-  SOURCE_DIR=/absolute/path/to/solar-at-v1.0.10 PROD_DIR=/absolute/path/to/production \\
-    DEPLOY_APPROVED=YES BACKUP_CONFIRMED=YES \\
+  SOURCE_DIR=/absolute/path/to/solar-at-v1.0.10 PROD_DIR=/absolute/path/to/production \
+    DEPLOY_APPROVED=YES BACKUP_CONFIRMED=YES \
     bash scripts/deploy-v1.0.10-vps.sh --deploy
 
 The source must be a clean checkout of the published v1.0.10 tag.
@@ -60,10 +60,10 @@ git -C "$SOURCE_DIR" diff --quiet || fail 'Tracked source is modified.'
 git -C "$SOURCE_DIR" diff --cached --quiet || fail 'Staged source is modified.'
 ACTUAL_SHA="$(git -C "$SOURCE_DIR" rev-parse HEAD)"
 [[ "$ACTUAL_SHA" == "$EXPECTED_SHA" ]] || fail "Source commit $ACTUAL_SHA differs from release v1.0.10 ($EXPECTED_SHA)."
-LOCAL_TAG_SHA="$(git -C "$SOURCE_DIR" rev-parse -q --verify 'refs/tags/v1.0.10^{commit}' 2>/dev/null)" \\
+LOCAL_TAG_SHA="$(git -C "$SOURCE_DIR" rev-parse -q --verify 'refs/tags/v1.0.10^{commit}' 2>/dev/null)" \
   || fail 'Local checkout must contain the v1.0.10 tag.'
 [[ "$LOCAL_TAG_SHA" == "$EXPECTED_SHA" ]] || fail 'Local v1.0.10 tag points to another commit.'
-REMOTE_TAG_REFS="$(git -C "$SOURCE_DIR" ls-remote --exit-code --tags origin 'refs/tags/v1.0.10' 'refs/tags/v1.0.10^{}')" \\
+REMOTE_TAG_REFS="$(git -C "$SOURCE_DIR" ls-remote --exit-code --tags origin 'refs/tags/v1.0.10' 'refs/tags/v1.0.10^{}')" \
   || fail 'Origin tag v1.0.10 was not found.'
 REMOTE_TAG_SHA="$(printf '%s\n' "$REMOTE_TAG_REFS" | awk '$2=="refs/tags/v1.0.10^{}" {print $1; exit}')"
 if [[ -z "$REMOTE_TAG_SHA" ]]; then
@@ -72,8 +72,8 @@ fi
 [[ "$REMOTE_TAG_SHA" == "$EXPECTED_SHA" ]] || fail 'Origin v1.0.10 tag does not match the pinned release commit.'
 # GitHub Release is a separate gate from the Git tag. The .exe and .zip must
 # both be present before the operator may build the VPS Docker image.
-curl --fail --silent --show-error --location --connect-timeout 10 --max-time 40 --retry 2 \\
-  --header 'Accept: application/vnd.github+json' \\
+curl --fail --silent --show-error --location --connect-timeout 10 --max-time 40 --retry 2 \
+  --header 'Accept: application/vnd.github+json' \
   'https://api.github.com/repos/arumora-id/solar/releases/tags/v1.0.10' | python3 -c '
 import json, sys
 try:
@@ -90,7 +90,7 @@ except (ValueError, KeyError, json.JSONDecodeError) as exc:
 ' || fail 'Official v1.0.10 Release validation failed.'
 ACTUAL_VERSION="$(node -e 'process.stdout.write(require(process.argv[1]).version)' "$SOURCE_DIR/package.json")"
 [[ "$ACTUAL_VERSION" == "$EXPECTED_VERSION" ]] || fail "Source version $ACTUAL_VERSION differs from expected $EXPECTED_VERSION."
-grep -Fxq "export const APP_VERSION = '1.0.10';" "$SOURCE_DIR/apps/server/src/config.ts" \\
+grep -Fxq "export const APP_VERSION = '1.0.10';" "$SOURCE_DIR/apps/server/src/config.ts" \
   || fail 'Source APP_VERSION is not 1.0.10.'
 for pkg in packages/shared apps/server apps/web apps/desktop; do
   package_version="$(node -e 'process.stdout.write(require(process.argv[1]).version)' "$SOURCE_DIR/$pkg/package.json")"
