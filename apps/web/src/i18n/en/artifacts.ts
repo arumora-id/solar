@@ -29,7 +29,7 @@ export const artifacts: Dict['artifacts'] = {
     drawio: 'Download for draw.io',
     vpOnline: 'Download for VP Online',
     plantUml: 'Download PlantUML (.puml)',
-    instructions: 'Download .drawio for draw.io, or XML for VP Online. In draw.io use File → Open From → Device; in VP Online use Diagram → Open From Device. Shapes and connectors are editable; for ArchiMate model exchange use the separate Exchange XML artifact.',
+    instructions: 'Use .puml in the Visual Paradigm Online PlantUML Editor / VPasCode, or .drawio / XML in a graphical editor. Draw.io now includes element and relationship definition cards. For full ArchiMate semantics, use the separate Exchange XML artifact.',
   },
   offline: 'The server cannot be reached. Try again.',
 
