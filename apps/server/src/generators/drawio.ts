@@ -58,7 +58,7 @@ function appendDefinitions(
     entries.push({
       title: element.name + ' «' + info.label + '»',
       detail: [element.documentation ?? '', ...properties].filter(Boolean).join('\n'),
-      fill: fills[info.layer] ?? fills.other,
+      fill: fills[info.layer] ?? '#F2F2F2',
     });
   }
   for (const relationshipId of view.relationships) {
