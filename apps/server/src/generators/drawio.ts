@@ -37,6 +37,68 @@ const fills: Record<string, string> = {
   business: '#FFF0C4', application: '#D9EEFF', technology: '#DDF3DD', physical: '#E9F1D7',
   motivation: '#F1E4F9', strategy: '#FBE3E7', implementation: '#FDE6D5', other: '#F2F2F2',
 };
+
+/**
+ * The editable drawing must retain definitions, not only element names. Keep the
+ * definition cards below the routed graph so long documentation never collides
+ * with an ArchiMate node, connector, or relationship label.
+ */
+function appendDefinitions(
+  model: NormalizedArchimateModel,
+  view: NormalizedArchimateModel['views'][number],
+  layout: ViewLayout,
+  cells: string[],
+): number {
+  const entries: Array<{ title: string; detail: string; fill: string }> = [];
+  for (const elementId of view.elements) {
+    const element = model.elements.find((candidate) => candidate.id === elementId);
+    if (!element) continue;
+    const info = ELEMENT_INFO[element.type];
+    const properties = Object.entries(element.properties ?? {}).map(([key, value]) => key + ': ' + value);
+    entries.push({
+      title: element.name + ' «' + info.label + '»',
+      detail: [element.documentation ?? '', ...properties].filter(Boolean).join('\n'),
+      fill: fills[info.layer] ?? fills.other,
+    });
+  }
+  for (const relationshipId of view.relationships) {
+    const relation = model.relationships.find((candidate) => candidate.id === relationshipId);
+    if (!relation) continue;
+    const source = model.elements.find((element) => element.id === relation.source)?.name ?? relation.source;
+    const target = model.elements.find((element) => element.id === relation.target)?.name ?? relation.target;
+    entries.push({
+      title: (relation.name ? relation.name + ' — ' : '') + relation.type + ': ' + source + ' → ' + target,
+      detail: [
+        relation.documentation ?? '',
+        relation.accessType ? 'Access: ' + relation.accessType : '',
+        relation.influenceModifier ? 'Influence: ' + relation.influenceModifier : '',
+        relation.isDirected === false ? 'Undirected association' : '',
+      ].filter(Boolean).join('\n'),
+      fill: '#F1F5F9',
+    });
+  }
+  if (!entries.length) return layout.height + 40;
+  const gap = 16;
+  const side = 32;
+  const columns = layout.width >= 740 ? 2 : 1;
+  const cardW = Math.floor((layout.width - 2 * side - (columns - 1) * gap) / columns);
+  let y = layout.height + 68;
+  cells.push(vertex('definitions-heading', 'Element & relationship definitions', side, layout.height + 22, layout.width - 2 * side, 32,
+    'text;html=0;align=left;verticalAlign=middle;fontSize=16;fontStyle=1;strokeColor=none;fillColor=none;'));
+  for (let index = 0; index < entries.length; index += columns) {
+    const row = entries.slice(index, index + columns);
+    const wrapped = row.map((item) => wrapText(item.title + '\n' + (item.detail || '(no description provided)'), cardW - 24, 11));
+    const rowH = Math.max(...wrapped.map((lines) => Math.max(66, 20 + 15 * lines.length)));
+    row.forEach((item, col) => {
+      const x = side + col * (cardW + gap);
+      cells.push(vertex('definition-' + (index + col), wrapped[col]!.join('\n'), x, y, cardW, rowH, 
+        'rounded=1;arcSize=6;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=10;spacingTop=9;spacingRight=10;fontSize=11;strokeColor=#94A3B8;fontColor=#172333;fillColor=' + item.fill + ';'));
+    });
+    y += rowH + gap;
+  }
+  return y + 18;
+}
+
 /** Every ArchiMate view becomes a page with independently editable shapes and connectors. */
 export function toDrawioArchimate(
   model: NormalizedArchimateModel,
@@ -104,7 +166,8 @@ export function toDrawioArchimate(
           'text;html=0;whiteSpace=wrap;align=center;verticalAlign=middle;strokeColor=none;fillColor=#FFFFFF;opacity=95;fontSize=10.5;'));
       }
     });
-    pages.push(page('solar-archimate-' + index, view.name, layout.width + 20, layout.height + 40, cells));
+    const pageHeight = appendDefinitions(model, view, layout, cells);
+    pages.push(page('solar-archimate-' + index, view.name, layout.width + 20, pageHeight, cells));
   }
   return document(pages);
 }
